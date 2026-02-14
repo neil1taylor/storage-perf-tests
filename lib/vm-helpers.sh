@@ -65,6 +65,9 @@ get_storage_class_for_pool() {
     echo "ocs-storagecluster-ceph-rbd-virtualization"
   elif [[ "${pool_name}" == "rep3-enc" ]]; then
     echo "ocs-storagecluster-ceph-rbd-encrypted"
+  elif [[ "${pool_name}" == *vpc-block* ]]; then
+    # IBM Cloud Block — SC name is the pool name itself
+    echo "${pool_name}"
   elif [[ "${pool_name}" == ibmc-* ]] || [[ "${pool_name}" == *vpc-file* ]]; then
     # IBM Cloud File — SC name is the pool name itself
     echo "${pool_name}"
@@ -96,6 +99,14 @@ get_all_storage_pools() {
     for sc in "${FILE_CSI_PROFILES[@]}"; do
       pools+=("${sc}")
     done
+  fi
+
+  # IBM Cloud Block pools (from discovery file)
+  local block_sc_list="${RESULTS_DIR}/block-storage-classes.txt"
+  if [[ -f "${block_sc_list}" ]]; then
+    while IFS= read -r sc; do
+      [[ -n "${sc}" ]] && pools+=("${sc}")
+    done < "${block_sc_list}"
   fi
 
   printf '%s\n' "${pools[@]}"

@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virtualization. Tests ODF (Ceph) storage pools (replicated and erasure-coded) and IBM Cloud File CSI against a matrix of VM sizes, PVC sizes, concurrency levels, fio profiles, and block sizes.
+VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virtualization. Tests ODF (Ceph) storage pools (replicated and erasure-coded), IBM Cloud File CSI, and IBM Cloud Block CSI against a matrix of VM sizes, PVC sizes, concurrency levels, fio profiles, and block sizes. Supports both bare metal (NVMe-backed ODF) and VSI (IBM Cloud Block-backed ODF) cluster topologies with auto-detection.
 
 ## Prerequisites
 
-- `oc` CLI authenticated to an IBM Cloud ROKS cluster with bare metal workers (bx3d with NVMe)
+- `oc` CLI authenticated to an IBM Cloud ROKS cluster (bare metal with NVMe or VSI with IBM Cloud Block)
 - OpenShift Virtualization (KubeVirt) and ODF (OpenShift Data Foundation) installed
 - `virtctl` CLI for VM SSH access
 - `jq` installed locally
@@ -20,6 +20,7 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 # Full workflow (sequential):
 ./01-setup-storage-pools.sh        # Create CephBlockPools + StorageClasses
 ./02-setup-file-storage.sh         # Discover IBM Cloud File CSI StorageClasses
+./02b-setup-block-storage.sh       # Discover IBM Cloud Block CSI StorageClasses (VSI clusters)
 ./06-run-tests.sh                  # Run full test matrix (12-24 hours)
 ./06-run-tests.sh --quick          # Smoke test (~1-2 hours)
 ./06-run-tests.sh --pool rep3      # Test single pool
@@ -38,7 +39,7 @@ Scripts are numbered `00-09` and run sequentially. Each script sources `00-confi
 
 ### Config-Driven Design
 
-`00-config.sh` is the single source of truth for all tunables: VM sizes, PVC sizes, ODF pool definitions, fio settings, timeouts, and file paths. All values are exported as environment variables or bash arrays. Other scripts consume these via `source 00-config.sh`.
+`00-config.sh` is the single source of truth for all tunables: VM sizes, PVC sizes, ODF pool definitions, fio settings, timeouts, and file paths. It also auto-detects the cluster type (BM vs VSI) from worker node labels and exports `CLUSTER_TYPE`, `WORKER_FLAVOR`, `WORKER_COUNT`, and `CLUSTER_DESCRIPTION`. All values are exported as environment variables or bash arrays. Other scripts consume these via `source 00-config.sh`.
 
 ### Template Rendering
 
@@ -67,7 +68,7 @@ VM names do not include profile/blocksize (since they're reused): `perf-<pool>-<
 
 ### Storage Pool Naming
 
-ODF pools use a `perf-test-` prefix for CephBlockPools and `perf-test-sc-` for StorageClasses. The default rep3 pool reuses the existing ROKS out-of-box SC (`ocs-storagecluster-ceph-rbd`). IBM Cloud File SCs are used by their cluster names directly.
+ODF pools use a `perf-test-` prefix for CephBlockPools and `perf-test-sc-` for StorageClasses. The default rep3 pool reuses the existing ROKS out-of-box SC (`ocs-storagecluster-ceph-rbd`). IBM Cloud File and Block CSI SCs are used by their cluster names directly.
 
 ### Resource Labeling
 
@@ -75,10 +76,12 @@ All test resources are labeled `app=vm-perf-test` with additional labels for `ru
 
 ## Cluster Topology Assumptions
 
-This suite targets a **single-zone ROKS cluster** with 3 bare metal workers (all in one availability zone).
+This suite supports both **bare metal (BM)** and **VSI** single-zone ROKS clusters. Cluster type is auto-detected from worker node instance-type labels (`detect_cluster_type()` in `00-config.sh`), or can be overridden via `CLUSTER_TYPE=bm|vsi`.
 
+- **BM clusters:** NVMe-backed ODF, no IBM Cloud Block CSI available. `02b-setup-block-storage.sh` exits cleanly.
+- **VSI clusters:** IBM Cloud Block-backed ODF, plus IBM Cloud Block CSI available for direct testing. All three backends (ODF, File CSI, Block CSI) are tested.
 - **EC pool constraints:** EC pools require k+m unique hosts (using `failureDomain: host`). With 3 workers, only pools needing ≤3 failure domains work (rep2, rep3, ec-2-1). Pools ec-2-2 (needs 4) and ec-4-2 (needs 6) have been removed from `00-config.sh`.
-- **File CSI deduplication:** IBM Cloud File CSI auto-discovery finds ~17 StorageClasses, but `-metro-` and `-retain-` variants produce identical I/O performance on a single-zone cluster. `FILE_CSI_DEDUP=true` (the default) filters these out. Set to `false` for multi-zone clusters where metro topology may affect latency.
+- **File/Block CSI deduplication:** Auto-discovery finds many StorageClasses, but `-metro-` and `-retain-` variants produce identical I/O performance on a single-zone cluster. `FILE_CSI_DEDUP=true` and `BLOCK_CSI_DEDUP=true` (both default) filter these out. Set to `false` for multi-zone clusters where metro topology may affect latency.
 
 ## Conventions
 

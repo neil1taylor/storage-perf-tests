@@ -1,9 +1,35 @@
 #!/usr/bin/env bash
 # =============================================================================
 # 00-config.sh — Central configuration for VM storage performance tests
-# IBM Cloud ROKS + OpenShift Virtualization + ODF + IBM Cloud File
+# IBM Cloud ROKS + OpenShift Virtualization + ODF + IBM Cloud File/Block
 # =============================================================================
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Cluster type detection (BM vs VSI)
+# ---------------------------------------------------------------------------
+detect_cluster_type() {
+  local flavors
+  flavors=$(oc get nodes -l node-role.kubernetes.io/worker= \
+    -o jsonpath='{.items[*].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "")
+  if [[ "${flavors}" == *".metal."* ]] || [[ "${flavors}" == *"metal"* ]]; then
+    echo "bm"
+  else
+    echo "vsi"
+  fi
+}
+
+export CLUSTER_TYPE="${CLUSTER_TYPE:-$(detect_cluster_type)}"
+export WORKER_FLAVOR="${WORKER_FLAVOR:-$(oc get nodes -l node-role.kubernetes.io/worker= \
+  -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "unknown")}"
+export WORKER_COUNT="${WORKER_COUNT:-$(oc get nodes -l node-role.kubernetes.io/worker= \
+  --no-headers 2>/dev/null | wc -l | tr -d ' ')}"
+
+if [[ "${CLUSTER_TYPE}" == "bm" ]]; then
+  export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} bare metal, NVMe, ${WORKER_COUNT} workers)}"
+else
+  export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} VSI, IBM Cloud Block-backed ODF, ${WORKER_COUNT} workers)}"
+fi
 
 # ---------------------------------------------------------------------------
 # Cluster / namespace
@@ -134,10 +160,20 @@ export RUN_ID="perf-${TIMESTAMP}"
 export SSH_KEY_PATH="${SSH_KEY_PATH:-./ssh-keys/perf-test-key}"
 
 # ---------------------------------------------------------------------------
-# Bare metal worker info (for report metadata)
+# IBM Cloud Block CSI — StorageClass profiles to test (VSI clusters only)
+# Discover dynamically via: oc get sc | grep vpc-block
+# Fallback list (common ROKS profiles):
 # ---------------------------------------------------------------------------
-export BM_FLAVOR="${BM_FLAVOR:-bx3d}"
-export BM_DESCRIPTION="IBM Cloud ROKS bare metal with NVMe"
+export BLOCK_CSI_ENABLED="${BLOCK_CSI_ENABLED:-true}"
+export BLOCK_CSI_DISCOVERY="auto"
+# When auto-discovering, skip -metro- and -retain- variants (same I/O perf as base SC)
+export BLOCK_CSI_DEDUP="${BLOCK_CSI_DEDUP:-true}"
+declare -a BLOCK_CSI_PROFILES=(
+  "ibmc-vpc-block-5iops-tier"
+  "ibmc-vpc-block-10iops-tier"
+  "ibmc-vpc-block-custom"
+)
+export BLOCK_CSI_PROFILES
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -146,8 +182,10 @@ export LOG_LEVEL="${LOG_LEVEL:-INFO}"  # DEBUG, INFO, WARN, ERROR
 export LOG_FILE="${RESULTS_DIR}/${RUN_ID}.log"
 
 echo "[config] Run ID: ${RUN_ID}"
+echo "[config] Cluster: ${CLUSTER_TYPE} (${WORKER_FLAVOR}, ${WORKER_COUNT} workers)"
 echo "[config] Namespace: ${TEST_NAMESPACE}"
 echo "[config] ODF pools: ${#ODF_POOLS[@]}"
 echo "[config] File CSI profiles: ${FILE_CSI_DISCOVERY}"
+echo "[config] Block CSI: ${BLOCK_CSI_ENABLED} (discovery=${BLOCK_CSI_DISCOVERY})"
 echo "[config] VM sizes: ${#VM_SIZES[@]}, PVC sizes: ${#PVC_SIZES[@]}"
 echo "[config] Concurrency levels: ${CONCURRENCY_LEVELS[*]}"

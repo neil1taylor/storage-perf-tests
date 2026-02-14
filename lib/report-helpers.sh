@@ -94,7 +94,7 @@ generate_markdown_report() {
 
 **Run ID:** ${run_id}
 **Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
-**Cluster:** IBM Cloud ROKS (${BM_FLAVOR} bare metal, NVMe)
+**Cluster:** ${CLUSTER_DESCRIPTION}
 **ODF Version:** $(oc get csv -n ${ODF_NAMESPACE} -o jsonpath='{.items[0].spec.version}' 2>/dev/null || echo "N/A")
 
 ## Test Configuration
@@ -134,6 +134,16 @@ MDEOF
     while IFS= read -r sc; do
       echo "- ${sc}" >> "${output_md}"
     done < "${RESULTS_DIR}/file-storage-classes.txt"
+  fi
+
+  if [[ -f "${RESULTS_DIR}/block-storage-classes.txt" ]]; then
+    cat >> "${output_md}" <<'MDEOF'
+
+### IBM Cloud Block CSI Profiles
+MDEOF
+    while IFS= read -r sc; do
+      echo "- ${sc}" >> "${output_md}"
+    done < "${RESULTS_DIR}/block-storage-classes.txt"
   fi
 
   cat >> "${output_md}" <<'MDEOF'
@@ -300,7 +310,7 @@ print(json.dumps(data))
   <div class="header">
     <h1>VM Storage Performance Report</h1>
     <div class="meta">
-      Run: ${RUN_ID} | Cluster: IBM Cloud ROKS (${BM_FLAVOR}) | ODF + IBM Cloud File
+      Run: ${RUN_ID} | ${CLUSTER_DESCRIPTION} | ODF + IBM Cloud File/Block
     </div>
   </div>
 
