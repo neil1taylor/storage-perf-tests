@@ -1,0 +1,22 @@
+# Sequential Read/Write — measures throughput (bandwidth)
+# Tests large-block sequential I/O typical of bulk data transfer, backups, media
+
+[global]
+ioengine=libaio
+direct=1
+runtime=${RUNTIME}
+ramp_time=${RAMP_TIME}
+iodepth=${IODEPTH}
+numjobs=${NUMJOBS}
+group_reporting=1
+time_based=1
+size=${FILE_SIZE}
+bs=${BLOCK_SIZE}
+
+[seq-read]
+rw=read
+stonewall
+
+[seq-write]
+rw=write
+stonewall

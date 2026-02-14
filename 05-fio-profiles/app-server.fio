@@ -1,0 +1,47 @@
+# Application Server — simulates general app server workloads
+# Mix of log writes, config reads, moderate random I/O, temp file operations
+
+[global]
+ioengine=libaio
+direct=1
+runtime=${RUNTIME}
+ramp_time=${RAMP_TIME}
+time_based=1
+size=${FILE_SIZE}
+group_reporting=1
+
+# Per-job bs values override the global block-size loop (profile is in FIO_FIXED_BS_PROFILES)
+# Log writes — sequential append, 4k-64k blocks
+[app-log-write]
+rw=write
+bs=16k
+iodepth=4
+numjobs=2
+fsync=4
+stonewall
+
+# Config / small file reads — random 4k
+[app-config-read]
+rw=randread
+bs=4k
+iodepth=4
+numjobs=2
+stonewall
+
+# Temp file I/O — mixed random r/w, 16k blocks
+[app-temp-io]
+rw=randrw
+rwmixread=60
+rwmixwrite=40
+bs=16k
+iodepth=8
+numjobs=${NUMJOBS}
+stonewall
+
+# Session / cache writes — random 4k writes
+[app-session-write]
+rw=randwrite
+bs=4k
+iodepth=8
+numjobs=2
+stonewall

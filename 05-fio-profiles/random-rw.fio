@@ -1,0 +1,22 @@
+# Random Read/Write — measures IOPS
+# Tests small-block random I/O typical of databases, VM disk activity, general workloads
+
+[global]
+ioengine=libaio
+direct=1
+runtime=${RUNTIME}
+ramp_time=${RAMP_TIME}
+iodepth=${IODEPTH}
+numjobs=${NUMJOBS}
+group_reporting=1
+time_based=1
+size=${FILE_SIZE}
+bs=${BLOCK_SIZE}
+
+[rand-read]
+rw=randread
+stonewall
+
+[rand-write]
+rw=randwrite
+stonewall

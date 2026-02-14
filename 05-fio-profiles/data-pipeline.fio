@@ -1,0 +1,54 @@
+# Data/AI Pipeline — simulates bulk data processing, ETL, ML training data I/O
+# Large sequential reads/writes, high throughput, streaming patterns
+
+[global]
+ioengine=libaio
+direct=1
+runtime=${RUNTIME}
+ramp_time=${RAMP_TIME}
+time_based=1
+size=${FILE_SIZE}
+group_reporting=1
+
+# Per-job bs values override the global block-size loop (profile is in FIO_FIXED_BS_PROFILES)
+# Bulk data ingest — large sequential writes (e.g., writing Parquet/CSV)
+[pipeline-ingest]
+rw=write
+bs=1M
+iodepth=32
+numjobs=${NUMJOBS}
+stonewall
+
+# Data scan — large sequential reads (e.g., reading datasets for processing)
+[pipeline-scan]
+rw=read
+bs=1M
+iodepth=32
+numjobs=${NUMJOBS}
+stonewall
+
+# Shuffle / random access — random 256k reads (e.g., ML data augmentation)
+[pipeline-shuffle]
+rw=randread
+bs=256k
+iodepth=16
+numjobs=${NUMJOBS}
+stonewall
+
+# Checkpoint write — periodic large sequential writes (e.g., model checkpoints)
+[pipeline-checkpoint]
+rw=write
+bs=512k
+iodepth=8
+numjobs=2
+stonewall
+
+# Mixed ETL — read source, write transformed (70/30 read-heavy)
+[pipeline-etl]
+rw=randrw
+rwmixread=70
+rwmixwrite=30
+bs=128k
+iodepth=${IODEPTH}
+numjobs=${NUMJOBS}
+stonewall

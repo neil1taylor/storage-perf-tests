@@ -1,0 +1,89 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virtualization. Tests ODF (Ceph) storage pools (replicated and erasure-coded) and IBM Cloud File CSI against a matrix of VM sizes, PVC sizes, concurrency levels, fio profiles, and block sizes.
+
+## Prerequisites
+
+- `oc` CLI authenticated to an IBM Cloud ROKS cluster with bare metal workers (bx3d with NVMe)
+- OpenShift Virtualization (KubeVirt) and ODF (OpenShift Data Foundation) installed
+- `virtctl` CLI for VM SSH access
+- `jq` installed locally
+- Python 3 with `openpyxl` (for XLSX reports)
+
+## Key Commands
+
+```bash
+# Full workflow (sequential):
+./01-setup-storage-pools.sh        # Create CephBlockPools + StorageClasses
+./02-setup-file-storage.sh         # Discover IBM Cloud File CSI StorageClasses
+./06-run-tests.sh                  # Run full test matrix (12-24 hours)
+./06-run-tests.sh --quick          # Smoke test (~1-2 hours)
+./06-run-tests.sh --pool rep3      # Test single pool
+./07-collect-results.sh            # Aggregate fio JSON → CSV
+./08-generate-report.sh            # Generate HTML/Markdown/XLSX reports
+./09-cleanup.sh                    # Remove VMs and PVCs only
+./09-cleanup.sh --all              # Full cleanup including pools/namespace
+./09-cleanup.sh --all --dry-run    # Preview cleanup
+```
+
+## Architecture
+
+### Execution Pipeline
+
+Scripts are numbered `00-09` and run sequentially. Each script sources `00-config.sh` for shared configuration and sources helpers from `lib/`.
+
+### Config-Driven Design
+
+`00-config.sh` is the single source of truth for all tunables: VM sizes, PVC sizes, ODF pool definitions, fio settings, timeouts, and file paths. All values are exported as environment variables or bash arrays. Other scripts consume these via `source 00-config.sh`.
+
+### Template Rendering
+
+VM creation uses string substitution (`__PLACEHOLDER__` patterns) rather than Helm/Kustomize:
+- `04-vm-templates/vm-template.yaml` — KubeVirt VM manifest with DataVolume for root disk + PVC for data disk
+- `03-cloud-init/fio-runner.yaml` — cloud-init that installs fio, writes a systemd oneshot service, and runs the benchmark on boot
+- `05-fio-profiles/*.fio` — fio job files using `${VARIABLE}` placeholders (rendered by `render_fio_profile()` in `lib/vm-helpers.sh`)
+
+The rendering chain for the first permutation is: fio profile → cloud-init template → VM template → `oc apply`. For subsequent permutations reusing the same VMs: fio profile → `replace_fio_job()` via SSH → `restart_fio_service()`.
+
+### Test Orchestration (`06-run-tests.sh`)
+
+VMs are created once per outer-loop group (`pool × vm_size × pvc_size × concurrency`) and reused across all `fio_profile × block_size` permutations via SSH fio job replacement. For each group:
+1. Builds an ordered list of (profile, block_size) permutations
+2. First permutation: renders fio profile → cloud-init → creates N VMs → waits for Running → waits for fio complete → collects results
+3. Subsequent permutations: renders fio profile → replaces job file in each VM via SSH (`replace_fio_job`) → restarts the benchmark service (`restart_fio_service`) → waits for fio complete → collects results
+4. Deletes VMs after all permutations in the group are done
+
+VM names do not include profile/blocksize (since they're reused): `perf-<pool>-<size>-<pvc>-c<conc>-<i>`. Results are stored hierarchically: `results/<pool>/<vmsize>/<pvcsize>/<concurrency>/<profile>/<blocksize>/<vm>-fio.json`
+
+### Shared Libraries (`lib/`)
+
+- `vm-helpers.sh` — Logging functions (`log_info`, `log_warn`, etc.), SSH key management, StorageClass resolution, template rendering (`render_cloud_init`, `render_fio_profile`), VM CRUD (`create_test_vm`, `delete_test_vm`, `collect_vm_results`), VM reuse helpers (`replace_fio_job`, `restart_fio_service`), VM wait with DataVolume clone monitoring (`wait_for_vm_running`)
+- `wait-helpers.sh` — Polling loops with timeouts: `wait_for_all_vms_running`, `wait_for_all_fio_complete` (handles `active`/`failed` states for oneshot services with `RemainAfterExit=yes`), `wait_for_pvc_bound`, `retry_with_backoff`
+- `report-helpers.sh` — fio JSON parsing with `jq`, CSV aggregation, Markdown report generation, HTML dashboard with Chart.js
+
+### Storage Pool Naming
+
+ODF pools use a `perf-test-` prefix for CephBlockPools and `perf-test-sc-` for StorageClasses. The default rep3 pool reuses the existing ROKS out-of-box SC (`ocs-storagecluster-ceph-rbd`). IBM Cloud File SCs are used by their cluster names directly.
+
+### Resource Labeling
+
+All test resources are labeled `app=vm-perf-test` with additional labels for `run-id`, `storage-pool`, `vm-size`, and `pvc-size`. Cleanup scripts use these labels for safe targeted deletion.
+
+## Cluster Topology Assumptions
+
+This suite targets a **single-zone ROKS cluster** with 3 bare metal workers (all in one availability zone).
+
+- **EC pool constraints:** EC pools require k+m unique hosts (using `failureDomain: host`). With 3 workers, only pools needing ≤3 failure domains work (rep2, rep3, ec-2-1). Pools ec-2-2 (needs 4) and ec-4-2 (needs 6) have been removed from `00-config.sh`.
+- **File CSI deduplication:** IBM Cloud File CSI auto-discovery finds ~17 StorageClasses, but `-metro-` and `-retain-` variants produce identical I/O performance on a single-zone cluster. `FILE_CSI_DEDUP=true` (the default) filters these out. Set to `false` for multi-zone clusters where metro topology may affect latency.
+
+## Conventions
+
+- All scripts use `set -euo pipefail` and resolve `SCRIPT_DIR` relative to themselves
+- K8s resource names are truncated to 63 characters and sanitized to lowercase alphanumeric + hyphens
+- fio runs with `direct=1` (O_DIRECT) to bypass OS page cache
+- Cleanup defaults to VMs/PVCs only; pool deletion requires explicit `--pools` or `--all` flag
+- VM SSH access uses ed25519 keys auto-generated to `./ssh-keys/perf-test-key`

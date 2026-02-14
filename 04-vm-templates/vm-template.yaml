@@ -1,0 +1,101 @@
+# =============================================================================
+# vm-template.yaml — OpenShift Virtualization VM template for perf testing
+# Placeholders replaced at runtime:
+#   __VM_NAME__, __NAMESPACE__, __VCPU__, __MEMORY__, __SC_NAME__,
+#   __PVC_SIZE__, __DATASOURCE_NAME__, __DATASOURCE_NAMESPACE__
+# =============================================================================
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: __VM_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app: vm-perf-test
+    perf-test/run-id: __RUN_ID__
+    perf-test/storage-pool: __POOL_NAME__
+    perf-test/vm-size: __VM_SIZE_LABEL__
+    perf-test/pvc-size: __PVC_SIZE__
+spec:
+  runStrategy: Always
+  template:
+    metadata:
+      labels:
+        app: vm-perf-test
+        perf-test/vm: __VM_NAME__
+    spec:
+      domain:
+        cpu:
+          cores: __VCPU__
+          sockets: 1
+          threads: 1
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+            - name: datadisk
+              disk:
+                bus: virtio
+            - name: cloudinitdisk
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {}
+          rng: {}
+        resources:
+          requests:
+            memory: __MEMORY__
+            cpu: "__VCPU__"
+          limits:
+            memory: __MEMORY__
+            cpu: "__VCPU__"
+      networks:
+        - name: default
+          pod: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        # Root disk — Fedora cloud image from DataVolume
+        - name: rootdisk
+          dataVolume:
+            name: __VM_NAME__-rootdisk
+        # Data disk — the PVC we're benchmarking
+        - name: datadisk
+          persistentVolumeClaim:
+            claimName: __VM_NAME__-data
+        # Cloud-init configuration (stored in Secret to avoid 2KiB inline limit)
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            secretRef:
+              name: __VM_NAME__-cloudinit
+  dataVolumeTemplates:
+    - metadata:
+        name: __VM_NAME__-rootdisk
+      spec:
+        storage:
+          resources:
+            requests:
+              storage: 30Gi
+          storageClassName: __ROOT_SC__
+        sourceRef:
+          kind: DataSource
+          name: __DATASOURCE_NAME__
+          namespace: __DATASOURCE_NAMESPACE__
+---
+# Data PVC — the disk under test
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: __VM_NAME__-data
+  namespace: __NAMESPACE__
+  labels:
+    app: vm-perf-test
+    perf-test/run-id: __RUN_ID__
+    perf-test/storage-pool: __POOL_NAME__
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: __SC_NAME__
+  resources:
+    requests:
+      storage: __PVC_SIZE__

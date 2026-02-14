@@ -1,0 +1,47 @@
+# Database OLTP — simulates PostgreSQL/MySQL transactional workloads
+# Random 8k reads (data pages) + sequential 8k writes (WAL) + fsync
+
+[global]
+ioengine=libaio
+direct=1
+runtime=${RUNTIME}
+ramp_time=${RAMP_TIME}
+time_based=1
+size=${FILE_SIZE}
+group_reporting=1
+
+# Data page reads — random 8k, high concurrency
+# Per-job bs values override the global block-size loop (profile is in FIO_FIXED_BS_PROFILES)
+[db-data-read]
+rw=randread
+bs=8k
+iodepth=16
+numjobs=${NUMJOBS}
+stonewall
+
+# WAL writes — sequential 8k with fsync (simulates journal/WAL)
+[db-wal-write]
+rw=write
+bs=8k
+iodepth=1
+numjobs=1      # WAL writes are single-threaded by design
+fsync=1
+stonewall
+
+# Mixed OLTP — 80% random read, 20% random write (typical OLTP ratio)
+[db-oltp-mixed]
+rw=randrw
+rwmixread=80
+rwmixwrite=20
+bs=8k
+iodepth=${IODEPTH}
+numjobs=${NUMJOBS}
+stonewall
+
+# Point query — single random 4k reads with low queue depth
+[db-point-query]
+rw=randread
+bs=4k
+iodepth=1
+numjobs=1      # Point queries test single-threaded latency
+stonewall

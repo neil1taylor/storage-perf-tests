@@ -1,0 +1,128 @@
+#cloud-config
+# =============================================================================
+# fio-runner.yaml — Cloud-init template for VM storage performance testing
+# Variables replaced at runtime: __FIO_PROFILE__, __BLOCK_SIZE__, __TEST_DIR__,
+#   __RUNTIME__, __RAMP_TIME__, __IODEPTH__, __NUMJOBS__, __FILE_SIZE__,
+#   __VM_NAME__, __SSH_PUB_KEY__, __FIO_TIMEOUT__
+# =============================================================================
+
+hostname: __VM_NAME__
+
+users:
+  - name: fedora
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - __SSH_PUB_KEY__
+
+package_update: true
+packages:
+  - fio
+  - jq
+  - sysstat
+  - nvme-cli
+  - util-linux
+
+# Format the data disk (vdb = second virtio disk, after rootdisk on vda)
+fs_setup:
+  - label: perfdata
+    filesystem: xfs
+    device: /dev/vdb
+    overwrite: false
+
+# Mount the data disk at the test directory
+mounts:
+  - [/dev/vdb, __TEST_DIR__, xfs, "defaults,noatime", "0", "0"]
+
+write_files:
+  # Main fio job file (injected at runtime)
+  - path: /opt/perf-test/fio-job.fio
+    permissions: '0644'
+    content: |
+      __FIO_JOB_CONTENT__
+
+  # Runner script that executes fio and writes structured output
+  - path: /opt/perf-test/run-benchmark.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      VM_NAME="__VM_NAME__"
+      TEST_DIR="__TEST_DIR__"
+      RESULTS_DIR="/opt/perf-test/results"
+      RESULTS_FILE="${RESULTS_DIR}/${VM_NAME}-results.json"
+
+      mkdir -p "${TEST_DIR}" "${RESULTS_DIR}"
+
+      # Verify data disk is mounted (not just a directory on the root disk)
+      if ! mountpoint -q "${TEST_DIR}"; then
+        echo "ERROR: ${TEST_DIR} is not a mount point — data disk may not be formatted/mounted"
+        echo "Block devices:"
+        lsblk
+        echo "Mounts:"
+        mount | grep -E '(vd[a-z]|data)' || true
+        exit 1
+      fi
+
+      echo "=== VM Storage Performance Test ==="
+      echo "VM: ${VM_NAME}"
+      echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "Kernel: $(uname -r)"
+      echo ""
+
+      # Collect system info
+      echo '--- System Info ---'
+      lscpu | grep -E "^(Architecture|CPU\(s\)|Model name|Thread)" || true
+      free -h
+      echo ""
+
+      # Collect storage info
+      echo '--- Storage Info ---'
+      lsblk -d -o NAME,SIZE,ROTA,TRAN,MODEL 2>/dev/null || true
+      df -h "${TEST_DIR}" 2>/dev/null || true
+      echo ""
+
+      # Run fio
+      echo '--- Running fio ---'
+      fio /opt/perf-test/fio-job.fio \
+        --directory="${TEST_DIR}" \
+        --output-format=json+ \
+        --output="${RESULTS_FILE}" \
+        2>&1
+
+      echo ""
+      echo '--- fio Results Summary ---'
+      if [[ -f "${RESULTS_FILE}" ]]; then
+        jq -r '
+          .jobs[] |
+          "Job: \(.jobname)",
+          "  Read:  IOPS=\(.read.iops // 0 | floor) BW=\(.read.bw // 0)KiB/s lat_avg=\(.read.lat_ns.mean // 0 | . / 1000000 | . * 100 | floor | . / 100)ms",
+          "  Write: IOPS=\(.write.iops // 0 | floor) BW=\(.write.bw // 0)KiB/s lat_avg=\(.write.lat_ns.mean // 0 | . / 1000000 | . * 100 | floor | . / 100)ms",
+          ""
+        ' "${RESULTS_FILE}" 2>/dev/null || echo "Could not parse JSON results"
+      fi
+
+  # Systemd service to auto-run benchmark on boot
+  - path: /etc/systemd/system/perf-test.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=VM Storage Performance Test
+      After=multi-user.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/opt/perf-test/run-benchmark.sh
+      StandardOutput=journal+console
+      StandardError=journal+console
+      RemainAfterExit=yes
+      TimeoutStartSec=__FIO_TIMEOUT__
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # Enable and start the benchmark service
+  - systemctl daemon-reload
+  - systemctl enable perf-test.service
+  - systemctl start perf-test.service
