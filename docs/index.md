@@ -52,6 +52,7 @@ Practical how-to documentation for running and customizing the test suite.
 | [Understanding Results](guides/understanding-results.md) | Reading fio JSON, CSV columns, HTML dashboard, analysis tips |
 | [Customization](guides/customization.md) | Adding pools, profiles, VM sizes, adjusting parameters |
 | [Troubleshooting](guides/troubleshooting.md) | Common failures and how to fix them |
+| [VSI Storage Testing Guide](guides/vsi-storage-testing-guide.md) | VSI bandwidth constraints, IOPS tiers, ODF sizing for realistic benchmarks |
 
 ## Architecture
 
