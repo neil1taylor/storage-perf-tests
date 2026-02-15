@@ -285,14 +285,23 @@ This is the best-case latency and throughput baseline on VSI. Comparing Block CS
 ### IBM Cloud File CSI (NFS)
 
 ```
-fio → VM virtio disk → virt-launcher pod → NFS client (kernel)
-  → VPC network → IBM Cloud File service (managed NFS)
+fio → VM virtio disk → QEMU (file I/O on disk.img)
+  → virt-launcher pod mount namespace → kubelet NFS mount on node
+  → NFS client (kernel) → VPC network → IBM Cloud File service (managed NFS)
 ```
 
+Unlike the block-mode I/O paths above, File CSI PVCs use `volumeMode: Filesystem`. This introduces a **file-on-filesystem indirection** layer that block-mode PVCs don't have:
+
+1. **NFS mount chain:** The CSI node plugin mounts the IBM Cloud NFS share onto the node's filesystem. CRI-O then bind-mounts that same mount point into the virt-launcher pod's namespace. There is **one NFS mount** on the node — the pod doesn't create a second independent mount.
+2. **disk.img indirection:** Inside the NFS-mounted directory, KubeVirt stores the VM's virtual disk as a raw `disk.img` file. QEMU opens this file and presents it to the guest as a virtio block device. Every guest I/O traverses: QEMU (translates guest block offset to file offset in `disk.img`) → host VFS/NFS client → VPC network → IBM Cloud File service.
+3. **No intermediate filesystem on block paths:** With ODF (Ceph RBD) and Block CSI, the PVC is a raw block device passed directly to QEMU — no `disk.img` file, no NFS, no host filesystem layer.
+
+This extra indirection is one reason NFS-backed VMs tend to show higher latency than block-backed VMs, even at the same IOPS tier. See [How Storage Reaches the VM](../concepts/openshift-virtualization.md#how-storage-reaches-the-vm) for a detailed explanation of both paths.
+
 **Network hops:** 1 (pod→NFS server)
-**IOPS determined by:** StorageClass IOPS tier (500, 1,000, 2,000, or 4,000 IOPS), independent of PVC size
+**IOPS determined by:** StorageClass IOPS tier (500, 1,000, or 3,000 IOPS), independent of PVC size
 **Throughput limited by:** NFS protocol overhead and File service limits
-**Latency:** Moderate — NFS protocol adds overhead vs block protocols
+**Latency:** Moderate — NFS protocol + file-on-filesystem indirection add overhead vs block protocols
 
 **Note on `direct=1` (O_DIRECT) with NFS:** The fio `direct=1` flag requests O_DIRECT to bypass the OS page cache. On NFS, the kernel may silently ignore this flag depending on the NFS version and mount options. fio results on NFS with `direct=1` should be interpreted carefully — you may be measuring cached I/O even though O_DIRECT was requested.
 
@@ -348,7 +357,7 @@ Memory requirements are modest because `direct=1` bypasses the OS page cache. 4�
 |---------|---------------------|-----|
 | **ODF (Ceph RBD)** | 50 GiB+ (size matters less) | IOPS comes from the OSD backing volumes, not the individual RBD volume |
 | **Block CSI (direct)** | 500 GiB+ for tiered profiles | PVC size × IOPS/GiB = volume IOPS; small PVCs hit the IOPS floor and don't test the tier's ceiling |
-| **File CSI (NFS)** | Any size | IOPS is set by the SC tier (500/1,000/2,000/4,000 IOPS), independent of PVC size |
+| **File CSI (NFS)** | Any size | IOPS is set by the SC tier (500/1,000/3,000 IOPS), independent of PVC size |
 
 ### ODF Deployment for Performance Testing
 

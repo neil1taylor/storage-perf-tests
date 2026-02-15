@@ -80,6 +80,51 @@ volumes:
 
 The data disk's StorageClass and size vary per test — this is the variable being measured.
 
+### How Storage Reaches the VM
+
+The path from physical storage to the guest VM's `/dev/vda` differs depending on whether the PVC uses **block mode** or **filesystem mode**. Understanding this path explains why different storage backends have different latency characteristics.
+
+#### Block-mode PVCs (ODF/Ceph RBD, IBM Cloud Block CSI)
+
+```
+Guest I/O → virtio-blk → QEMU/KVM → raw block device → CSI driver → storage backend
+```
+
+- The PVC's block device is passed directly into the virt-launcher pod
+- QEMU/KVM maps it as a virtio-blk device — the guest sees `/dev/vda`
+- No filesystem layer between QEMU and the storage; I/O goes directly to the block device
+- This is the lower-overhead path and is used by ODF (Ceph RBD) and IBM Cloud Block CSI
+
+#### Filesystem-mode PVCs (IBM Cloud File CSI / NFS)
+
+```
+Guest I/O → virtio-blk → QEMU (file I/O on disk.img)
+  → virt-launcher pod mount namespace
+  → kubelet NFS mount on node
+  → NFS client (kernel) → network → NFS server
+```
+
+- The CSI node plugin mounts the NFS share onto the node's filesystem
+- The container runtime (CRI-O) bind-mounts that same mount point into the virt-launcher pod — there is **one NFS mount** (on the node), not separate mounts on the node and in the pod
+- Inside the PV mount directory, KubeVirt stores the virtual disk as a raw `disk.img` file
+- QEMU opens `disk.img` and presents it to the guest via virtio — the guest still sees `/dev/vda`
+- Every guest I/O traverses: QEMU (translates guest block offset to file offset in `disk.img`) → host VFS/NFS client → network → NFS server
+
+#### File-on-filesystem indirection
+
+This is the extra abstraction layer with filesystem-mode PVCs. A file is pretending to be a disk: the guest thinks it's writing to a raw block device, but each write passes through QEMU's file I/O layer and the host's VFS/NFS stack before reaching the actual storage. Block-mode PVCs skip this layer entirely, which is one reason they tend to have lower latency.
+
+See also [Volume Modes](storage-in-kubernetes.md#volume-modes) for how Kubernetes exposes these two modes.
+
+#### Raw vs qcow2 image format
+
+CDI (Containerized Data Importer) converts qcow2 source images to **raw format** during import. This is documented in the [KubeVirt CDI README](https://github.com/kubevirt/containerized-data-importer) and the [KubeVirt.io blog](https://kubevirt.io). You can verify this by watching importer pod logs during a DataVolume import — they show "Doing streaming qcow2 to raw conversion".
+
+- **Raw format:** Block N in the guest maps directly to byte offset N in the file. Zero translation overhead.
+- **qcow2 format:** Requires L1/L2 metadata table lookups on every I/O operation. Stacking this on top of NFS would add even more indirection to an already indirect path.
+
+Raw is the right choice for performance: for block-mode PVCs, the raw image maps 1:1 to the block device. For filesystem-mode PVCs, raw eliminates the qcow2 metadata overhead, leaving only the file-on-filesystem indirection.
+
 ### 3. Cloud-init Disk
 
 Contains the cloud-init user-data that configures the VM on first boot.

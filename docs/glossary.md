@@ -12,7 +12,7 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Block Size (bs)** — The size of each I/O operation in fio. Small block sizes (4k) test IOPS; large block sizes (1M) test throughput. See [fio Benchmarking](concepts/fio-benchmarking.md).
 
-**CDI (Containerized Data Importer)** — A Kubernetes controller that provisions VM disk images into PVCs. Used by DataVolumes to clone root disks from pre-cached DataSources. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
+**CDI (Containerized Data Importer)** — A Kubernetes controller that provisions VM disk images into PVCs. Used by DataVolumes to clone root disks from pre-cached DataSources. CDI converts qcow2 source images to raw format during import to avoid metadata translation overhead. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 
 **Checkpoint** — A file (`results/<run-id>.checkpoint`) that records completed tests during a run. Each line contains a test key (`pool:vm_size:pvc_size:concurrency:profile:block_size`). Used by `--resume` to skip previously completed tests. See [Test Matrix Explained](architecture/test-matrix-explained.md#checkpoint--resume).
 
@@ -30,11 +30,15 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Dry-Run** — A mode (`--dry-run` flag) that calculates and prints the test matrix without creating any Kubernetes resources. Shows total permutations, resource requirements, and estimated runtime. See [Test Matrix Explained](architecture/test-matrix-explained.md#dry-run-mode).
 
+**disk.img** — The raw disk image file that KubeVirt creates inside a filesystem-mode PVC to represent a VM's virtual disk. QEMU opens this file and presents it to the guest as a block device. With block-mode PVCs, no `disk.img` file is needed — the block device is passed directly to QEMU. See [How Storage Reaches the VM](concepts/openshift-virtualization.md#how-storage-reaches-the-vm).
+
 **direct=1 (O_DIRECT)** — A fio flag that bypasses the OS page cache, sending I/O directly to the storage device. Required for accurate storage benchmarking. See [fio Benchmarking](concepts/fio-benchmarking.md).
 
 **Erasure Coding (EC)** — A data protection method that splits data into k data chunks and m parity chunks. More storage-efficient than replication but has higher CPU overhead. See [Erasure Coding Explained](concepts/erasure-coding-explained.md).
 
 **fio (Flexible I/O Tester)** — An open-source tool for benchmarking and stress-testing I/O subsystems. The core measurement tool in this project. See [fio Benchmarking](concepts/fio-benchmarking.md).
+
+**File-on-filesystem indirection** — The extra abstraction layer when using filesystem-mode PVCs for VM disks. The guest VM thinks it's writing to a raw block device, but each I/O passes through QEMU's file I/O layer (operating on `disk.img`) and the host's filesystem or NFS stack before reaching the actual storage. Block-mode PVCs skip this layer entirely. See [How Storage Reaches the VM](concepts/openshift-virtualization.md#how-storage-reaches-the-vm).
 
 **fsync** — A system call that forces data to be flushed from OS buffers to the underlying storage device. Critical for database workloads where durability matters. The `db-oltp` profile uses `fsync=1` for WAL writes.
 
@@ -87,6 +91,8 @@ Quick-reference for terms used throughout this project and its documentation.
 **virtctl** — The KubeVirt CLI tool for managing VMs. Used in this project for SSH access to running VMs to collect fio results. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 
 **VM (VirtualMachine)** — In KubeVirt, a custom resource that defines a persistent virtual machine. The VM resource manages the lifecycle of VMI (VirtualMachineInstance) objects. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
+
+**volumeMode** — A PVC field that determines how storage is presented to the pod. `Filesystem` (default) mounts a directory; `Block` exposes a raw block device. For VMs, filesystem-mode PVCs use a `disk.img` file as the virtual disk (file-on-filesystem indirection), while block-mode PVCs pass the device directly to QEMU. See [Volume Modes](concepts/storage-in-kubernetes.md#volume-modes).
 
 **VMI (VirtualMachineInstance)** — The running instance of a KubeVirt VM. Analogous to a pod for containers. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 

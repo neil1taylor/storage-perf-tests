@@ -37,6 +37,22 @@ A PVC specifies:
 
 This project uses **ReadWriteOnce (RWO)** for VM data disks — each VM needs exclusive read-write access to its storage. Root disk DataVolumes use the CDI `storage:` API, which lets CDI choose the optimal access mode from the StorageProfile (typically RWX Block for Ceph RBD, enabling fast CSI cloning).
 
+### Volume Modes
+
+In addition to access modes, PVCs declare a **volumeMode** that determines how the storage is presented to the pod:
+
+| Mode | Meaning |
+|------|---------|
+| `Filesystem` (default) | The CSI driver provisions storage and the kubelet mounts it as a directory. Pods read and write files on that filesystem. For NFS-backed PVCs, the kubelet mounts the remote NFS share; for block-backed PVCs, the kubelet formats a block device with a filesystem first. |
+| `Block` | The CSI driver provisions a raw block device and the pod gets direct access to it — no filesystem layer. The pod sees a device node (e.g., `/dev/xvda`) rather than a mounted directory. |
+
+**Why this matters for VMs:**
+
+- **Filesystem-mode PVCs:** KubeVirt stores the VM's virtual disk as a raw `disk.img` file inside the mounted directory. QEMU opens this file and presents it to the guest as a virtio block device. Every guest I/O passes through QEMU's file I/O layer and the host's filesystem (or NFS) stack — an indirection known as **file-on-filesystem**. See [How Storage Reaches the VM](openshift-virtualization.md#how-storage-reaches-the-vm).
+- **Block-mode PVCs:** KubeVirt passes the raw block device directly to QEMU. No intermediate file or filesystem layer — guest I/O goes straight to the block device. This is the lower-overhead path and is what ODF (Ceph RBD) and IBM Cloud Block CSI use for VM disks.
+
+IBM Cloud File CSI only supports `Filesystem` mode (NFS), while ODF (Ceph RBD) and IBM Cloud Block CSI support both modes. This is one reason block storage tends to have lower latency than NFS for VM workloads.
+
 ### PVC Lifecycle
 
 ```
