@@ -20,9 +20,21 @@ parse_fio_json_to_csv() {
     return 0
   fi
 
-  # Validate JSON before parsing — fio may prepend error text (e.g. ENOSPC)
+  # Validate JSON syntax — fio may prepend error text (e.g. ENOSPC)
   if ! jq empty "${json_file}" 2>/dev/null; then
-    log_warn "Skipping invalid JSON: ${json_file}"
+    log_warn "Skipping invalid JSON (syntax error): ${json_file}"
+    return 0
+  fi
+
+  # Validate fio JSON structure — must have non-empty jobs array with expected fields
+  local job_count
+  job_count=$(jq '.jobs | length' "${json_file}" 2>/dev/null || echo "0")
+  if [[ "${job_count}" -eq 0 ]]; then
+    log_warn "Skipping fio JSON with no jobs: ${json_file}"
+    return 0
+  fi
+  if ! jq -e '.jobs[0] | has("read") and has("write")' "${json_file}" &>/dev/null; then
+    log_warn "Skipping fio JSON missing read/write fields: ${json_file}"
     return 0
   fi
 
@@ -66,7 +78,7 @@ aggregate_results_csv() {
   csv_header > "${output_csv}"
 
   # Each result directory is named: pool/vmsize/pvcsize/concurrency/profile/blocksize/
-  find "${results_dir}" -name "*-fio.json" -type f | sort | while read -r json_file; do
+  while read -r json_file; do
     local rel_path="${json_file#${results_dir}/}"
     # Parse path components
     IFS='/' read -r pool vmsize pvcsize concurrency profile blocksize _filename <<< "${rel_path}"
@@ -78,7 +90,7 @@ aggregate_results_csv() {
 
     parse_fio_json_to_csv "${json_file}" \
       "${pool}" "${vmsize}" "${pvcsize}" "${concurrency}" "${profile}" "${blocksize}" || true
-  done >> "${output_csv}"
+  done < <(find "${results_dir}" -name "*-fio.json" -type f | sort) >> "${output_csv}"
 
   local lines
   lines=$(wc -l < "${output_csv}")

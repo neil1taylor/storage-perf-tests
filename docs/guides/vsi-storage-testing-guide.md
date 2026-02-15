@@ -228,7 +228,19 @@ The ODF/Rook operator resource allocation profile controls CPU and memory reserv
 
 Source: [Red Hat ODF Planning Guide, Table 7.7](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.17/html/planning_your_deployment/infrastructure-requirements_rhodf)
 
-**Worker node sizing implication:** With the Performance profile, each of the 3 workers needs approximately 15 CPU and 32 GiB just for ODF daemons, before any VMs or system overhead. A `bx2-16x64` is marginal (the CPU doesn't fit); `bx2-32x128` or `bx3d-24x120` provides real headroom for concurrent test VMs.
+**Scaling with OSD count:** The table above shows the **base resource requirements** from Red Hat's ODF Planning Guide (Table 7.7). Actual requirements scale with the number of OSD daemons on your cluster. The ODF "Configure Performance" screen in the OpenShift web console computes and displays the real values for your specific cluster configuration.
+
+On bare metal clusters with multiple NVMe drives per node, the computed requirements are significantly higher than the baseline because each NVMe drive runs its own OSD daemon. For example, on a 3-node bare metal cluster with 8 NVMe drives per node (24 OSDs total, 96 CPUs per node):
+
+| Profile | Table 7.7 baseline | BM cluster (24 OSDs) |
+|---------|-------------------|----------------------|
+| **lean** | 24 CPU, 72 GiB | 51 CPU, 126 GiB |
+| **balanced** | 30 CPU, 72 GiB | 66 CPU, 162 GiB |
+| **performance** | 45 CPU, 96 GiB | 117 CPU, 240 GiB |
+
+On VSI clusters with `numOfOsd=1` (3 OSDs total), the values are close to the Table 7.7 baseline. With `numOfOsd=2` (6 OSDs), they increase modestly.
+
+**Worker node sizing implication:** With the Performance profile, each of the 3 workers needs approximately 15 CPU and 32 GiB just for ODF daemons, before any VMs or system overhead. A `bx2-16x64` is marginal (the CPU doesn't fit); `bx2-32x128` or `bx3d-24x120` provides real headroom for concurrent test VMs. On bare metal clusters, performance mode can consume 39+ CPUs per node — ensure your workers have sufficient capacity.
 
 ### Other Notable Add-on Parameters
 

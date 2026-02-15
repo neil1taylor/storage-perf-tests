@@ -213,7 +213,7 @@ create_test_vm() {
   oc delete pvc "${vm_name}-data" -n "${TEST_NAMESPACE}" --wait=false 2>/dev/null || true
   oc delete vm "${vm_name}" -n "${TEST_NAMESPACE}" --wait=false 2>/dev/null || true
 
-  oc create -f - <<EOF
+  oc create -f - <<EOF || { log_error "Failed to create cloud-init Secret ${ci_secret_name}"; return 1; }
 apiVersion: v1
 kind: Secret
 metadata:
@@ -422,7 +422,7 @@ wait_for_fio_completion() {
     if [[ "${status}" -gt 0 ]]; then
       # Also check the systemd service status
       local svc_state
-      svc_state=$(virtctl ssh --namespace="${TEST_NAMESPACE}" \
+      svc_state=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
         --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
         --username=fedora --command="systemctl is-active perf-test.service" \
         "vm/${vm_name}" 2>/dev/null || echo "unknown")
@@ -430,7 +430,7 @@ wait_for_fio_completion() {
       if [[ "${svc_state}" == "inactive" ]] || [[ "${svc_state}" == "active" ]]; then
         # inactive means completed (oneshot), active means still running
         local exit_status
-        exit_status=$(virtctl ssh --namespace="${TEST_NAMESPACE}" \
+        exit_status=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
           --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
           --username=fedora --command="systemctl show perf-test.service -p ExecMainStatus --value" \
           "vm/${vm_name}" 2>/dev/null || echo "unknown")
@@ -457,7 +457,7 @@ collect_vm_results() {
   mkdir -p "${output_dir}"
 
   # Copy fio JSON results
-  virtctl ssh --namespace="${TEST_NAMESPACE}" \
+  timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
     --username=fedora --command="cat /opt/perf-test/results/*.json" \
     "vm/${vm_name}" > "${output_dir}/${vm_name}-fio.json" 2>/dev/null || {
@@ -474,7 +474,7 @@ collect_vm_results() {
   }
 
   # Collect system info
-  virtctl ssh --namespace="${TEST_NAMESPACE}" \
+  timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
     --username=fedora --command="lscpu && echo '---' && free -h && echo '---' && lsblk" \
     "vm/${vm_name}" > "${output_dir}/${vm_name}-sysinfo.txt" 2>/dev/null || true
@@ -493,7 +493,7 @@ replace_fio_job() {
   local encoded
   encoded=$(printf '%s' "${fio_content}" | base64 | tr -d '\n')
 
-  virtctl ssh --namespace="${TEST_NAMESPACE}" \
+  timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
     --username=fedora \
     --command="printf '%s' '${encoded}' | base64 -d | sudo tee /opt/perf-test/fio-job.fio > /dev/null" \
@@ -511,7 +511,7 @@ restart_fio_service() {
   local vm_name="$1"
 
   log_info "Restarting fio service in VM ${vm_name}"
-  virtctl ssh --namespace="${TEST_NAMESPACE}" \
+  timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
     --username=fedora \
     --command="sudo rm -f /opt/perf-test/results/*.json /mnt/data/* && sudo systemctl stop perf-test.service 2>/dev/null; sudo systemctl reset-failed perf-test.service 2>/dev/null; sudo systemctl start --no-block perf-test.service" \

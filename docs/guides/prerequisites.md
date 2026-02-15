@@ -60,7 +60,13 @@ ODF provides the Ceph storage backend.
 2. Click **Create StorageSystem**
 3. Select **Internal** mode
 4. Choose the local NVMe devices on your bare metal workers
-5. Accept defaults and create
+5. On the **Configure Performance** screen, select the performance profile:
+   - **Lean** — Minimum resources; not recommended for performance testing
+   - **Balanced** — Default; suitable for general workloads
+   - **Performance** — Recommended for this test suite; allocates more CPU/memory to Ceph daemons
+
+   The resource requirements shown scale with the number of OSDs (NVMe drives) on your workers. See [VSI Storage Testing Guide — resourceProfile](vsi-storage-testing-guide.md#resourceprofile) for detailed sizing tables.
+6. Accept remaining defaults and create
 
 ### Verify ODF Health
 
@@ -159,15 +165,15 @@ sudo yum install jq        # RHEL/CentOS
 jq --version
 ```
 
-### Python 3 with openpyxl
+### Python 3 with openpyxl (Optional)
 
-Required for XLSX report generation.
+Required for XLSX report generation. If not installed, the report script generates HTML and Markdown reports only and logs a warning.
 
 ```bash
 # Check Python version
 python3 --version
 
-# Install openpyxl
+# Install openpyxl (optional)
 pip3 install openpyxl
 
 # Verify
@@ -194,7 +200,7 @@ virtctl version                          # Should show client version
 # 4. CLI tools
 oc version                               # Should show client + server
 jq --version                             # Should show version
-python3 -c "import openpyxl"             # Should succeed silently
+python3 -c "import openpyxl"             # Optional — XLSX reports skipped if missing
 
 # 5. Namespace (create if it doesn't exist)
 oc get ns vm-perf-test || oc create ns vm-perf-test

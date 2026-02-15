@@ -119,7 +119,7 @@ wait_for_all_fio_complete() {
       fi
 
       local svc_state
-      svc_state=$(virtctl ssh --namespace="${TEST_NAMESPACE}" \
+      svc_state=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
         --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
         --username=fedora --command="systemctl show perf-test.service -p ActiveState --value" \
         "vm/${vm_name}" 2>/dev/null || echo "unknown")
@@ -143,7 +143,7 @@ wait_for_all_fio_complete() {
       if [[ "${svc_state}" == "inactive" ]] || [[ "${svc_state}" == "active" ]] || [[ "${svc_state}" == "failed" ]]; then
         # Query both exit code and PID to distinguish "never started" from "completed"
         local svc_info
-        svc_info=$(virtctl ssh --namespace="${TEST_NAMESPACE}" \
+        svc_info=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
           --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
           --username=fedora --command="systemctl show perf-test.service -p ExecMainPID,ExecMainStatus --value" \
           "vm/${vm_name}" 2>/dev/null || echo "0
@@ -195,7 +195,7 @@ wait_for_all_fio_complete() {
         detail=" ($(IFS=', '; echo "${parts[*]}"))"
       fi
       local label="fio"
-      if [[ fio_active -eq 0 ]]; then
+      if [[ ${fio_active} -eq 0 ]]; then
         label="waiting"
       fi
       log_info "${label}: ${pending_count}/${#vm_names[@]} VMs still in progress${detail} ($(_format_duration "${elapsed}") elapsed)"

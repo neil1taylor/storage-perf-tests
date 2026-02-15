@@ -18,7 +18,7 @@ This page walks through running the test suite step by step, explaining what eac
 
 **What it does:**
 - Creates CephBlockPools in the `openshift-storage` namespace for each pool defined in `ODF_POOLS` (except rep3, which uses the default ROKS pool)
-- Creates corresponding StorageClasses with the `perf-test-sc-` prefix
+- Creates corresponding StorageClasses with the `perf-test-sc-` prefix, configured with VM-optimized RBD image features (`exclusive-lock`, `object-map`, `fast-diff`) and `mapOptions: krbd:rxbounce`
 - Waits for each pool to reach `Ready` state
 - If `rep3-enc` is in the pool list, creates the `ceph-csi-kms-token` secret in the test namespace (required for encrypted PVC provisioning). See [Encrypted Storage Setup](encrypted-storage-setup.md) for details.
 
@@ -106,6 +106,45 @@ Runs the full matrix but only for one storage pool. Useful for:
 
 **Duration:** ~3-5 hours per pool
 
+### Dry-Run Preview
+
+```bash
+./04-run-tests.sh --dry-run
+./04-run-tests.sh --quick --dry-run
+./04-run-tests.sh --filter "rep3:*:*:*:random-rw:4k" --dry-run
+```
+
+Calculates and prints the test matrix without creating any resources:
+- Total permutation count (after filtering, if applied)
+- Maximum concurrent VMs and total PVC storage required
+- Estimated runtime
+- Full list of test permutations
+
+Use this to verify your flags before committing to a long run.
+
+### Filtered Tests
+
+```bash
+# Only run random-rw with 4k blocks on rep3
+./04-run-tests.sh --filter "rep3:*:*:*:random-rw:4k"
+
+# Run all pools with small VMs and 150Gi PVCs
+./04-run-tests.sh --filter "*:small:150Gi:*:*:*"
+
+# Run everything except File CSI pools
+./04-run-tests.sh --exclude "ibmc-vpc-file*:*:*:*:*:*"
+```
+
+The `--filter` and `--exclude` flags use a 6-field colon-separated pattern: `pool:vm_size:pvc_size:concurrency:profile:block_size`. Use `*` as a wildcard for any field. Both flags can be specified multiple times. `--exclude` takes precedence over `--filter`.
+
+### Resuming an Interrupted Run
+
+```bash
+./04-run-tests.sh --resume perf-20260214-103000
+```
+
+Resumes a previously interrupted run by skipping tests that already completed. The test suite writes a checkpoint file (`results/<run-id>.checkpoint`) after each successful test. When resumed, completed tests are loaded from the checkpoint and skipped automatically. See [Interrupting a Test](#interrupting-a-test) below.
+
 ### What Happens During a Test Run
 
 VMs are created once per (pool × vm_size × pvc_size × concurrency) group and reused across all fio profile and block size permutations:
@@ -153,7 +192,15 @@ Press **Ctrl+C** to stop the test suite. The trap handler will:
 2. Delete all PVCs with the current run-id label
 3. Exit
 
-Results collected before the interruption are preserved. You can re-run with `--pool` to test only the pools you missed.
+A second **Ctrl+C** during cleanup exits immediately.
+
+Results collected before the interruption are preserved. A checkpoint file (`results/<run-id>.checkpoint`) records each completed test, so you can resume exactly where you left off:
+
+```bash
+./04-run-tests.sh --resume perf-20260214-103000
+```
+
+Alternatively, re-run with `--pool` to test only the pools you missed.
 
 ## Step 4: Aggregate Results
 
@@ -186,7 +233,7 @@ Results collected before the interruption are preserved. You can re-run with `--
 - Generates three report formats in `reports/`:
   1. **HTML Dashboard** — Interactive Chart.js charts with filter dropdowns
   2. **Markdown Summary** — Text tables with key metrics
-  3. **XLSX Workbook** — Excel file with raw data and summary charts
+  3. **XLSX Workbook** — Excel file with raw data and summary charts (requires `openpyxl`; skipped with a warning if not installed)
 
 **Expected output:**
 ```
@@ -198,6 +245,14 @@ Results collected before the interruption are preserved. You can re-run with `--
 **Duration:** A few seconds.
 
 Open the HTML dashboard in a browser for the best analysis experience. See [Understanding Results](understanding-results.md) for how to read the reports.
+
+### Comparing Two Runs
+
+```bash
+./06-generate-report.sh --compare perf-20260214-103000 perf-20260215-080000
+```
+
+Generates a comparison HTML dashboard showing the percentage delta between two runs for all metrics. Useful for A/B testing storage configuration changes, firmware updates, or tuning adjustments. See [Understanding Results — Comparison Reports](understanding-results.md#comparison-reports) for details.
 
 ## Step 6: Cleanup
 
@@ -230,6 +285,7 @@ Shows what would be deleted without actually deleting anything. Always run this 
 ### First-Time Validation
 
 ```bash
+./04-run-tests.sh --quick --dry-run  # Preview what will run
 ./01-setup-storage-pools.sh
 ./02-setup-file-storage.sh
 ./04-run-tests.sh --quick            # Quick smoke test first
@@ -251,6 +307,16 @@ Shows what would be deleted without actually deleting anything. Always run this 
 ./07-cleanup.sh --all                # Full cleanup when done
 ```
 
+### Resume After Interruption
+
+```bash
+./04-run-tests.sh                    # Interrupted after 6 hours (Ctrl+C)
+# ...later...
+./04-run-tests.sh --resume perf-20260214-103000  # Picks up where it left off
+./05-collect-results.sh
+./06-generate-report.sh
+```
+
 ### Focused Pool Comparison
 
 ```bash
@@ -259,6 +325,34 @@ Shows what would be deleted without actually deleting anything. Always run this 
 ./05-collect-results.sh
 ./06-generate-report.sh
 # Compare rep3 vs ec-2-1 in the dashboard
+```
+
+### A/B Comparison Across Runs
+
+```bash
+# Run 1: baseline
+./run-all.sh --quick                 # Run ID: perf-20260214-103000
+# ...make a config change (e.g., tune imageFeatures)...
+# Run 2: with changes
+./run-all.sh --quick --skip-setup    # Run ID: perf-20260215-080000
+# Compare
+./06-generate-report.sh --compare perf-20260214-103000 perf-20260215-080000
+```
+
+### Filtered Targeted Test
+
+```bash
+# Re-test only random-rw 4k on rep3 and rep2
+./04-run-tests.sh --filter "rep3:*:*:*:random-rw:4k" --filter "rep2:*:*:*:random-rw:4k"
+./05-collect-results.sh
+./06-generate-report.sh
+```
+
+### Pipeline With Notification
+
+```bash
+./run-all.sh --quick --notify https://hooks.slack.com/services/T.../B.../xxx
+# Sends a Slack message when the pipeline completes
 ```
 
 ## Next Steps

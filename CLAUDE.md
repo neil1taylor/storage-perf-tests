@@ -12,7 +12,7 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 - OpenShift Virtualization (KubeVirt) and ODF (OpenShift Data Foundation) installed
 - `virtctl` CLI for VM SSH access
 - `jq` installed locally
-- Python 3 with `openpyxl` (for XLSX reports)
+- Python 3 with `openpyxl` (optional — for XLSX reports; HTML/Markdown/CSV generated without it)
 
 ## Key Commands
 
@@ -23,6 +23,7 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 ./run-all.sh --quick --skip-setup  # Re-run tests (pools already exist)
 ./run-all.sh --quick --cleanup     # Quick test + clean up VMs/PVCs
 ./run-all.sh --overview --cleanup-all  # Overview + full cleanup
+./run-all.sh --quick --notify https://hooks.slack.com/...  # Notify on completion
 
 # Individual steps (sequential):
 ./01-setup-storage-pools.sh        # Create CephBlockPools + StorageClasses
@@ -34,8 +35,13 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 ./04-run-tests.sh --pool rep3      # Test single pool
 ./04-run-tests.sh --parallel       # Run pools in parallel (auto-scaled)
 ./04-run-tests.sh --parallel 3     # Run N pools in parallel
+./04-run-tests.sh --dry-run        # Preview test matrix without running
+./04-run-tests.sh --resume <id>    # Resume an interrupted run
+./04-run-tests.sh --filter "rep2:*:*:*:random-rw:4k"  # Test selection
+./04-run-tests.sh --exclude "ec-*:*:*:*:*:*"          # Skip matching tests
 ./05-collect-results.sh            # Aggregate fio JSON → CSV
 ./06-generate-report.sh            # Generate HTML/Markdown/XLSX reports
+./06-generate-report.sh --compare <id1> <id2>  # Compare two runs
 ./07-cleanup.sh                    # Remove VMs and PVCs only
 ./07-cleanup.sh --all              # Full cleanup including pools/namespace
 ./07-cleanup.sh --all --dry-run    # Preview cleanup
@@ -49,7 +55,7 @@ Scripts are numbered `00-07` and run sequentially. Each script sources `00-confi
 
 ### Config-Driven Design
 
-`00-config.sh` is the single source of truth for all tunables: VM sizes, PVC sizes, ODF pool definitions, fio settings, timeouts, and file paths. It also auto-detects the cluster type (BM vs VSI) from worker node labels and exports `CLUSTER_TYPE`, `WORKER_FLAVOR`, `WORKER_COUNT`, and `CLUSTER_DESCRIPTION`. All values are exported as environment variables or bash arrays. Other scripts consume these via `source 00-config.sh`.
+`00-config.sh` is the single source of truth for all tunables: VM sizes, PVC sizes, ODF pool definitions, fio settings, timeouts, and file paths. It validates cluster connectivity on load (`oc cluster-info`) and fails with a clear error if the CLI is not authenticated. It also auto-detects the cluster type (BM vs VSI) from worker node labels and exports `CLUSTER_TYPE`, `WORKER_FLAVOR`, `WORKER_COUNT`, and `CLUSTER_DESCRIPTION`. All values are exported as environment variables or bash arrays. Other scripts consume these via `source 00-config.sh`.
 
 ### Template Rendering
 
@@ -70,11 +76,77 @@ VMs are created once per outer-loop group (`pool × vm_size × pvc_size × concu
 
 VM names do not include profile/blocksize (since they're reused): `perf-<pool>-<size>-<pvc>-c<conc>-<i>`. Results are stored hierarchically: `results/<pool>/<vmsize>/<pvcsize>/<concurrency>/<profile>/<blocksize>/<vm>-fio.json`
 
+### Resume / Checkpoint (`--resume`)
+
+After each successful test, the key `pool:size:pvc:conc:profile:bs` is appended to `results/<run-id>.checkpoint`. The `--resume <run-id>` flag loads this file and skips completed tests:
+
+- **Entire VM groups** are skipped when all permutations in the group are already checkpointed (no VMs created).
+- **Individual subsequent permutations** within a partially-complete group are skipped (VM is still created for the remaining tests).
+- The resumed run reuses the original `RUN_ID`, so results accumulate in the same directory.
+
+```bash
+./04-run-tests.sh --quick                       # Starts run perf-20260215-120000
+# ... interrupted with Ctrl+C ...
+./04-run-tests.sh --quick --resume perf-20260215-120000  # Resumes from checkpoint
+```
+
+### Dry-Run / Preview (`--dry-run`)
+
+Prints the full test matrix dimensions, resource requirements, and estimated runtime without creating any K8s resources:
+
+```bash
+./04-run-tests.sh --dry-run
+./04-run-tests.sh --quick --dry-run
+./04-run-tests.sh --filter "rep3:*:*:*:*:*" --dry-run
+```
+
+Output includes: total permutations, VM group count, max concurrent VMs, max PVC storage per group, and estimated wall-clock time (based on `FIO_RUNTIME + FIO_RAMP_TIME + ~60s` overhead per test).
+
+### Test Filtering (`--filter`, `--exclude`)
+
+Filters use a 6-field colon-separated pattern: `pool:vm_size:pvc_size:concurrency:fio_profile:block_size`. Use `*` as a wildcard for any field.
+
+```bash
+# Only random-rw 4k tests on rep2
+./04-run-tests.sh --filter "rep2:*:*:*:random-rw:4k"
+
+# All tests except erasure-coded pools
+./04-run-tests.sh --exclude "ec-*:*:*:*:*:*"
+
+# Combine with dry-run to preview
+./04-run-tests.sh --filter "*:small:150Gi:1:*:*" --dry-run
+```
+
+Filters apply at two levels: entire VM groups are skipped when all their permutations are filtered out, and individual permutations within a group are skipped when they don't match. `--filter` and `--exclude` can be combined (both must pass for a test to run).
+
+### Comparative Reporting (`--compare`)
+
+Generates an interactive HTML comparison dashboard from two completed runs:
+
+```bash
+./06-generate-report.sh --compare perf-20260210-100000 perf-20260215-120000
+```
+
+The comparison joins both CSV result sets on `(pool, vm_size, pvc_size, concurrency, profile, block_size)`, calculates percentage deltas for all metrics (IOPS, bandwidth, latency, p99), and generates `reports/compare-<id1>-vs-<id2>.html` with:
+- Summary counts of improvements, regressions, and unchanged metrics
+- Color-coded delta columns (green = improved, red = regressed)
+- Interactive filters by pool, VM size, PVC size, profile, and block size
+
+### Completion Notification (`--notify`)
+
+Posts a Slack-compatible JSON webhook on pipeline completion:
+
+```bash
+./run-all.sh --quick --notify https://hooks.slack.com/services/T.../B.../xxx
+```
+
+The payload includes run ID, status, duration, and cluster description. Compatible with any webhook that accepts Slack block format.
+
 ### Shared Libraries (`lib/`)
 
-- `vm-helpers.sh` — Logging functions (`log_info`, `log_warn`, etc.), SSH key management, StorageClass resolution, template rendering (`render_cloud_init`, `render_fio_profile`), VM CRUD (`create_test_vm`, `delete_test_vm`, `collect_vm_results`), VM reuse helpers (`replace_fio_job`, `restart_fio_service`), VM wait with DataVolume clone monitoring (`wait_for_vm_running`)
-- `wait-helpers.sh` — Polling loops with timeouts: `wait_for_all_vms_running`, `wait_for_all_fio_complete` (handles `active`/`failed` states for oneshot services with `RemainAfterExit=yes`), `wait_for_pvc_bound`, `retry_with_backoff`
-- `report-helpers.sh` — fio JSON parsing with `jq`, CSV aggregation, Markdown report generation, HTML dashboard with Chart.js
+- `vm-helpers.sh` — Logging functions (`log_info`, `log_warn`, etc.), SSH key management, StorageClass resolution, template rendering (`render_cloud_init`, `render_fio_profile`), VM CRUD (`create_test_vm`, `delete_test_vm`, `collect_vm_results`), VM reuse helpers (`replace_fio_job`, `restart_fio_service`), VM wait with DataVolume clone monitoring (`wait_for_vm_running`). All `virtctl ssh` calls are wrapped with `timeout 30` (or `timeout 60` for data transfers like result collection) to prevent indefinite hangs on unresponsive VMs. Secret creation failure during `create_test_vm` is caught immediately with `return 1` rather than falling through to a long boot timeout.
+- `wait-helpers.sh` — Polling loops with timeouts: `wait_for_all_vms_running`, `wait_for_all_fio_complete` (handles `active`/`failed` states for oneshot services with `RemainAfterExit=yes`), `wait_for_pvc_bound`, `retry_with_backoff`. SSH polling calls use `timeout 30` to prevent hangs.
+- `report-helpers.sh` — fio JSON parsing with `jq`, CSV aggregation, Markdown report generation, HTML dashboard with Chart.js. Validates fio JSON structure before parsing (checks `.jobs | length > 0` and presence of `read`/`write` fields). Uses process substitution (`< <(find ...)`) instead of pipe to avoid subshell variable scoping issues.
 
 ### Storage Pool Naming
 
@@ -92,6 +164,7 @@ This suite supports both **bare metal (BM)** and **VSI** single-zone ROKS cluste
 - **VSI clusters:** IBM Cloud Block-backed ODF, plus IBM Cloud Block CSI available for direct testing. All three backends (ODF, File CSI, Block CSI) are tested.
 - **EC pool constraints:** EC pools require k+m unique hosts (using `failureDomain: host`). With 3 workers, only pools needing ≤3 failure domains work (rep2, rep3, ec-2-1). Pools requiring more hosts (ec-2-2 needs 4, ec-4-2 needs 6) are defined in `00-config.sh` for portability across cluster sizes but are automatically skipped when the cluster has insufficient hosts. Topology skips are logged as warnings and do not count as failures.
 - **EC StorageClass setup:** RBD cannot store image metadata directly on an erasure-coded pool. EC StorageClasses use `pool` (replicated, for metadata) + `dataPool` (EC, for data blocks). `01-setup-storage-pools.sh` automatically sets `pool: ocs-storagecluster-cephblockpool` and `dataPool: perf-test-<ec-pool>` for EC pools.
+- **VM-optimized StorageClass features:** All custom StorageClasses (rep2, ec-2-1, ec-2-2, ec-4-2) use the same VM-optimized RBD image features as the ODF out-of-box virtualization SC: `imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff` and `mapOptions: krbd:rxbounce`. The critical features are `exclusive-lock` (enables write-back caching and single-writer optimizations — major write performance impact), `object-map` + `fast-diff` (speeds up sparse image and DataVolume clone operations), and `rxbounce` (correctness fix for guest OS CRC errors with kernel-space RBD). Without these, custom pools can show up to 7x worse write IOPS than `rep3-virt` even when backed by the same Ceph pool. StorageClass parameters are immutable — changing these requires deleting and recreating the SC.
 - **File/Block CSI deduplication:** Auto-discovery finds many StorageClasses, but `-metro-`, `-retain-`, and `-regional*` variants are filtered out by default. Metro/retain produce identical I/O performance on a single-zone cluster; regional SCs use the `rfs` profile which requires IBM support allowlisting. `FILE_CSI_DEDUP=true` and `BLOCK_CSI_DEDUP=true` (both default) enable this filtering. Set to `false` for multi-zone clusters where metro topology may affect latency, or if `rfs` has been allowlisted.
 - **PVC size minimums:** IBM Cloud File dp2 profile enforces a max ~25 IOPS/GB ratio. The 3000-IOPS SC requires ≥120Gi to provision, so the minimum PVC size in the test matrix is 150Gi.
 - **Rep2 vs Rep3 on 3-node clusters:** On a 3-worker cluster, rep3 reads can outperform rep2 reads because (a) rep3 uses the pre-tuned OOB pool while rep2 uses a freshly created pool with potentially unconverged PG autoscaler, and (b) rep3 on exactly 3 nodes gives perfectly balanced PG distribution (every OSD holds all PGs) while rep2 creates uneven primary OSD pairing. Rep2 should outperform rep3 for writes (2 replica acks vs 3). The `01-setup-storage-pools.sh` script waits for PG autoscaler convergence to minimize the first factor.
@@ -99,7 +172,11 @@ This suite supports both **bare metal (BM)** and **VSI** single-zone ROKS cluste
 ## Conventions
 
 - All scripts use `set -euo pipefail` and resolve `SCRIPT_DIR` relative to themselves
-- K8s resource names are truncated to 63 characters and sanitized to lowercase alphanumeric + hyphens
+- K8s resource names are truncated to 63 characters and sanitized to lowercase alphanumeric + hyphens (pure bash: `${var,,}`, `${var//[^a-z0-9-]/-}`, `${var:0:63}`, `${var%-}`)
 - fio runs with `direct=1` (O_DIRECT) to bypass OS page cache
 - Cleanup defaults to VMs/PVCs only; pool deletion requires explicit `--pools` or `--all` flag
 - VM SSH access uses ed25519 keys auto-generated to `./ssh-keys/perf-test-key`
+- All `virtctl ssh` calls are wrapped with `timeout` (30s for commands, 60s for data transfers) to prevent indefinite hangs
+- Checkpoint files (`results/<run-id>.checkpoint`) are append-only text files with one `pool:size:pvc:conc:profile:bs` key per line
+- XLSX report generation gracefully degrades: if `openpyxl` is not installed, the report is skipped with a warning (HTML/Markdown/CSV are always generated)
+- Signal handler uses tracked PID arrays for reliable cleanup; second Ctrl+C exits immediately

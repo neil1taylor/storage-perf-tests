@@ -25,6 +25,7 @@ source "${SCRIPT_DIR}/lib/vm-helpers.sh"
 SKIP_SETUP=false
 DO_CLEANUP=""
 NO_REPORTS=false
+NOTIFY_URL=""
 PASSTHROUGH_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
     --cleanup)       DO_CLEANUP="--"; shift ;;
     --cleanup-all)   DO_CLEANUP="--all"; shift ;;
     --no-reports)    NO_REPORTS=true; shift ;;
+    --notify)        NOTIFY_URL="$2"; shift 2 ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo ""
@@ -41,12 +43,17 @@ while [[ $# -gt 0 ]]; do
       echo "  --pool <name>        Test single pool"
       echo "  --overview           Overview mode"
       echo "  --parallel [N]       Run pools in parallel"
+      echo "  --resume <run-id>    Resume an interrupted run"
+      echo "  --dry-run            Preview test matrix without running"
+      echo "  --filter <pattern>   Only run tests matching pattern"
+      echo "  --exclude <pattern>  Skip tests matching pattern"
       echo ""
       echo "Pipeline options:"
       echo "  --skip-setup         Skip storage pool/file/block setup (steps 01-03)"
       echo "  --cleanup            Clean up VMs/PVCs after reports are generated"
       echo "  --cleanup-all        Full cleanup including pools and namespace"
       echo "  --no-reports         Stop after test run (skip collect + report)"
+      echo "  --notify <url>       POST JSON summary to webhook on completion (Slack-compatible)"
       exit 0
       ;;
     *)               PASSTHROUGH_ARGS+=("$1"); shift ;;
@@ -109,6 +116,33 @@ fi
 
 PIPELINE_END=$(date +%s)
 ELAPSED=$(( PIPELINE_END - PIPELINE_START ))
+PIPELINE_STATUS="success"
+
 log_info "=========================================="
 log_info "Pipeline Complete (${ELAPSED}s / $(( ELAPSED / 60 ))m)"
 log_info "=========================================="
+
+# ---------------------------------------------------------------------------
+# Completion notification (webhook)
+# ---------------------------------------------------------------------------
+if [[ -n "${NOTIFY_URL}" ]]; then
+  log_info "Sending completion notification to webhook..."
+  local_payload=$(cat <<NOTIFY_EOF
+{
+  "text": "Storage perf test pipeline complete",
+  "blocks": [
+    {
+      "type": "section",
+      "text": {
+        "type": "mrkdwn",
+        "text": "*Storage Performance Test Complete*\n*Run ID:* ${RUN_ID}\n*Status:* ${PIPELINE_STATUS}\n*Duration:* ${ELAPSED}s ($(( ELAPSED / 60 ))m)\n*Cluster:* ${CLUSTER_DESCRIPTION}"
+      }
+    }
+  ]
+}
+NOTIFY_EOF
+  )
+  curl -s -X POST -H 'Content-Type: application/json' \
+    -d "${local_payload}" \
+    "${NOTIFY_URL}" >/dev/null 2>&1 || log_warn "Failed to send notification webhook"
+fi

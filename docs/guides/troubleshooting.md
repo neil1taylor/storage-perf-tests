@@ -132,6 +132,17 @@ virtctl ssh --namespace=vm-perf-test --identity-file=./ssh-keys/perf-test-key -v
   oc get pods -n vm-perf-test -l vm.kubevirt.io/name=<vm-name>
   ```
 
+### SSH Timeout During Test Suite
+
+**Symptom:** Log shows `unknown` for service status, or fio job replacement/result collection fails.
+
+All `virtctl ssh` calls in the test suite are wrapped with a 30-second timeout (60 seconds for data transfers like result collection). If a VM becomes unresponsive, the SSH attempt fails gracefully rather than hanging indefinitely.
+
+**Common causes:**
+- **VM kernel panic or OOM kill:** Check the virt-launcher pod logs
+- **Storage I/O stall:** Heavy fio workload can stall the VM's root filesystem. This usually self-resolves when the fio test ends.
+- **Network partition:** Check pod networking in the test namespace
+
 ### SSH Key Not Found
 
 **Symptom:** Error about missing SSH key file.
@@ -202,11 +213,12 @@ cat results/rep3/small/150Gi/1/random-rw/4k/*-fio.json | jq '.jobs | length'
 
 **Check:** Open the browser developer console (F12) for JavaScript errors. The most common cause is an empty or malformed CSV.
 
-### XLSX Generation Fails
+### XLSX Generation Skipped
 
-**Symptom:** Error from `06-generate-report.sh` about openpyxl.
+**Symptom:** Log shows `openpyxl not installed — skipping XLSX report`.
 
-**Fix:**
+XLSX generation is optional. If `openpyxl` is not installed, the report script skips XLSX and generates only HTML and Markdown reports. To enable XLSX:
+
 ```bash
 pip3 install openpyxl
 ```
@@ -261,6 +273,41 @@ oc describe pvc <name> -n vm-perf-test
 - **Ceph RBD volume locked:** The RBD image has a lock that prevents deletion
   - Usually resolves after a few minutes
   - Check Ceph for stuck operations
+
+## Startup Issues
+
+### Cluster Connectivity Check Failed
+
+**Symptom:** Script exits immediately with `[FATAL] oc CLI not authenticated or cluster unreachable`.
+
+`00-config.sh` now checks cluster connectivity on startup. If `oc cluster-info` fails, the script aborts early instead of continuing with invalid cluster metadata.
+
+**Fix:**
+```bash
+# Log in to your cluster
+ibmcloud oc cluster config --cluster <cluster-name> --admin
+# Or
+oc login <cluster-api-url>
+
+# Verify
+oc cluster-info
+```
+
+### Interrupted Run Recovery
+
+**Symptom:** A long test run was interrupted and you want to resume.
+
+The test suite writes a checkpoint after each completed test to `results/<run-id>.checkpoint`. To resume:
+
+```bash
+./04-run-tests.sh --resume <run-id>
+```
+
+This loads the checkpoint file and skips all previously completed tests. If all permutations in a VM group are already complete, the entire group is skipped (no VMs are created). Use `--dry-run` with `--resume` to preview what would run:
+
+```bash
+./04-run-tests.sh --resume <run-id> --dry-run
+```
 
 ## General Debugging
 

@@ -6,6 +6,14 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Cluster connectivity check
+# ---------------------------------------------------------------------------
+if ! oc cluster-info &>/dev/null; then
+  echo "[FATAL] oc CLI not authenticated or cluster unreachable. Run 'oc login' first." >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Cluster type detection (BM vs VSI)
 # ---------------------------------------------------------------------------
 detect_cluster_type() {
@@ -95,9 +103,9 @@ export ODF_DEFAULT_SC="ocs-storagecluster-ceph-rbd"
 declare -a FILE_CSI_PROFILES=(
   "ibmc-vpc-file-500-iops"
   "ibmc-vpc-file-1000-iops"
-  "ibmc-vpc-file-2000-iops"
-  "ibmc-vpc-file-4000-iops"
-  "ibmc-vpc-file-dp2"
+  "ibmc-vpc-file-3000-iops"
+  "ibmc-vpc-file-eit"
+  "ibmc-vpc-file-min-iops"
 )
 export FILE_CSI_PROFILES
 

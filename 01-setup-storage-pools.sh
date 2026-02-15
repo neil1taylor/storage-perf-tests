@@ -55,7 +55,8 @@ parameters:
   pool: ${metadata_pool}
 ${ec_data_pool_line}
   imageFormat: "2"
-  imageFeatures: layering
+  imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff
+  mapOptions: krbd:rxbounce
   csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
   csi.storage.k8s.io/provisioner-secret-namespace: ${ODF_NAMESPACE}
   csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner

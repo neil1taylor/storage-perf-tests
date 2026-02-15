@@ -121,7 +121,7 @@ Different storage configurations have dramatically different performance charact
 | **Erasure coding** | EC writes fewer total bytes but requires CPU for encoding/decoding. |
 | **PVC size** | Larger PVCs may stripe across more OSDs, potentially increasing parallelism. |
 | **Access mode** | RWO vs RWX can affect which nodes can host the storage. |
-| **StorageClass parameters** | Filesystem type, encryption, compression all affect performance. |
+| **StorageClass parameters** | Filesystem type, encryption, compression, and RBD image features (`imageFeatures`, `mapOptions`) all affect performance. Features like `exclusive-lock` enable write-back caching and can improve write IOPS by up to 7x. |
 
 This test suite systematically measures these differences by testing multiple StorageClasses, PVC sizes, and workload patterns.
 

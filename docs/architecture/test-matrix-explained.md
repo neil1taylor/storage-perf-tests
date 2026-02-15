@@ -105,6 +105,46 @@ The `--pool <name>` flag tests only one storage pool:
 With full matrix: 1 × 3 × 3 × 3 × 12 = 324 permutations.
 With quick mode: 1 × 1 × 1 × 1 × 4 = 4 permutations.
 
+## Filtered Mode
+
+The `--filter` and `--exclude` flags allow fine-grained test selection using a 6-field colon-separated pattern: `pool:vm_size:pvc_size:concurrency:profile:block_size`. Use `*` as a wildcard.
+
+```bash
+# Only random-rw with 4k on rep3
+./04-run-tests.sh --filter "rep3:*:*:*:random-rw:4k"
+
+# All pools, small VMs only
+./04-run-tests.sh --filter "*:small:*:*:*:*"
+
+# Everything except File CSI
+./04-run-tests.sh --exclude "ibmc-vpc-file*:*:*:*:*:*"
+
+# Combine: small VMs except db-oltp
+./04-run-tests.sh --filter "*:small:*:*:*:*" --exclude "*:*:*:*:db-oltp:*"
+```
+
+Both flags can be specified multiple times. `--exclude` takes precedence over `--filter`. When `--filter` is specified, only matching tests run; when only `--exclude` is specified, all tests except matches run.
+
+Filtered tests still respect the group lifecycle — VMs are created only if at least one permutation in the group passes the filter. If all permutations in a group are filtered out, the group is skipped entirely.
+
+## Dry-Run Mode
+
+The `--dry-run` flag calculates and prints the test matrix without creating any Kubernetes resources:
+
+```bash
+./04-run-tests.sh --dry-run
+./04-run-tests.sh --quick --filter "rep3:*:*:*:*:*" --dry-run
+```
+
+Output includes:
+- Total permutation count (after filtering)
+- Maximum concurrent VMs at any point
+- Total PVC storage required
+- Estimated runtime
+- List of all test permutations
+
+Combine with `--filter`, `--exclude`, `--quick`, or `--resume` to preview exactly what would run.
+
 ## Group Lifecycle (VM Reuse)
 
 VMs are created once per outer-loop group and reused across all (profile × block_size) permutations:
@@ -194,6 +234,28 @@ results/
 └── ...
 ```
 
+## Checkpoint / Resume
+
+The test suite writes a checkpoint file after each successful test:
+
+```
+results/<run-id>.checkpoint
+```
+
+Each line contains a test key in the format `pool:vm_size:pvc_size:concurrency:profile:block_size`. To resume an interrupted run:
+
+```bash
+./04-run-tests.sh --resume perf-20260214-103000
+```
+
+Resume behavior:
+- Loads the checkpoint file and marks all listed tests as completed
+- For each VM group, checks if ALL permutations are already complete — if so, skips the group entirely (no VM creation)
+- For partially complete groups, creates VMs and skips only the completed permutations
+- New results are appended to the same checkpoint file
+
+Use `--dry-run` with `--resume` to preview what would still need to run.
+
 ## Interruption Handling
 
 If the test suite is interrupted (Ctrl+C or SIGTERM):
@@ -203,7 +265,9 @@ If the test suite is interrupted (Ctrl+C or SIGTERM):
 3. All PVCs with the current run-id label are deleted
 4. The script exits
 
-Results collected before the interruption are preserved in the `results/` directory.
+A second Ctrl+C during cleanup exits immediately.
+
+Results collected before the interruption are preserved in the `results/` directory. The checkpoint file records all completed tests, enabling `--resume` to pick up where you left off.
 
 ## Next Steps
 

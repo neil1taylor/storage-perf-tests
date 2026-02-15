@@ -25,6 +25,21 @@ main() {
     exit 1
   fi
 
+  # Pre-validate all fio JSON files and report summary
+  local valid_count=0 invalid_count=0 empty_count=0
+  while read -r json_file; do
+    if ! jq empty "${json_file}" 2>/dev/null; then
+      ((invalid_count += 1))
+      log_warn "Invalid JSON (syntax): ${json_file}"
+    elif [[ $(jq '.jobs | length' "${json_file}" 2>/dev/null || echo "0") -eq 0 ]]; then
+      ((empty_count += 1))
+      log_warn "Empty jobs array: ${json_file}"
+    else
+      ((valid_count += 1))
+    fi
+  done < <(find "${RESULTS_DIR}" -name "*-fio.json" -type f)
+  log_info "Validation: ${valid_count} valid, ${invalid_count} invalid syntax, ${empty_count} empty jobs"
+
   # Generate aggregated CSV
   local csv_file="${REPORTS_DIR}/results-${RUN_ID}.csv"
   mkdir -p "${REPORTS_DIR}"

@@ -100,6 +100,54 @@ See [Erasure Coding Explained](erasure-coding-explained.md) for a deep dive. In 
 | **ec-2-2** | Erasure Coded | k=2, m=2 | 2.0x | Survives 2 OSD failures | 4 |
 | **ec-4-2** | Erasure Coded | k=4, m=2 | 1.5x | Survives 2 OSD failures | 6 |
 
+### VMware vSAN Comparison
+
+For teams migrating from VMware vSAN, these Ceph pool types map to familiar vSAN storage policies:
+
+| Ceph Pool | vSAN Equivalent | Overhead | Fault Tolerance | Min Hosts (Ceph) | Min Hosts (vSAN) |
+|-----------|----------------|----------|-----------------|-------------------|-------------------|
+| **rep2** | RAID-1 FTT=1 | 2x | 1 failure | 2 | 3 (includes witness) |
+| **rep3** | RAID-1 FTT=2 | 3x | 2 failures | 3 | 5 (2×FTT+1) |
+| **ec-2-1** | RAID-5 FTT=1 | 1.5x | 1 failure | 3 | 4 (3+1) |
+| **ec-2-2** | RAID-5 FTT=2 | 2x | 2 failures | 4 | 6 |
+| **ec-4-2** | RAID-6 FTT=2 | 1.5x | 2 failures | 6 | 6 |
+
+Key differences:
+
+- **Lower host minimums:** Ceph separates its cluster quorum (MON daemons) from data placement. A rep3 pool needs only 3 hosts because each host stores one full copy. vSAN RAID-1 FTT=2 needs 5 hosts because it embeds a witness requirement in the per-object placement formula (2×FTT+1).
+- **rep2 is the closest match to standard vSAN RAID-1:** Most vSAN deployments use FTT=1 (RAID-1), which stores 2 copies. Ceph's rep2 is the direct equivalent — same 2x overhead, same single-failure tolerance.
+- **EC performance tradeoffs are similar:** Both Ceph EC and vSAN RAID-5/6 show higher write latency than replication (parity computation + more I/Os per write), but competitive sequential read throughput. The benchmark results from this suite quantify the exact gap on ODF.
+- **Capacity efficiency gains are identical:** EC-2-1 and vSAN RAID-5 FTT=1 both achieve 1.5x overhead vs 2x for their replication equivalents — a 25% capacity saving for the same fault tolerance.
+
+### vSAN Performance: RAID-1 vs Erasure Coding
+
+Published vSAN benchmarks do not provide a clean apples-to-apples RAID-1 vs RAID-5 comparison with standardized fio workloads, which is one reason this test suite exists — to produce that data for ODF/Ceph. However, the qualitative trends from available sources are:
+
+- **vSAN OSA (Original Storage Architecture):** RAID-1 significantly outperforms RAID-5/6, particularly for random writes. The parity computation and read-modify-write penalty on OSA is well documented. Community testing on 8-node clusters shows "marked difference" between RAID-1 and RAID-5/6 IOPS ([VMUG: vSAN Policies and Their Effects](https://www.vmug.com/vsan-policies-and-their-effects/)).
+- **vSAN ESA (Express Storage Architecture, vSAN 8.0+):** VMware claims RAID-5/6 achieves near RAID-1 performance by eliminating the read-modify-write penalty through full-stripe writes and a single-tier NVMe architecture ([VMware Blog: RAID-5/6 with RAID-1 Performance on ESA](https://blogs.vmware.com/cloud-foundation/2022/09/02/raid-5-6-with-the-performance-of-raid-1-using-the-vsan-express-storage-architecture/)). A 2024 ESA benchmark on 6× Cisco UCS NVMe nodes achieved 721k IOPS at 32k random read with RAID-5, but no RAID-1 baseline was published for comparison ([VCDX200: vSAN ESA Performance Testing](http://vcdx200.uw.cz/2024/12/vmware-vsan-esa-storage-performance.html)).
+- **Lenovo ThinkAgile paper:** Compared OSA (RAID-1, 3 disk groups, SAS SSD) vs ESA (RAID-5, 8× NVMe) on 4× VX650 V3 nodes with HCIBench. Found OSA outperformed ESA on 25 GbE, while ESA leveraged 100 GbE for up to 250% better throughput on mixed workloads — but the results conflate the RAID policy change with the hardware architecture change ([Lenovo Press: Scalable vSAN Architectures](https://lenovopress.lenovo.com/lp1872-scalable-vmware-vsan-storage-architectures-on-lenovo-thinkagile-vx)).
+- **StorageReview HCIBench:** Tested vSAN OSA RAID-1 on 4× DL380 G9 (SAS SSD + HDD disk groups) achieving 227k IOPS 4k random read and 64k IOPS 4k random write, but only tested RAID-1 ([StorageReview: vSAN HCIBench Performance](https://www.storagereview.com/vmware_virtual_san_review_hcibench_synthetic_performance)).
+
+The key takeaway for migration planning: vSAN customers moving from RAID-1 to ODF should compare against **rep2** (same protection model). Those considering erasure coding for capacity savings should compare vSAN RAID-5 against **ec-2-1**. The results from this suite provide the ODF side of that comparison with standardized fio workloads across multiple block sizes, concurrency levels, and VM configurations.
+
+### Benchmark Methodology: HCIBench vs This Suite
+
+VMware's [HCIBench](https://flings.vmware.com/hcibench) and this test suite use the same fundamental approach — running fio inside VMs to measure the full I/O path as experienced by workloads. Neither tests raw storage in isolation.
+
+| Aspect | HCIBench (vSAN) | This Suite (ODF) |
+|--------|-----------------|------------------|
+| **I/O path** | fio → guest OS → pvscsi → ESXi → vSAN → disks | fio → guest OS → virtio → KubeVirt/qemu → Ceph RBD → disks |
+| **VM platform** | ESXi worker VMs | KubeVirt VMs on OpenShift |
+| **Storage under test** | VMDKs on vSAN datastore | PVCs on ODF StorageClasses |
+| **Benchmark tool** | fio (or Vdbench) | fio |
+| **Typical goal** | Saturate the cluster (many VMs × many disks) to find aggregate maximums | Measure per-pool performance at realistic concurrency levels (1, 5, 10 VMs) |
+
+Both approaches test what VMs actually experience, not raw storage throughput. Tools like `rados bench` or `rbd bench` (Ceph-native) bypass the VM/hypervisor layer entirely and are not comparable to HCIBench results.
+
+The key difference in methodology is the **goal**: HCIBench typically deploys many VMs with many VMDKs (e.g. 16 VMs × 8 disks = 128 concurrent I/O streams) to find the aggregate cluster ceiling. This suite tests individual pool performance at specific concurrency levels, answering "what will my workload get?" rather than "what is the cluster maximum?" This is more useful for capacity planning and migration sizing — a vSAN customer running 5 database VMs cares about the performance those 5 VMs will see, not the theoretical cluster peak.
+
+Results from both tools are valid for comparison as long as the fio parameters align (block size, read/write ratio, queue depth, runtime). The fio profiles in this suite (`random-rw`, `mixed-70-30`, `db-oltp`) are designed to match common HCIBench workload scenarios.
+
 ## RBD (RADOS Block Device)
 
 **RBD** is Ceph's block storage interface. It presents a virtual block device to the host, backed by RADOS objects. This is what ODF uses to fulfill PVCs for VMs.
@@ -139,6 +187,20 @@ When ODF is installed on a ROKS cluster with bare metal workers:
 
 This default rep3 StorageClass is what most workloads use. Our test suite creates additional pools and StorageClasses to compare performance across different data protection strategies.
 
+### Performance Profiles
+
+The ODF operator supports three resource allocation profiles that control CPU and memory reserved for Ceph daemons (OSDs, MONs, MGR, MDS, RGW):
+
+- **Lean** — Minimum resource allocation. Suitable for resource-constrained environments but not recommended for performance testing, as Ceph daemons may CPU-throttle under heavy I/O.
+- **Balanced** — The default on ROKS. Adequate for general-purpose workloads.
+- **Performance** — Recommended for this test suite. Allocates significantly more CPU and memory to Ceph daemons, reducing the risk of daemon-side bottlenecks during benchmarks.
+
+The profile is selected during StorageSystem creation via the **Configure Performance** screen in the OpenShift web console. The resource requirements shown on that screen are dynamically computed based on your cluster's OSD count — clusters with more NVMe drives (and therefore more OSD daemons) require proportionally more resources.
+
+Under-resourced Ceph daemons can become a hidden bottleneck: fio results may show lower IOPS or higher latency than the underlying storage hardware can deliver, because the OSD processes are CPU-throttled. Selecting the Performance profile eliminates this variable from benchmark results.
+
+See the [VSI Storage Testing Guide — resourceProfile](../guides/vsi-storage-testing-guide.md#resourceprofile) for detailed sizing tables and bare metal scaling examples.
+
 ### CephBlockPool Custom Resource
 
 The test suite creates custom CephBlockPools via `01-setup-storage-pools.sh`:
@@ -170,7 +232,22 @@ spec:
     codingChunks: 2
 ```
 
-Each pool gets a corresponding StorageClass with the `perf-test-sc-` prefix.
+Each pool gets a corresponding StorageClass with the `perf-test-sc-` prefix. All custom StorageClasses are created with VM-optimized RBD image features:
+
+```yaml
+imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff
+mapOptions: krbd:rxbounce
+```
+
+These match the ODF out-of-box virtualization StorageClass (`ocs-storagecluster-ceph-rbd-virtualization`). The key features:
+
+- **exclusive-lock** — Enables write-back caching and single-writer optimizations. This is the biggest performance driver; without it, write IOPS can be up to 7x worse.
+- **object-map** — Bitmap tracking allocated objects, speeds up sparse image operations.
+- **fast-diff** — Speeds up DataVolume clone operations (built on object-map).
+- **deep-flatten** — Allows fully independent clones after flattening.
+- **rxbounce** — Correctness fix for guest OS CRC errors with kernel-space RBD (`krbd`). Adds trivial overhead.
+
+> **Note:** StorageClass parameters are immutable in Kubernetes. If you need to change these features on an existing SC, you must delete and recreate it (`oc delete sc <name>`, then re-run `01-setup-storage-pools.sh`).
 
 ## Monitoring Ceph Health
 

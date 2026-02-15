@@ -4,6 +4,8 @@
 
 This page documents every parameter in `00-config.sh` — the single source of truth for the test suite. All values are exported as environment variables or Bash arrays, and any can be overridden with environment variables before running the scripts.
 
+> **Note:** `00-config.sh` validates cluster connectivity (`oc cluster-info`) on load. If the `oc` CLI is not authenticated or the cluster is unreachable, sourcing the config will fail with `[FATAL] oc CLI not authenticated or cluster unreachable`. Run `oc login` first.
+
 ## Cluster / Namespace
 
 ```bash
@@ -112,6 +114,19 @@ export ODF_DEFAULT_SC="ocs-storagecluster-ceph-rbd"
 
 The **default StorageClass** used by the `rep3` pool. This is the ROKS out-of-box ODF SC, so no custom CephBlockPool is created for rep3. Also used for all VMs' root disks.
 
+### VM-Optimized StorageClass Parameters
+
+All custom StorageClasses created by `01-setup-storage-pools.sh` use VM-optimized RBD settings:
+
+```yaml
+imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff
+mapOptions: krbd:rxbounce
+```
+
+These match the ODF out-of-box virtualization SC (`ocs-storagecluster-ceph-rbd-virtualization` / `rep3-virt`). The most impactful feature is `exclusive-lock`, which enables write-back caching and single-writer optimizations — without it, custom pools can show up to 7x worse write IOPS than `rep3-virt` even when backed by the same Ceph pool. See [Ceph and ODF — StorageClass Features](../concepts/ceph-and-odf.md#cephblockpool-custom-resource) for details on each feature.
+
+> **Note:** StorageClass parameters are immutable. To apply updated features to existing SCs, delete them (`oc delete sc perf-test-sc-rep2 ...`) and re-run `01-setup-storage-pools.sh`.
+
 See [Ceph and ODF](../concepts/ceph-and-odf.md) and [Erasure Coding Explained](../concepts/erasure-coding-explained.md) for background.
 
 **Important:** EC pools require a minimum number of **hosts** (not just OSDs) when using `failureDomain: host` (the default). Each chunk must be placed on a separate host:
@@ -127,9 +142,9 @@ If your cluster has only 3 bare metal workers, only rep2, rep3, and ec-2-1 will 
 declare -a FILE_CSI_PROFILES=(
   "ibmc-vpc-file-500-iops"
   "ibmc-vpc-file-1000-iops"
-  "ibmc-vpc-file-2000-iops"
-  "ibmc-vpc-file-4000-iops"
-  "ibmc-vpc-file-dp2"
+  "ibmc-vpc-file-3000-iops"
+  "ibmc-vpc-file-eit"
+  "ibmc-vpc-file-min-iops"
 )
 export FILE_CSI_DISCOVERY="auto"
 ```
