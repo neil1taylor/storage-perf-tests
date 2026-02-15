@@ -49,7 +49,11 @@ By default, total bandwidth is split approximately **75% network / 25% storage**
 | Minimum storage | 63.5 Gbps | 0.5 Gbps |
 | Minimum network | 0.5 Gbps | 63.5 Gbps |
 
-For storage performance testing, consider adjusting the split toward storage. However, ODF Ceph replication traffic also uses the network allocation — so reducing network bandwidth below what Ceph needs for replication is counterproductive.
+For storage performance testing, consider adjusting the split toward storage. However, be aware of which backends use which allocation:
+- **Storage allocation (25%):** IBM Cloud Block volumes — both direct Block CSI PVCs and ODF OSD backing volumes (iSCSI/NVMe-oF attach)
+- **Network allocation (75%):** ODF Ceph replication traffic between OSDs, and **all NFS traffic** from IBM Cloud File CSI
+
+Reducing network bandwidth below what Ceph needs for replication or what NFS needs for File CSI tests is counterproductive.
 
 ### The ODF Replication Bandwidth Multiplier
 
@@ -299,11 +303,21 @@ Unlike the block-mode I/O paths above, File CSI PVCs use `volumeMode: Filesystem
 This extra indirection is one reason NFS-backed VMs tend to show higher latency than block-backed VMs, even at the same IOPS tier. See [How Storage Reaches the VM](../concepts/openshift-virtualization.md#how-storage-reaches-the-vm) for a detailed explanation of both paths.
 
 **Network hops:** 1 (pod→NFS server)
-**IOPS determined by:** StorageClass IOPS tier (500, 1,000, or 3,000 IOPS), independent of PVC size
-**Throughput limited by:** NFS protocol overhead and File service limits
+**IOPS determined by:** StorageClass IOPS tier (500, 1,000, or 3,000 IOPS), independent of PVC size. Single-client cap is 48,000 IOPS regardless of provisioned IOPS.
+**Throughput formula:** IOPS × 256 KB, capped at 8,192 Mbps (1,024 MB/s). A 3,000-IOPS share maxes out at 768 MB/s theoretical — but only achievable with I/O sizes ≥256 KB and sufficient parallelism (see NFS transfer limit below).
 **Latency:** Moderate — NFS protocol + file-on-filesystem indirection add overhead vs block protocols
 
-**Note on `direct=1` (O_DIRECT) with NFS:** The fio `direct=1` flag requests O_DIRECT to bypass the OS page cache. On NFS, the kernel may silently ignore this flag depending on the NFS version and mount options. fio results on NFS with `direct=1` should be interpreted carefully — you may be measuring cached I/O even though O_DIRECT was requested.
+**Bandwidth path (VSI):** NFS traffic uses the worker node's **network bandwidth allocation (75% default)**, not the storage bandwidth allocation (25%) that VPC Block volumes use. This means File CSI I/O competes with pod networking and ODF Ceph replication traffic, but does not compete with IBM Cloud Block CSI I/O. On a `bx2-32x128` with the default 75/25 split, File CSI shares the 48 Gbps network slice while Block CSI and ODF OSD volumes use the 16 Gbps storage slice.
+
+**64 KB per-session NFS I/O transfer limit:** Each NFS RPC can transfer at most 64 KB of data. Even with fio `bs=1M`, each I/O operation is broken into multiple NFS RPCs (1 MB ÷ 64 KB = 16 RPCs per fio I/O). This makes `numjobs` and `iodepth` critical for NFS throughput — a single sequential fio job cannot saturate the IOPS budget because it is limited by the round-trip time of sequential 64 KB RPCs. Multiple concurrent sessions (jobs) are needed to achieve the share's throughput cap.
+
+**NFS version and mount options:** The IBM Cloud File CSI driver uses **NFSv4.1** with default mount options `hard,nfsvers=4.1,sec=sys`. No `rsize`/`wsize`/`nconnect` options are configured by default. The `nconnect` mount option (multiple TCP connections per NFS mount) could potentially improve throughput by parallelizing RPCs, but IBM does not document or support this configuration.
+
+**`direct=1` (O_DIRECT) on NFS:** The Linux NFS client supports O_DIRECT on NFSv4.1 — fio's `direct=1` flag bypasses the **client-side** NFS page cache, so fio is measuring NFS transport + server-side performance, not cached I/O. However, O_DIRECT on NFS is not equivalent to O_DIRECT on a local block device: the I/O still traverses the NFS protocol layer, and server-side caching behavior is controlled by IBM's infrastructure and is not documented.
+
+**Encryption in transit (EIT):** The `ibmc-vpc-file-eit` StorageClass enables IPsec encryption of NFS traffic. However, **EIT is not supported on RHCOS worker nodes** — since ROKS uses RHCOS, EIT StorageClasses will fail to mount. The test suite's auto-discovery filters these out.
+
+**Account quota:** 300 file shares per account across all VPCs. Each File CSI PVC creates one share.
 
 ## Minimum Sizing for Realistic Benchmarks
 
@@ -410,12 +424,22 @@ The test suite's `BLOCK_CSI_DEDUP=true` (default) filters out `-metro-` and `-re
 
 When interpreting benchmark results from VSI clusters, check these constraints in order:
 
+### ODF and Block CSI
+
 1. **Node storage bandwidth** — The 25% default allocation is often the ceiling for sequential throughput. Check `Total BW × 0.25` for your worker profile.
 2. **IBM Cloud Block volume IOPS** — For Block CSI: `PVC size × IOPS/GiB` (with 3,000 minimum floor). For ODF: `osdSize × IOPS/GiB × numOfOsd × num_workers`.
 3. **ODF replication overhead** — Write throughput is divided by the replication factor (3× for rep3). Read throughput is unaffected.
 4. **ODF resource profile** — Lean/Balanced profiles may CPU-throttle Ceph daemons under heavy load.
 5. **VM CPU** — At high iodepth with many numjobs, the guest VM CPU can saturate before storage does. Use 4+ vCPU.
 6. **IBM Cloud Block volume throughput cap** — Even with sufficient IOPS, each tier has a throughput ceiling (670 MBps for general-purpose, 1,024 MBps for 10iops-tier).
+
+### File CSI (NFS)
+
+1. **StorageClass IOPS tier** — The per-share IOPS cap (500, 1,000, or 3,000) is the primary bottleneck. Unlike ODF, each PVC gets its own dedicated IOPS budget — no contention between VMs.
+2. **64 KB NFS transfer limit** — Each NFS RPC transfers at most 64 KB. Large-block fio tests (bs=1M) require 16 RPCs per I/O. High `numjobs`/`iodepth` is essential to saturate the share.
+3. **Throughput cap** — IOPS × 256 KB, max 8,192 Mbps. A 3,000-IOPS share tops out at 768 MB/s.
+4. **Node network bandwidth** — NFS uses the network allocation (75% default), not the storage allocation. Competes with pod networking and ODF replication traffic.
+5. **File-on-filesystem indirection** — QEMU → `disk.img` → NFS adds latency vs block-mode PVCs. See [How Storage Reaches the VM](../concepts/openshift-virtualization.md#how-storage-reaches-the-vm).
 
 ## References
 

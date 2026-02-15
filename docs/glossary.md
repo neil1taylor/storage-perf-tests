@@ -32,7 +32,13 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **disk.img** — The raw disk image file that KubeVirt creates inside a filesystem-mode PVC to represent a VM's virtual disk. QEMU opens this file and presents it to the guest as a block device. With block-mode PVCs, no `disk.img` file is needed — the block device is passed directly to QEMU. See [How Storage Reaches the VM](concepts/openshift-virtualization.md#how-storage-reaches-the-vm).
 
-**direct=1 (O_DIRECT)** — A fio flag that bypasses the OS page cache, sending I/O directly to the storage device. Required for accurate storage benchmarking. See [fio Benchmarking](concepts/fio-benchmarking.md).
+**direct=1 (O_DIRECT)** — A fio flag that bypasses the OS page cache, sending I/O directly to the storage device. Required for accurate storage benchmarking. On NFSv4.1, O_DIRECT bypasses the client-side page cache but I/O still traverses the NFS protocol layer. See [fio Benchmarking](concepts/fio-benchmarking.md).
+
+**dp2 (defined performance, generation 2)** — The IBM Cloud VPC File Storage profile used by all File CSI StorageClasses in this project. Allows setting IOPS independently of share size (within range limits). Throughput = IOPS × 256 KB, capped at 8,192 Mbps. Max 96,000 IOPS (48,000 per single client). See [VSI Storage Testing Guide](guides/vsi-storage-testing-guide.md#ibm-cloud-file-csi-nfs).
+
+**EIT (Encryption in Transit)** — IPsec encryption of NFS traffic between the worker node and the IBM Cloud File share mount target. Enabled via the `ibmc-vpc-file-eit` StorageClass (`isEITEnabled: "true"`). **Not supported on RHCOS worker nodes** — since ROKS uses RHCOS, EIT StorageClasses will fail to mount and are filtered out by the test suite. See [VSI Storage Testing Guide](guides/vsi-storage-testing-guide.md#ibm-cloud-file-csi-nfs).
+
+**ENI / VNI (Virtual Network Interface)** — A dedicated network interface attached to an IBM Cloud File share mount target when `isENIEnabled: "true"` (default on all ROKS File CSI StorageClasses). Provides security-group-based access control and a dedicated network path to the share. Each PVC creates one VNI, consuming one IP address from the VPC subnet.
 
 **Erasure Coding (EC)** — A data protection method that splits data into k data chunks and m parity chunks. More storage-efficient than replication but has higher CPU overhead. See [Erasure Coding Explained](concepts/erasure-coding-explained.md).
 
@@ -56,7 +62,11 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Namespace** — A Kubernetes mechanism for isolating groups of resources. This project creates resources in the `vm-perf-test` namespace. See [Kubernetes Basics](concepts/kubernetes-basics.md).
 
-**numjobs** — The number of parallel fio worker processes. Each job runs the workload independently. Default: 4. Combined with iodepth, determines total I/O parallelism.
+**nconnect** — An NFS mount option (Linux kernel 5.3+) that creates multiple TCP connections per NFS mount point, parallelizing I/O across connections. Not configured by default in the IBM Cloud File CSI driver and not validated by IBM. Could potentially help throughput given the 64 KB per-session NFS I/O transfer limit.
+
+**NFSv4.1** — The NFS protocol version required by IBM Cloud File Storage for VPC. The File CSI driver mounts shares with `hard,nfsvers=4.1,sec=sys` by default. NFSv4.1 supports O_DIRECT (client-side page cache bypass), delegations, and session-based semantics.
+
+**numjobs** — The number of parallel fio worker processes. Each job runs the workload independently. Default: 4. Combined with iodepth, determines total I/O parallelism. Particularly important for NFS performance due to the 64 KB per-session I/O transfer limit.
 
 **O_DIRECT** — A Linux open flag that bypasses the kernel page cache. See **direct=1**.
 

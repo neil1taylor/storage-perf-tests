@@ -108,6 +108,7 @@ main() {
   # Filter out variants that duplicate I/O behaviour or are inaccessible:
   #   -metro- / -retain-  — same I/O perf as base SC (topology/reclaim only)
   #   -regional*           — use 'rfs' profile which requires IBM support allowlisting
+  #   -eit                 — encryption-in-transit not supported on RHCOS (ROKS worker nodes)
   if [[ "${FILE_CSI_DISCOVERY}" == "auto" && "${FILE_CSI_DEDUP:-true}" == "true" ]]; then
     local pre_filter=${#file_scs[@]}
     local -a deduped_scs=()
@@ -116,6 +117,8 @@ main() {
         log_info "  Skipping variant: ${sc}"
       elif [[ "${sc}" == *-regional* ]]; then
         log_info "  Skipping regional: ${sc} (rfs profile requires allowlisting)"
+      elif [[ "${sc}" == *-eit* ]]; then
+        log_info "  Skipping EIT: ${sc} (encryption-in-transit not supported on RHCOS)"
       else
         deduped_scs+=("${sc}")
       fi

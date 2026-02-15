@@ -104,7 +104,7 @@ declare -a FILE_CSI_PROFILES=(
   "ibmc-vpc-file-500-iops"
   "ibmc-vpc-file-1000-iops"
   "ibmc-vpc-file-3000-iops"
-  "ibmc-vpc-file-eit"
+  # "ibmc-vpc-file-eit"  # EIT not supported on RHCOS (ROKS worker nodes)
   "ibmc-vpc-file-min-iops"
 )
 export FILE_CSI_PROFILES
