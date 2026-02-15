@@ -258,7 +258,7 @@ Names of fio job files in `fio-profiles/`. See [fio Profiles Reference](../archi
 ```bash
 export VM_READY_TIMEOUT=600
 export VM_SSH_TIMEOUT=300
-export FIO_COMPLETION_TIMEOUT=900
+export FIO_COMPLETION_TIMEOUT=1800
 export POLL_INTERVAL=10
 export DV_STALL_THRESHOLD="${DV_STALL_THRESHOLD:-5}"
 export DV_STALL_ACTION="${DV_STALL_ACTION:-warn}"
@@ -268,7 +268,7 @@ export DV_STALL_ACTION="${DV_STALL_ACTION:-warn}"
 |----------|---------|-------------|
 | `VM_READY_TIMEOUT` | 600s (10 min) | Maximum wait for a VM to reach Running state. Includes image clone and boot time. |
 | `VM_SSH_TIMEOUT` | 300s (5 min) | Maximum wait for SSH to become available inside the VM. |
-| `FIO_COMPLETION_TIMEOUT` | 900s (15 min) | Maximum wait for a single fio run to complete. Should be > `FIO_RUNTIME` + overhead. |
+| `FIO_COMPLETION_TIMEOUT` | 1800s (30 min) | Maximum wait for a single fio run to complete. Must cover all sequential stonewall'd jobs in multi-job profiles. |
 | `POLL_INTERVAL` | 10s | Seconds between status checks during polling loops. |
 | `DV_STALL_THRESHOLD` | 5 polls | Number of consecutive polls with no DataVolume progress change before triggering a stall action. At the default `POLL_INTERVAL=10`, this fires after 50s of no progress. |
 | `DV_STALL_ACTION` | `warn` | What to do when a DV clone stall is detected. `warn` = log a warning and keep waiting (warns again after the next threshold). `fail` = log error, dump diagnostics, and abort immediately. |
@@ -276,7 +276,8 @@ export DV_STALL_ACTION="${DV_STALL_ACTION:-warn}"
 **Tuning guidance:**
 - If VMs take a long time to boot (large image, slow storage), increase `VM_READY_TIMEOUT`
 - If fio tests are long (high `FIO_RUNTIME`), increase `FIO_COMPLETION_TIMEOUT` accordingly
-- `FIO_COMPLETION_TIMEOUT` should be at least `FIO_RUNTIME + FIO_RAMP_TIME + 120` to account for startup, ramp, and file creation overhead
+- For multi-job profiles (db-oltp, app-server, data-pipeline) with `stonewall`: `FIO_COMPLETION_TIMEOUT ≥ (FIO_RUNTIME + FIO_RAMP_TIME) × num_jobs + 180`
+- For single-job profiles: `FIO_COMPLETION_TIMEOUT ≥ FIO_RUNTIME + FIO_RAMP_TIME + 180`
 - If DataVolume clones frequently stall, set `DV_STALL_ACTION=fail` to abort early instead of waiting for the full `VM_READY_TIMEOUT`
 
 ## Results / Reporting

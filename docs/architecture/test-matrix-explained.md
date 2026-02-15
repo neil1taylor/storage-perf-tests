@@ -174,7 +174,7 @@ Group start (pool × vm_size × pvc_size × concurrency):
   Step 5: Wait for fio to complete (first run via cloud-init)
     ├── Poll perf-test.service status via virtctl ssh
     ├── Handles active/inactive/failed states (RemainAfterExit=yes)
-    ├── Timeout: FIO_COMPLETION_TIMEOUT (default 900s)
+    ├── Timeout: FIO_COMPLETION_TIMEOUT (default 1800s)
     └── Uses associative array to track per-VM completion
 
   Step 6: Collect results

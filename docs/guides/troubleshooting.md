@@ -157,21 +157,23 @@ ssh-keygen -t ed25519 -f ./ssh-keys/perf-test-key -N "" -C "perf-test"
 
 ### fio Exceeds Timeout
 
-**Symptom:** Log shows `fio in VM <name> did not complete within 900s`
+**Symptom:** Log shows `fio failed in VM <name> (exit code: 15)` or `fio in VM <name> did not complete within timeout`
+
+Exit code 15 means systemd killed fio with SIGTERM after `TimeoutStartSec` expired. This is not an fio error — it's the systemd service timeout.
 
 **Common causes:**
+- **Multi-job profiles at high concurrency:** Profiles with `stonewall` (db-oltp, app-server, data-pipeline) run 5-6 sequential jobs. At concurrency=10 on slow pools (EC, File CSI), contention slows each job, and the total easily exceeds the timeout.
+  - Fix: Increase `FIO_COMPLETION_TIMEOUT` (default 1800s / 30 min)
 - **Large test file on slow storage:** 4G file creation takes time on File CSI
   - Fix: Increase `FIO_COMPLETION_TIMEOUT` or decrease `FIO_TEST_FILE_SIZE`
-- **Storage is overwhelmed:** High concurrency with slow EC pools
-  - Fix: Reduce concurrency levels or increase timeout
 - **VM is under-resourced:** Small VMs with heavy workloads
   - Fix: Use larger VM sizes for demanding profiles
 
-**Recommended formula:**
+**Recommended formula for multi-job profiles:**
 ```
-FIO_COMPLETION_TIMEOUT ≥ FIO_RUNTIME + FIO_RAMP_TIME + 180
+FIO_COMPLETION_TIMEOUT ≥ (FIO_RUNTIME + FIO_RAMP_TIME) × num_stonewall_jobs + 180
 ```
-The extra 180 seconds accounts for file creation, fio startup, and result writing.
+For single-job profiles (sequential-rw, random-rw, mixed-70-30), `FIO_RUNTIME + FIO_RAMP_TIME + 180` is sufficient. For multi-job profiles with 5-6 stonewall'd jobs, multiply accordingly.
 
 ### fio Exits With Error
 

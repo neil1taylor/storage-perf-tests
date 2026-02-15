@@ -251,10 +251,10 @@ If VMs take a long time to boot or fio runs are long:
 
 ```bash
 export VM_READY_TIMEOUT=900         # 15 minutes for slow image clones
-export FIO_COMPLETION_TIMEOUT=1200  # 20 minutes for long fio runs
+export FIO_COMPLETION_TIMEOUT=2400  # 40 minutes for long fio runs
 ```
 
-Rule of thumb: `FIO_COMPLETION_TIMEOUT` should be at least `FIO_RUNTIME + FIO_RAMP_TIME + 120` seconds.
+Rule of thumb: for multi-job profiles (db-oltp, app-server, data-pipeline) with `stonewall`, the timeout must cover all sequential jobs: `(FIO_RUNTIME + FIO_RAMP_TIME) × num_jobs + 180` seconds. The default 1800s (30 min) handles the standard configuration; increase if you raise `FIO_RUNTIME` significantly.
 
 ## Adjusting PVC Sizes
 
