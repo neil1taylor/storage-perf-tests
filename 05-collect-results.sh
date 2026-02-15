@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 07-collect-results.sh — Aggregate fio JSON results into CSV
+# 05-collect-results.sh — Aggregate fio JSON results into CSV
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -80,7 +80,7 @@ main() {
   log_info "  Raw CSV:     ${csv_file}"
   log_info "  Summary CSV: ${summary_file}"
   log_info ""
-  log_info "Run ./08-generate-report.sh to create HTML/Markdown/XLSX reports"
+  log_info "Run ./06-generate-report.sh to create HTML/Markdown/XLSX reports"
 }
 
 main "$@"

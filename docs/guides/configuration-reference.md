@@ -53,10 +53,14 @@ Each entry is formatted as `label:vCPU:memory`. These define the VM resource all
 ## PVC Sizes
 
 ```bash
-declare -a PVC_SIZES=( "10Gi" "50Gi" "100Gi" )
+# Minimum 150Gi: IBM Cloud File dp2 profile enforces max ~25 IOPS/GB,
+# so the 3000-IOPS SC requires ≥120Gi to provision.
+declare -a PVC_SIZES=( "150Gi" "500Gi" "1000Gi" )
 ```
 
 Sizes of the data disk PVCs being benchmarked. Larger PVCs may stripe across more Ceph OSDs, affecting performance.
+
+**Minimum size constraint:** IBM Cloud VPC File shares use the `dp2` profile, which enforces a maximum IOPS-per-GB ratio of ~25. StorageClasses with higher fixed IOPS (e.g. `ibmc-vpc-file-3000-iops`) require a proportionally larger PVC. At 3000 IOPS the minimum is ~120Gi, so the smallest test PVC is set to 150Gi.
 
 ## Concurrency Levels
 
@@ -77,10 +81,12 @@ Number of VMs running the same fio test simultaneously for each permutation. Tes
 ```bash
 declare -a ODF_POOLS=(
   "rep3:replicated:3"
+  "rep3-virt:replicated:3"
+  "rep3-enc:replicated:3"
   "rep2:replicated:2"
   "ec-2-1:erasurecoded:2:1"
-  # ec-2-2 and ec-4-2 removed: need 4 and 6 failure domains respectively,
-  # but this cluster only has 3 worker nodes (failureDomain=host)
+  "ec-2-2:erasurecoded:2:2"
+  "ec-4-2:erasurecoded:4:2"
 )
 ```
 
@@ -88,11 +94,17 @@ Each entry is formatted as `name:type:params`:
 - **Replicated:** `name:replicated:replication_size`
 - **Erasure coded:** `name:erasurecoded:data_chunks:coding_chunks`
 
-| Pool | Type | Config | Storage Overhead | Fault Tolerance |
-|------|------|--------|-----------------|-----------------|
-| rep3 | Replicated | size=3 | 3.0x | 2 failures |
-| rep2 | Replicated | size=2 | 2.0x | 1 failure |
-| ec-2-1 | Erasure Coded | k=2, m=1 | 1.5x | 1 failure |
+| Pool | Type | Config | Storage Overhead | Fault Tolerance | Min Hosts |
+|------|------|--------|-----------------|-----------------|-----------|
+| rep3 | Replicated | size=3 | 3.0x | 2 failures | 3 |
+| rep3-virt | Replicated | size=3 | 3.0x | 2 failures | 3 |
+| rep3-enc | Replicated | size=3 | 3.0x | 2 failures | 3 |
+| rep2 | Replicated | size=2 | 2.0x | 1 failure | 2 |
+| ec-2-1 | Erasure Coded | k=2, m=1 | 1.5x | 1 failure | 3 |
+| ec-2-2 | Erasure Coded | k=2, m=2 | 2.0x | 2 failures | 4 |
+| ec-4-2 | Erasure Coded | k=4, m=2 | 1.5x | 2 failures | 6 |
+
+Pools requiring more OSD hosts than the cluster has are automatically skipped by `01-setup-storage-pools.sh`.
 
 ```bash
 export ODF_DEFAULT_SC="ocs-storagecluster-ceph-rbd"
@@ -130,20 +142,42 @@ export FILE_CSI_DEDUP="${FILE_CSI_DEDUP:-true}"
 |----------|---------|-------------|
 | `FILE_CSI_PROFILES` | 5 common profiles | Fallback list of IBM Cloud VPC File StorageClasses. Used if auto-discovery fails. |
 | `FILE_CSI_DISCOVERY` | `auto` | Set to `auto` to discover all `vpc-file` StorageClasses at runtime. Set to `manual` to use only the fallback list. |
-| `FILE_CSI_DEDUP` | `true` | When auto-discovering, skip `-metro-` and `-retain-` StorageClass variants. Set to `false` for multi-zone clusters. |
+| `FILE_CSI_DEDUP` | `true` | When auto-discovering, skip `-metro-`, `-retain-`, and `-regional*` StorageClass variants. Set to `false` for multi-zone clusters with `rfs` allowlisting. |
 
 The `02-setup-file-storage.sh` script handles discovery and writes the result to `results/file-storage-classes.txt`.
 
-### Why Filter `-metro-` and `-retain-` Variants?
+### IBM Cloud VPC File Share StorageClasses
 
-IBM Cloud VPC File CSI creates up to 4 variants of each IOPS tier (e.g., for the 500-iops tier: `ibmc-vpc-file-500-iops`, `ibmc-vpc-file-metro-500-iops`, `ibmc-vpc-file-500-iops-retain`, `ibmc-vpc-file-metro-500-iops-retain`). On a **single-zone cluster**, these produce statistically identical fio results because:
+All VPC File SCs use one of two underlying VPC file share profiles:
+
+| StorageClass | Profile | Fixed IOPS | Min PVC Size | Notes |
+|--------------|---------|-----------|-------------|-------|
+| `ibmc-vpc-file-min-iops` | dp2 | auto (capacity-based) | 10Gi | IOPS scales with size (~1 IOPS/GB) |
+| `ibmc-vpc-file-eit` | dp2 | 1000 | 40Gi | Encryption in transit enabled |
+| `ibmc-vpc-file-500-iops` | dp2 | 500 | 10Gi | |
+| `ibmc-vpc-file-1000-iops` | dp2 | 1000 | 40Gi | |
+| `ibmc-vpc-file-3000-iops` | dp2 | 3000 | 120Gi | Requires ≥120Gi (25 IOPS/GB max ratio) |
+| `ibmc-vpc-file-regional` | rfs | auto | N/A | Requires IBM support allowlisting |
+| `ibmc-vpc-file-regional-max-bandwidth` | rfs | auto | N/A | Requires IBM support allowlisting |
+| `ibmc-vpc-file-regional-max-bandwidth-sds` | rfs | auto | N/A | Requires IBM support allowlisting |
+
+**dp2 profile:** Standard VPC file shares. IOPS can be set as a fixed value in the StorageClass or left to scale with capacity. The dp2 profile enforces a max ratio of ~25 IOPS per GB — if the requested capacity is too small for the fixed IOPS, provisioning fails with `shares_profile_capacity_iops_invalid`.
+
+**rfs profile:** Regional file shares with cross-zone replication. Not available by default — requires opening an IBM support ticket for VPC allowlisting. Provisioning fails with `'rfs' profile is not accessible` until allowlisted.
+
+Each base SC also has `-metro-`, `-retain-`, and `-metro-retain-` variants (see filtering below).
+
+### Why Filter Variants?
+
+IBM Cloud VPC File CSI creates up to 4 variants of each IOPS tier (e.g., for the 500-iops tier: `ibmc-vpc-file-500-iops`, `ibmc-vpc-file-metro-500-iops`, `ibmc-vpc-file-retain-500-iops`, `ibmc-vpc-file-metro-retain-500-iops`). On a **single-zone cluster**, these produce statistically identical fio results because:
 
 - **`-retain-` variants:** The only difference is the PV reclaim policy (`Retain` instead of `Delete`). This has zero impact on I/O performance.
 - **`-metro-` variants:** These add a volume topology constraint for multi-zone scheduling. On a single-zone cluster, the NFS share lands on the same infrastructure either way, so there is no measurable latency difference.
+- **`-regional*` variants:** These use the `rfs` profile which requires IBM support allowlisting. Without it, PVC provisioning fails immediately.
 
-With `FILE_CSI_DEDUP=true`, auto-discovery filters these out, reducing the number of File CSI StorageClasses from ~17 to ~5 and avoiding redundant test permutations.
+With `FILE_CSI_DEDUP=true`, auto-discovery filters these out, reducing the number of File CSI StorageClasses from ~17 to 5 and avoiding redundant test permutations.
 
-Set `FILE_CSI_DEDUP=false` if you are running on a **multi-zone cluster** where the metro topology constraint may route I/O to a different zone and affect latency.
+Set `FILE_CSI_DEDUP=false` if you are running on a **multi-zone cluster** where the metro topology constraint may affect latency, or if `rfs` has been allowlisted on your account.
 
 ## fio Settings
 
@@ -202,7 +236,7 @@ declare -a FIO_PROFILES=(
 )
 ```
 
-Names of fio job files in `05-fio-profiles/`. See [fio Profiles Reference](../architecture/fio-profiles-reference.md) for detailed documentation of each profile.
+Names of fio job files in `fio-profiles/`. See [fio Profiles Reference](../architecture/fio-profiles-reference.md) for detailed documentation of each profile.
 
 ## Timeouts / Polling
 
@@ -283,16 +317,16 @@ Any variable that uses the `${VAR:-default}` pattern can be overridden with envi
 
 ```bash
 # Run with shorter fio tests
-FIO_RUNTIME=60 ./06-run-tests.sh
+FIO_RUNTIME=60 ./04-run-tests.sh
 
 # Run with more I/O parallelism
-FIO_IODEPTH=64 FIO_NUMJOBS=8 ./06-run-tests.sh
+FIO_IODEPTH=64 FIO_NUMJOBS=8 ./04-run-tests.sh
 
 # Save results in a different directory
-RESULTS_DIR=/data/test-results ./06-run-tests.sh
+RESULTS_DIR=/data/test-results ./04-run-tests.sh
 
 # Enable debug logging
-LOG_LEVEL=DEBUG ./06-run-tests.sh
+LOG_LEVEL=DEBUG ./04-run-tests.sh
 ```
 
 Arrays (`VM_SIZES`, `PVC_SIZES`, etc.) can only be overridden by editing `00-config.sh` directly.

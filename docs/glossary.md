@@ -60,7 +60,7 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **PV (PersistentVolume)** — A piece of storage in a Kubernetes cluster, provisioned by an administrator or dynamically via a StorageClass. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
-**PVC (PersistentVolumeClaim)** — A request for storage by a pod or VM. Binds to a PV. This project tests PVC sizes of 10Gi, 50Gi, and 100Gi. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
+**PVC (PersistentVolumeClaim)** — A request for storage by a pod or VM. Binds to a PV. This project tests PVC sizes of 150Gi, 500Gi, and 1000Gi (minimum 150Gi for IBM Cloud File dp2 3000-IOPS compatibility). See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
 **RADOS (Reliable Autonomic Distributed Object Store)** — The foundational layer of Ceph that provides distributed object storage. All higher-level Ceph interfaces (RBD, CephFS, RGW) are built on top of RADOS. See [Ceph and ODF](concepts/ceph-and-odf.md).
 

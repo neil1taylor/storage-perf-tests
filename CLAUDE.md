@@ -20,22 +20,25 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 # Full workflow (sequential):
 ./01-setup-storage-pools.sh        # Create CephBlockPools + StorageClasses
 ./02-setup-file-storage.sh         # Discover IBM Cloud File CSI StorageClasses
-./02b-setup-block-storage.sh       # Discover IBM Cloud Block CSI StorageClasses (VSI clusters)
-./06-run-tests.sh                  # Run full test matrix (12-24 hours)
-./06-run-tests.sh --quick          # Smoke test (~1-2 hours)
-./06-run-tests.sh --pool rep3      # Test single pool
-./07-collect-results.sh            # Aggregate fio JSON → CSV
-./08-generate-report.sh            # Generate HTML/Markdown/XLSX reports
-./09-cleanup.sh                    # Remove VMs and PVCs only
-./09-cleanup.sh --all              # Full cleanup including pools/namespace
-./09-cleanup.sh --all --dry-run    # Preview cleanup
+./03-setup-block-storage.sh        # Discover IBM Cloud Block CSI StorageClasses (VSI clusters)
+./04-run-tests.sh                  # Run full test matrix (12-24 hours)
+./04-run-tests.sh --quick          # Smoke test (~1-2 hours)
+./04-run-tests.sh --overview       # All-pool comparison (~2 hours)
+./04-run-tests.sh --pool rep3      # Test single pool
+./04-run-tests.sh --parallel       # Run pools in parallel (auto-scaled)
+./04-run-tests.sh --parallel 3     # Run N pools in parallel
+./05-collect-results.sh            # Aggregate fio JSON → CSV
+./06-generate-report.sh            # Generate HTML/Markdown/XLSX reports
+./07-cleanup.sh                    # Remove VMs and PVCs only
+./07-cleanup.sh --all              # Full cleanup including pools/namespace
+./07-cleanup.sh --all --dry-run    # Preview cleanup
 ```
 
 ## Architecture
 
 ### Execution Pipeline
 
-Scripts are numbered `00-09` and run sequentially. Each script sources `00-config.sh` for shared configuration and sources helpers from `lib/`.
+Scripts are numbered `00-07` and run sequentially. Each script sources `00-config.sh` for shared configuration and sources helpers from `lib/`.
 
 ### Config-Driven Design
 
@@ -44,13 +47,13 @@ Scripts are numbered `00-09` and run sequentially. Each script sources `00-confi
 ### Template Rendering
 
 VM creation uses string substitution (`__PLACEHOLDER__` patterns) rather than Helm/Kustomize:
-- `04-vm-templates/vm-template.yaml` — KubeVirt VM manifest with DataVolume for root disk + PVC for data disk
-- `03-cloud-init/fio-runner.yaml` — cloud-init that installs fio, writes a systemd oneshot service, and runs the benchmark on boot
-- `05-fio-profiles/*.fio` — fio job files using `${VARIABLE}` placeholders (rendered by `render_fio_profile()` in `lib/vm-helpers.sh`)
+- `vm-templates/vm-template.yaml` — KubeVirt VM manifest with DataVolume for root disk + PVC for data disk
+- `cloud-init/fio-runner.yaml` — cloud-init that installs fio, writes a systemd oneshot service, and runs the benchmark on boot
+- `fio-profiles/*.fio` — fio job files using `${VARIABLE}` placeholders (rendered by `render_fio_profile()` in `lib/vm-helpers.sh`)
 
 The rendering chain for the first permutation is: fio profile → cloud-init template → VM template → `oc apply`. For subsequent permutations reusing the same VMs: fio profile → `replace_fio_job()` via SSH → `restart_fio_service()`.
 
-### Test Orchestration (`06-run-tests.sh`)
+### Test Orchestration (`04-run-tests.sh`)
 
 VMs are created once per outer-loop group (`pool × vm_size × pvc_size × concurrency`) and reused across all `fio_profile × block_size` permutations via SSH fio job replacement. For each group:
 1. Builds an ordered list of (profile, block_size) permutations
@@ -78,10 +81,12 @@ All test resources are labeled `app=vm-perf-test` with additional labels for `ru
 
 This suite supports both **bare metal (BM)** and **VSI** single-zone ROKS clusters. Cluster type is auto-detected from worker node instance-type labels (`detect_cluster_type()` in `00-config.sh`), or can be overridden via `CLUSTER_TYPE=bm|vsi`.
 
-- **BM clusters:** NVMe-backed ODF, no IBM Cloud Block CSI available. `02b-setup-block-storage.sh` exits cleanly.
+- **BM clusters:** NVMe-backed ODF, no IBM Cloud Block CSI available. `03-setup-block-storage.sh` exits cleanly.
 - **VSI clusters:** IBM Cloud Block-backed ODF, plus IBM Cloud Block CSI available for direct testing. All three backends (ODF, File CSI, Block CSI) are tested.
 - **EC pool constraints:** EC pools require k+m unique hosts (using `failureDomain: host`). With 3 workers, only pools needing ≤3 failure domains work (rep2, rep3, ec-2-1). Pools ec-2-2 (needs 4) and ec-4-2 (needs 6) have been removed from `00-config.sh`.
-- **File/Block CSI deduplication:** Auto-discovery finds many StorageClasses, but `-metro-` and `-retain-` variants produce identical I/O performance on a single-zone cluster. `FILE_CSI_DEDUP=true` and `BLOCK_CSI_DEDUP=true` (both default) filter these out. Set to `false` for multi-zone clusters where metro topology may affect latency.
+- **EC StorageClass setup:** RBD cannot store image metadata directly on an erasure-coded pool. EC StorageClasses use `pool` (replicated, for metadata) + `dataPool` (EC, for data blocks). `01-setup-storage-pools.sh` automatically sets `pool: ocs-storagecluster-cephblockpool` and `dataPool: perf-test-<ec-pool>` for EC pools.
+- **File/Block CSI deduplication:** Auto-discovery finds many StorageClasses, but `-metro-`, `-retain-`, and `-regional*` variants are filtered out by default. Metro/retain produce identical I/O performance on a single-zone cluster; regional SCs use the `rfs` profile which requires IBM support allowlisting. `FILE_CSI_DEDUP=true` and `BLOCK_CSI_DEDUP=true` (both default) enable this filtering. Set to `false` for multi-zone clusters where metro topology may affect latency, or if `rfs` has been allowlisted.
+- **PVC size minimums:** IBM Cloud File dp2 profile enforces a max ~25 IOPS/GB ratio. The 3000-IOPS SC requires ≥120Gi to provision, so the minimum PVC size in the test matrix is 150Gi.
 
 ## Conventions
 

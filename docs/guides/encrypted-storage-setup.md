@@ -136,7 +136,7 @@ For this test suite, the secret must exist in:
 
 | Namespace | Created by | Purpose |
 |-----------|------------|---------|
-| `vm-perf-test` | `01-setup-storage-pools.sh` (automatic) | Benchmark VMs created by `06-run-tests.sh` |
+| `vm-perf-test` | `01-setup-storage-pools.sh` (automatic) | Benchmark VMs created by `04-run-tests.sh` |
 | `default` | Manual (see command above) | Ad-hoc VM testing |
 
 **Why a separate per-namespace secret?** This is a security boundary. Cluster admins control which namespaces can provision encrypted volumes by choosing where to create this secret. A namespace without the secret cannot create encrypted PVCs.
@@ -300,7 +300,7 @@ The CSI provisioner retries every few minutes but the error is permanent. The on
 
 ### How the Test Suite Handles Encryption
 
-The existing project template (`04-vm-templates/vm-template.yaml`) already handles encrypted pools correctly. It uses two separate StorageClass placeholders:
+The existing project template (`vm-templates/vm-template.yaml`) already handles encrypted pools correctly. It uses two separate StorageClass placeholders:
 
 | Placeholder | Set To | Purpose |
 |-------------|--------|---------|
@@ -318,7 +318,7 @@ manifest="${manifest//__SC_NAME__/${sc_name}}"
 manifest="${manifest//__ROOT_SC__/${root_sc}}"
 ```
 
-So when you run `./06-run-tests.sh --pool rep3-enc`, it:
+So when you run `./04-run-tests.sh --pool rep3-enc`, it:
 1. Resolves `rep3-enc` to `ocs-storagecluster-ceph-rbd-encrypted` via `get_storage_class_for_pool()`
 2. Uses that SC for the data PVC (`__SC_NAME__`)
 3. Uses the non-encrypted default for the root disk (`__ROOT_SC__`)
@@ -327,7 +327,7 @@ So when you run `./06-run-tests.sh --pool rep3-enc`, it:
 No template changes are needed to benchmark encrypted pools — just run:
 
 ```bash
-./06-run-tests.sh --quick --pool rep3-enc
+./04-run-tests.sh --quick --pool rep3-enc
 ```
 
 ### Creating Custom VM Templates for Encrypted Pools
@@ -337,7 +337,7 @@ If you want to create your own VM templates for encrypted storage outside the te
 You can copy the existing project template as a starting point:
 
 ```bash
-cp 04-vm-templates/vm-template.yaml 04-vm-templates/vm-template-encrypted.yaml
+cp vm-templates/vm-template.yaml vm-templates/vm-template-encrypted.yaml
 ```
 
 The template is already structured correctly — the root disk DataVolume uses `__ROOT_SC__` (non-encrypted) and the data PVC uses `__SC_NAME__` (pool-specific). No modifications are needed. But if you want a self-contained template without placeholders (for use outside the test suite), see the standalone example below.

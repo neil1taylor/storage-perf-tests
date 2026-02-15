@@ -22,7 +22,7 @@ This page documents all six fio workload profiles used by the test suite. Each p
 
 ## sequential-rw
 
-**File:** `05-fio-profiles/sequential-rw.fio`
+**File:** `fio-profiles/sequential-rw.fio`
 
 Measures **maximum throughput** by reading and writing data sequentially from beginning to end. This is the simplest I/O pattern and reveals the peak bandwidth of the storage backend.
 
@@ -54,7 +54,7 @@ All from global: `bs=${BLOCK_SIZE}`, `iodepth=${IODEPTH}` (32), `numjobs=${NUMJO
 
 ## random-rw
 
-**File:** `05-fio-profiles/random-rw.fio`
+**File:** `fio-profiles/random-rw.fio`
 
 Measures **IOPS** by reading and writing data at random positions. This is the most demanding I/O pattern for storage systems because it eliminates sequential prefetch benefits.
 
@@ -86,7 +86,7 @@ All from global: `bs=${BLOCK_SIZE}`, `iodepth=${IODEPTH}` (32), `numjobs=${NUMJO
 
 ## mixed-70-30
 
-**File:** `05-fio-profiles/mixed-70-30.fio`
+**File:** `fio-profiles/mixed-70-30.fio`
 
 Simulates a **typical application workload** with 70% random reads and 30% random writes happening simultaneously. Most real applications have more reads than writes.
 
@@ -117,7 +117,7 @@ All from global: `bs=${BLOCK_SIZE}`, `iodepth=${IODEPTH}` (32), `numjobs=${NUMJO
 
 ## db-oltp
 
-**File:** `05-fio-profiles/db-oltp.fio`
+**File:** `fio-profiles/db-oltp.fio`
 
 Simulates a **database (PostgreSQL/MySQL) OLTP workload** with four distinct I/O patterns that databases produce. This is a fixed-BS profile — each job has its own block size.
 
@@ -153,7 +153,7 @@ Simulates a **database (PostgreSQL/MySQL) OLTP workload** with four distinct I/O
 
 ## app-server
 
-**File:** `05-fio-profiles/app-server.fio`
+**File:** `fio-profiles/app-server.fio`
 
 Simulates a **general application server** with mixed I/O patterns: log writing, config file reads, temp file operations, and session/cache writes. This is a fixed-BS profile.
 
@@ -189,7 +189,7 @@ Simulates a **general application server** with mixed I/O patterns: log writing,
 
 ## data-pipeline
 
-**File:** `05-fio-profiles/data-pipeline.fio`
+**File:** `fio-profiles/data-pipeline.fio`
 
 Simulates a **data/AI pipeline workload** with large sequential I/O, streaming patterns, and mixed ETL operations. This is a fixed-BS profile.
 

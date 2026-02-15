@@ -58,7 +58,7 @@ Or keep `FILE_CSI_DISCOVERY="auto"` and the script will discover all `vpc-file` 
 
 For profiles where the block-size loop should apply (like sequential-rw or random-rw):
 
-1. Create a new `.fio` file in `05-fio-profiles/`:
+1. Create a new `.fio` file in `fio-profiles/`:
 
 ```ini
 # my-workload.fio — Description of what this simulates
@@ -259,10 +259,10 @@ Rule of thumb: `FIO_COMPLETION_TIMEOUT` should be at least `FIO_RUNTIME + FIO_RA
 ## Adjusting PVC Sizes
 
 ```bash
-declare -a PVC_SIZES=( "10Gi" "50Gi" "100Gi" "500Gi" )
+declare -a PVC_SIZES=( "150Gi" "500Gi" "1000Gi" "2000Gi" )
 ```
 
-Larger PVCs may exhibit different performance characteristics (striping across more OSDs). Ensure your cluster has sufficient storage capacity.
+Larger PVCs may exhibit different performance characteristics (striping across more OSDs). Ensure your cluster has sufficient storage capacity. The minimum PVC size must be at least 120Gi to satisfy the IBM Cloud File dp2 profile's IOPS-per-GB ratio for the 3000-IOPS StorageClass.
 
 ## Next Steps
 

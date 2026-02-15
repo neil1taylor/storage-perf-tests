@@ -8,16 +8,16 @@ This page explains the design philosophy, execution pipeline, and internal struc
 
 ### Numbered Scripts
 
-Scripts are numbered `00-09` and run sequentially. This provides:
+Scripts are numbered `00-07` and run sequentially. This provides:
 - **Clear execution order** — you can see the pipeline at a glance
 - **Incremental execution** — run only the steps you need
-- **Failure isolation** — if step 06 fails, steps 01-02 don't need to be re-run
+- **Failure isolation** — if step 04 fails, steps 01-02 don't need to be re-run
 
 ### Config-Driven
 
 `00-config.sh` is the single source of truth for all tunables. Other scripts never hardcode values — they `source 00-config.sh` and read environment variables. This means:
 - Changing a VM size, PVC size, or fio parameter requires editing only one file
-- You can override any value with environment variables (e.g., `FIO_RUNTIME=60 ./06-run-tests.sh`)
+- You can override any value with environment variables (e.g., `FIO_RUNTIME=60 ./04-run-tests.sh`)
 - New storage pools or fio profiles just need to be added to the arrays in config
 
 ### Bash-Native
@@ -43,36 +43,36 @@ Rather than using Helm, Kustomize, or other Kubernetes templating tools, this pr
     ┌──────────────────┼──────────────────┐
     ▼                  ▼                  ▼
 ┌─────────┐    ┌──────────────┐    ┌──────────────┐
-│01-setup  │    │02-setup-file │    │  (Optional)  │
-│-storage  │    │  -storage.sh │    │  Manual      │
-│-pools.sh │    │              │    │  verification│
-└────┬─────┘    └──────┬───────┘    └──────────────┘
-     │                 │
-     └────────┬────────┘
+│01-setup  │    │02-setup-file │    │03-setup-block│
+│-storage  │    │  -storage.sh │    │  -storage.sh │
+│-pools.sh │    │              │    │  (VSI only)  │
+└────┬─────┘    └──────┬───────┘    └──────┬───────┘
+     │                 │                   │
+     └────────┬────────┴───────────────────┘
               ▼
-     ┌────────────────┐     ┌────────────────────────────┐
-     │ 06-run-tests.sh│────▶│ lib/vm-helpers.sh          │
-     │                │     │ lib/wait-helpers.sh         │
-     │ (main loop)    │     │ 03-cloud-init/fio-runner   │
-     │                │     │ 04-vm-templates/vm-template │
-     │                │     │ 05-fio-profiles/*.fio       │
-     └───────┬────────┘     └────────────────────────────┘
+     ┌────────────────┐     ┌──────────────────────────┐
+     │ 04-run-tests.sh│────▶│ lib/vm-helpers.sh        │
+     │                │     │ lib/wait-helpers.sh       │
+     │ (main loop)    │     │ cloud-init/fio-runner     │
+     │                │     │ vm-templates/vm-template  │
+     │                │     │ fio-profiles/*.fio        │
+     └───────┬────────┘     └──────────────────────────┘
              │
              ▼
      ┌────────────────┐
-     │07-collect      │
+     │05-collect      │
      │  -results.sh   │
      └───────┬────────┘
              │
              ▼
      ┌────────────────┐
-     │08-generate     │
+     │06-generate     │
      │  -report.sh    │
      └───────┬────────┘
              │
              ▼
      ┌────────────────┐
-     │09-cleanup.sh   │
+     │07-cleanup.sh   │
      └────────────────┘
 ```
 
@@ -83,10 +83,11 @@ Rather than using Helm, Kustomize, or other Kubernetes templating tools, this pr
 | `00-config.sh` | Defines all configuration variables. Sourced by other scripts, never run directly. |
 | `01-setup-storage-pools.sh` | Creates CephBlockPools and StorageClasses for each ODF pool defined in config. |
 | `02-setup-file-storage.sh` | Discovers IBM Cloud File CSI StorageClasses on the cluster (or uses the fallback list). |
-| `06-run-tests.sh` | Main orchestrator. Iterates the test matrix, creates VMs once per group, reuses across fio permutations via SSH. |
-| `07-collect-results.sh` | Walks the results directory tree, parses fio JSON files, and produces aggregated CSV. |
-| `08-generate-report.sh` | Generates HTML dashboard (Chart.js), Markdown summary, and XLSX workbook from CSV. |
-| `09-cleanup.sh` | Deletes test resources. Default: VMs/PVCs only. `--all`: also pools and namespace. |
+| `03-setup-block-storage.sh` | Discovers IBM Cloud Block CSI StorageClasses (VSI clusters only). |
+| `04-run-tests.sh` | Main orchestrator. Iterates the test matrix, creates VMs once per group, reuses across fio permutations via SSH. |
+| `05-collect-results.sh` | Walks the results directory tree, parses fio JSON files, and produces aggregated CSV. |
+| `06-generate-report.sh` | Generates HTML dashboard (Chart.js), Markdown summary, and XLSX workbook from CSV. |
+| `07-cleanup.sh` | Deletes test resources. Default: VMs/PVCs only. `--all`: also pools and namespace. |
 
 ## Shared Libraries
 
@@ -143,7 +144,7 @@ labels:
   perf-test/run-id: perf-20260214-103000    # Unique per execution
   perf-test/storage-pool: rep3              # Which pool this test used
   perf-test/vm-size: small                  # VM size category
-  perf-test/pvc-size: 50Gi                  # PVC size
+  perf-test/pvc-size: 150Gi                 # PVC size
 ```
 
 This enables:

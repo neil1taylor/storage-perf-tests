@@ -196,7 +196,7 @@ fio outputs structured JSON (with `--output-format=json+`) that the test suite p
 }
 ```
 
-The `07-collect-results.sh` and `lib/report-helpers.sh` scripts parse these JSON files into CSV rows for analysis.
+The `05-collect-results.sh` and `lib/report-helpers.sh` scripts parse these JSON files into CSV rows for analysis.
 
 ## Next Steps
 

@@ -105,24 +105,26 @@ main() {
     exit 1
   fi
 
-  # Filter out -metro- and -retain- variants when auto-discovering.
-  # These differ only in topology constraints or PV reclaim policy —
-  # I/O performance is identical to the base SC for each IOPS tier.
+  # Filter out variants that duplicate I/O behaviour or are inaccessible:
+  #   -metro- / -retain-  — same I/O perf as base SC (topology/reclaim only)
+  #   -regional*           — use 'rfs' profile which requires IBM support allowlisting
   if [[ "${FILE_CSI_DISCOVERY}" == "auto" && "${FILE_CSI_DEDUP:-true}" == "true" ]]; then
     local pre_filter=${#file_scs[@]}
     local -a deduped_scs=()
     for sc in "${file_scs[@]}"; do
       if [[ "${sc}" == *-metro-* || "${sc}" == *-retain-* ]]; then
         log_info "  Skipping variant: ${sc}"
+      elif [[ "${sc}" == *-regional* ]]; then
+        log_info "  Skipping regional: ${sc} (rfs profile requires allowlisting)"
       else
         deduped_scs+=("${sc}")
       fi
     done
     if [[ ${#deduped_scs[@]} -gt 0 ]]; then
       file_scs=("${deduped_scs[@]}")
-      log_info "Filtered ${pre_filter} → ${#file_scs[@]} StorageClasses (excluded metro/retain variants)"
+      log_info "Filtered ${pre_filter} → ${#file_scs[@]} StorageClasses (excluded metro/retain/regional variants)"
     else
-      log_warn "All SCs were metro/retain variants — keeping original list"
+      log_warn "All SCs were metro/retain/regional variants — keeping original list"
     fi
   fi
 

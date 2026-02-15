@@ -8,6 +8,69 @@ source "${SCRIPT_DIR}/00-config.sh"
 source "${SCRIPT_DIR}/lib/vm-helpers.sh"
 
 # ---------------------------------------------------------------------------
+# Create (or verify) a StorageClass for a given ODF pool
+# Idempotent: skips if the SC already exists (SC parameters are immutable).
+# ---------------------------------------------------------------------------
+ensure_storage_class() {
+  local pool_name="$1"
+  local pool_type="$2"
+  local full_pool_name="perf-test-${pool_name}"
+  local sc_name="perf-test-sc-${pool_name}"
+
+  if oc get sc "${sc_name}" &>/dev/null; then
+    log_info "StorageClass ${sc_name} already exists — skipping"
+    return 0
+  fi
+
+  log_info "Creating StorageClass: ${sc_name}"
+  local cluster_id
+  cluster_id=$(oc get cephblockpool "${ODF_DEFAULT_SC##*-}" -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.status.info.clusterID}' 2>/dev/null || \
+    oc get storagecluster -n "${ODF_NAMESPACE}" -o jsonpath='{.items[0].status.storageProviderEndpoint}' 2>/dev/null || \
+    echo "")
+
+  # Retrieve the cluster ID from the existing default StorageClass
+  if [[ -z "${cluster_id}" ]]; then
+    cluster_id=$(oc get sc "${ODF_DEFAULT_SC}" -o jsonpath='{.parameters.clusterID}' 2>/dev/null || echo "openshift-storage")
+  fi
+
+  # EC pools need a replicated metadata pool; the default ODF pool serves this role.
+  # RBD stores image headers/metadata in "pool" and actual data blocks in "dataPool".
+  local ec_data_pool_line=""
+  local metadata_pool="${full_pool_name}"
+  if [[ "${pool_type}" == "erasurecoded" ]]; then
+    metadata_pool="ocs-storagecluster-cephblockpool"
+    ec_data_pool_line="  dataPool: ${full_pool_name}"
+  fi
+
+  cat <<EOF | oc apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ${sc_name}
+provisioner: openshift-storage.rbd.csi.ceph.com
+parameters:
+  clusterID: ${cluster_id}
+  pool: ${metadata_pool}
+${ec_data_pool_line}
+  imageFormat: "2"
+  imageFeatures: layering
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: ${ODF_NAMESPACE}
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: ${ODF_NAMESPACE}
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+  csi.storage.k8s.io/node-stage-secret-namespace: ${ODF_NAMESPACE}
+  csi.storage.k8s.io/fstype: ext4
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate
+EOF
+
+  log_info "StorageClass ${sc_name} created"
+}
+
+# ---------------------------------------------------------------------------
 # Create a CephBlockPool + StorageClass for each ODF pool configuration
 # ---------------------------------------------------------------------------
 create_ceph_block_pool() {
@@ -15,7 +78,6 @@ create_ceph_block_pool() {
   local pool_type="$2"
   shift 2
   local full_pool_name="perf-test-${pool_name}"
-  local sc_name="perf-test-sc-${pool_name}"
 
   log_info "Creating CephBlockPool: ${full_pool_name} (type=${pool_type})"
 
@@ -53,9 +115,12 @@ spec:
 EOF
   fi
 
-  # Wait for pool to be ready
+  # Wait for pool to be ready (EC pools need longer — PG init across multiple OSDs)
   log_info "Waiting for pool ${full_pool_name} to become ready..."
   local retries=30
+  if [[ "${pool_type}" == "erasurecoded" ]]; then
+    retries=60
+  fi
   for ((i=1; i<=retries; i++)); do
     local phase
     phase=$(oc get cephblockpool "${full_pool_name}" -n "${ODF_NAMESPACE}" \
@@ -75,48 +140,8 @@ EOF
     sleep 10
   done
 
-  # Create matching StorageClass (skip if it already exists — SC parameters are immutable)
-  if oc get sc "${sc_name}" &>/dev/null; then
-    log_info "StorageClass ${sc_name} already exists — skipping"
-    return 0
-  fi
-
-  log_info "Creating StorageClass: ${sc_name}"
-  local cluster_id
-  cluster_id=$(oc get cephblockpool "${ODF_DEFAULT_SC##*-}" -n "${ODF_NAMESPACE}" \
-    -o jsonpath='{.status.info.clusterID}' 2>/dev/null || \
-    oc get storagecluster -n "${ODF_NAMESPACE}" -o jsonpath='{.items[0].status.storageProviderEndpoint}' 2>/dev/null || \
-    echo "")
-
-  # Retrieve the cluster ID from the existing default StorageClass
-  if [[ -z "${cluster_id}" ]]; then
-    cluster_id=$(oc get sc "${ODF_DEFAULT_SC}" -o jsonpath='{.parameters.clusterID}' 2>/dev/null || echo "openshift-storage")
-  fi
-
-  cat <<EOF | oc apply -f -
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: ${sc_name}
-provisioner: openshift-storage.rbd.csi.ceph.com
-parameters:
-  clusterID: ${cluster_id}
-  pool: ${full_pool_name}
-  imageFormat: "2"
-  imageFeatures: layering
-  csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/provisioner-secret-namespace: ${ODF_NAMESPACE}
-  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
-  csi.storage.k8s.io/controller-expand-secret-namespace: ${ODF_NAMESPACE}
-  csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
-  csi.storage.k8s.io/node-stage-secret-namespace: ${ODF_NAMESPACE}
-  csi.storage.k8s.io/fstype: ext4
-reclaimPolicy: Delete
-allowVolumeExpansion: true
-volumeBindingMode: Immediate
-EOF
-
-  log_info "StorageClass ${sc_name} created"
+  # Create matching StorageClass
+  ensure_storage_class "${pool_name}" "${pool_type}"
 }
 
 # ---------------------------------------------------------------------------
@@ -236,6 +261,34 @@ main() {
       create_ceph_block_pool "${name}" "${type}" "${param1}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
     elif [[ "${type}" == "erasurecoded" ]]; then
       create_ceph_block_pool "${name}" "${type}" "${param1}" "${param2}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
+    fi
+  done
+
+  # Reconciliation pass: create SCs for pools that became Ready after their
+  # initial timeout expired (common with slow EC PG initialization).
+  log_info "Reconciling StorageClasses for any late-Ready pools..."
+  for pool_def in "${ODF_POOLS[@]}"; do
+    IFS=':' read -r name type param1 param2 <<< "${pool_def}"
+
+    # Skip pools that use existing out-of-box StorageClasses
+    case "${name}" in rep3|rep3-virt|rep3-enc) continue ;; esac
+
+    local full_pool_name="perf-test-${name}"
+    local sc_name="perf-test-sc-${name}"
+
+    # Only act if SC is missing and pool is now Ready
+    if oc get sc "${sc_name}" &>/dev/null; then
+      continue
+    fi
+    local phase
+    phase=$(oc get cephblockpool "${full_pool_name}" -n "${ODF_NAMESPACE}" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    if [[ "${phase}" == "Ready" ]]; then
+      log_info "Pool ${full_pool_name} is Ready but SC ${sc_name} is missing — creating now"
+      ensure_storage_class "${name}" "${type}" || {
+        log_warn "Failed to create StorageClass ${sc_name} during reconciliation"
+        pool_failures=$((pool_failures + 1))
+      }
     fi
   done
 

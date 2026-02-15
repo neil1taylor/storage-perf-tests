@@ -57,7 +57,9 @@ export VM_SIZES
 # ---------------------------------------------------------------------------
 # PVC sizes to test
 # ---------------------------------------------------------------------------
-declare -a PVC_SIZES=( "10Gi" "50Gi" "100Gi" )
+# Minimum 150Gi: IBM Cloud File dp2 profile enforces max ~25 IOPS/GB,
+# so the 3000-IOPS SC requires ≥120Gi to provision.
+declare -a PVC_SIZES=( "150Gi" "500Gi" "1000Gi" )
 export PVC_SIZES
 
 # ---------------------------------------------------------------------------
@@ -77,8 +79,8 @@ declare -a ODF_POOLS=(
   "rep3-enc:replicated:3"
   "rep2:replicated:2"
   "ec-2-1:erasurecoded:2:1"
-  # ec-2-2 and ec-4-2 removed: need 4 and 6 failure domains respectively,
-  # but this cluster only has 3 worker nodes (failureDomain=host)
+  "ec-2-2:erasurecoded:2:2"
+  "ec-4-2:erasurecoded:4:2"
 )
 export ODF_POOLS
 
@@ -123,7 +125,7 @@ declare -a FIO_FIXED_BS_PROFILES=( "db-oltp" "app-server" "data-pipeline" )
 export FIO_FIXED_BS_PROFILES
 
 # ---------------------------------------------------------------------------
-# fio workload profiles (filenames in 05-fio-profiles/)
+# fio workload profiles (filenames in fio-profiles/)
 # ---------------------------------------------------------------------------
 declare -a FIO_PROFILES=(
   "sequential-rw"

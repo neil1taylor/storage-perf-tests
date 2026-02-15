@@ -8,7 +8,7 @@ This page covers common issues and their solutions. Check the relevant section b
 
 ### CephBlockPool Not Ready
 
-**Symptom:** `01-setup-storage-pools.sh` creates the pool but it never reaches `Ready` state, or `06-run-tests.sh` skips the pool.
+**Symptom:** `01-setup-storage-pools.sh` creates the pool but it never reaches `Ready` state, or `04-run-tests.sh` skips the pool.
 
 **Check:**
 ```bash
@@ -181,7 +181,7 @@ virtctl ssh ... fedora@<vm-name> -- journalctl -u perf-test.service
 
 ### CSV Empty or Missing
 
-**Symptom:** `07-collect-results.sh` produces a CSV with only the header.
+**Symptom:** `05-collect-results.sh` produces a CSV with only the header.
 
 **Check:**
 ```bash
@@ -189,7 +189,7 @@ virtctl ssh ... fedora@<vm-name> -- journalctl -u perf-test.service
 find results/ -name "*-fio.json" | head -5
 
 # Check if they contain valid JSON
-cat results/rep3/small/50Gi/1/random-rw/4k/*-fio.json | jq '.jobs | length'
+cat results/rep3/small/150Gi/1/random-rw/4k/*-fio.json | jq '.jobs | length'
 ```
 
 **Fixes:**
@@ -204,7 +204,7 @@ cat results/rep3/small/50Gi/1/random-rw/4k/*-fio.json | jq '.jobs | length'
 
 ### XLSX Generation Fails
 
-**Symptom:** Error from `08-generate-report.sh` about openpyxl.
+**Symptom:** Error from `06-generate-report.sh` about openpyxl.
 
 **Fix:**
 ```bash
@@ -267,7 +267,7 @@ oc describe pvc <name> -n vm-perf-test
 ### Enable Debug Logging
 
 ```bash
-LOG_LEVEL=DEBUG ./06-run-tests.sh
+LOG_LEVEL=DEBUG ./04-run-tests.sh
 ```
 
 This outputs detailed polling status, rendering steps, and timing information.
@@ -330,11 +330,11 @@ source lib/vm-helpers.sh
 ensure_ssh_key
 
 # Render a fio profile
-render_fio_profile "05-fio-profiles/random-rw.fio" "4k"
+render_fio_profile "fio-profiles/random-rw.fio" "4k"
 
 # Render cloud-init
-fio_content=$(render_fio_profile "05-fio-profiles/random-rw.fio" "4k")
-render_cloud_init "03-cloud-init/fio-runner.yaml" "$fio_content" "test-vm" "/mnt/data"
+fio_content=$(render_fio_profile "fio-profiles/random-rw.fio" "4k")
+render_cloud_init "cloud-init/fio-runner.yaml" "$fio_content" "test-vm" "/mnt/data"
 ```
 
 See [Template Rendering](../architecture/template-rendering.md) for more debugging tips.

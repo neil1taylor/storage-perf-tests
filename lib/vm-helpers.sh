@@ -175,7 +175,7 @@ create_test_vm() {
   local cloud_init_content="$6"
   local pool_name="$7"
   local vm_size_label="$8"
-  local template_path="${9:-./04-vm-templates/vm-template.yaml}"
+  local template_path="${9:-./vm-templates/vm-template.yaml}"
 
   log_info "Creating VM: ${vm_name} (sc=${sc_name}, pvc=${pvc_size}, cpu=${vcpu}, mem=${memory})"
 

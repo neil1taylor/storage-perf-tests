@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 02b-setup-block-storage.sh — Discover / verify IBM Cloud Block CSI StorageClasses
+# 03-setup-block-storage.sh — Discover / verify IBM Cloud Block CSI StorageClasses
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

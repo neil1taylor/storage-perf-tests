@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 09-cleanup.sh — Clean up test VMs, PVCs, storage pools, and StorageClasses
+# 07-cleanup.sh — Clean up test VMs, PVCs, storage pools, and StorageClasses
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -2,7 +2,7 @@
 
 [Back to Index](../index.md)
 
-This page explains the 6-dimensional test matrix at the core of `06-run-tests.sh` — what it iterates, how VMs are reused, how permutations are counted, and how quick mode reduces the matrix.
+This page explains the 6-dimensional test matrix at the core of `04-run-tests.sh` — what it iterates, how VMs are reused, how permutations are counted, and how quick mode reduces the matrix.
 
 ## The Six Dimensions
 
@@ -26,9 +26,9 @@ The first (profile × block_size) permutation in each group runs via cloud-init 
 
 | # | Dimension | Default Values | Count | Purpose |
 |---|-----------|---------------|-------|---------|
-| 1 | **Storage Pool** | rep3, rep2, ec-2-1, ec-2-2, ec-4-2, + File CSI profiles | ~10 | Compare storage backends |
+| 1 | **Storage Pool** | rep3, rep3-virt, rep3-enc, rep2, ec-2-1, ec-2-2, ec-4-2, + File CSI profiles | ~12 | Compare storage backends |
 | 2 | **VM Size** | small (2/4Gi), medium (4/8Gi), large (8/16Gi) | 3 | Measure CPU/memory impact on I/O |
-| 3 | **PVC Size** | 10Gi, 50Gi, 100Gi | 3 | Measure volume size impact on I/O |
+| 3 | **PVC Size** | 150Gi, 500Gi, 1000Gi | 3 | Measure volume size impact on I/O |
 | 4 | **Concurrency** | 1, 5, 10 VMs | 3 | Measure contention and scalability |
 | 5 | **fio Profile** | sequential-rw, random-rw, mixed-70-30, db-oltp, app-server, data-pipeline | 6 | Different workload patterns |
 | 6 | **Block Size** | 4k, 64k, 1M | 3 | Different I/O operation sizes |
@@ -54,19 +54,21 @@ Total = pools × vm_sizes × pvc_sizes × concurrency × (
 )
 ```
 
-With default values (5 ODF + 5 File CSI = 10 pools):
+With default values (7 ODF + 5 File CSI = 12 pools):
 
 ```
 Variable-BS: 3 profiles × 3 block sizes = 9
 Fixed-BS:    3 profiles × 1              = 3
 Per combo:   9 + 3 = 12
 
-Total = 10 pools × 3 vm_sizes × 3 pvc_sizes × 3 concurrency × 12
-      = 10 × 3 × 3 × 3 × 12
-      = 3,240 test permutations
+Total = 12 pools × 3 vm_sizes × 3 pvc_sizes × 3 concurrency × 12
+      = 12 × 3 × 3 × 3 × 12
+      = 3,888 test permutations
 ```
 
-With 5 ODF pools only: 5 × 3 × 3 × 3 × 12 = 1,620 permutations.
+With 7 ODF pools only: 7 × 3 × 3 × 3 × 12 = 2,268 permutations.
+
+**Note:** ec-2-2 (needs 4 hosts) and ec-4-2 (needs 6 hosts) are included in the config but automatically skipped on clusters with fewer OSD hosts. The actual pool count depends on your cluster topology.
 
 ## Quick Mode
 
@@ -75,19 +77,19 @@ The `--quick` flag reduces the matrix for fast validation:
 | Dimension | Full | Quick |
 |-----------|------|-------|
 | VM Sizes | small, medium, large | small only |
-| PVC Sizes | 10Gi, 50Gi, 100Gi | 50Gi only |
+| PVC Sizes | 150Gi, 500Gi, 1000Gi | 150Gi only |
 | Concurrency | 1, 5, 10 | 1 only |
 | Block Sizes | 4k, 64k, 1M | 4k, 1M only |
 | fio Profiles | all 6 | random-rw, sequential-rw only |
 
-Quick mode with 10 pools:
+Quick mode with 12 pools:
 
 ```
 Variable-BS: 2 profiles × 2 block sizes = 4
 Fixed-BS:    0 profiles × 1              = 0
 Per combo:   4
 
-Total = 10 × 1 × 1 × 1 × 4 = 40 permutations
+Total = 12 × 1 × 1 × 1 × 4 = 48 permutations
 ```
 
 This reduces runtime from days to hours while still testing the key dimensions (pool comparison, IOPS vs throughput).
@@ -97,7 +99,7 @@ This reduces runtime from days to hours while still testing the key dimensions (
 The `--pool <name>` flag tests only one storage pool:
 
 ```bash
-./06-run-tests.sh --pool rep3
+./04-run-tests.sh --pool rep3
 ```
 
 With full matrix: 1 × 3 × 3 × 3 × 12 = 324 permutations.
@@ -110,12 +112,12 @@ VMs are created once per outer-loop group and reused across all (profile × bloc
 ```
 Group start (pool × vm_size × pvc_size × concurrency):
   Step 1: Render fio profile (first permutation)
-    ├── Read 05-fio-profiles/<profile>.fio
+    ├── Read fio-profiles/<profile>.fio
     ├── Substitute ${RUNTIME}, ${RAMP_TIME}, ${IODEPTH}, etc.
     └── If variable-BS profile, substitute ${BLOCK_SIZE}
 
   Step 2: Render cloud-init
-    ├── Read 03-cloud-init/fio-runner.yaml
+    ├── Read cloud-init/fio-runner.yaml
     ├── Substitute __VM_NAME__, __TEST_DIR__, __SSH_PUB_KEY__, etc.
     └── Embed rendered fio job content (indented for YAML)
 
@@ -166,25 +168,25 @@ Results are organized hierarchically matching the test dimensions:
 results/
 ├── rep3/
 │   ├── small/
-│   │   ├── 10Gi/
+│   │   ├── 150Gi/
 │   │   │   ├── 1/
 │   │   │   │   ├── sequential-rw/
 │   │   │   │   │   ├── 4k/
-│   │   │   │   │   │   └── perf-rep3-small-10gi-c1-1-fio.json
+│   │   │   │   │   │   └── perf-rep3-small-150gi-c1-1-fio.json
 │   │   │   │   │   ├── 64k/
 │   │   │   │   │   └── 1M/
 │   │   │   │   ├── random-rw/
 │   │   │   │   ├── mixed-70-30/
 │   │   │   │   ├── db-oltp/
 │   │   │   │   │   └── native/
-│   │   │   │   │       └── perf-rep3-small-10gi-c1-1-fio.json
+│   │   │   │   │       └── perf-rep3-small-150gi-c1-1-fio.json
 │   │   │   │   ├── app-server/
 │   │   │   │   └── data-pipeline/
 │   │   │   ├── 5/
 │   │   │   │   └── ...  (5 JSON files per test — one per VM)
 │   │   │   └── 10/
-│   │   ├── 50Gi/
-│   │   └── 100Gi/
+│   │   ├── 500Gi/
+│   │   └── 1000Gi/
 │   ├── medium/
 │   └── large/
 ├── rep2/

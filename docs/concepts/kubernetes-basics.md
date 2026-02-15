@@ -49,7 +49,7 @@ labels:
   perf-test/pvc-size: 50Gi
 ```
 
-The cleanup script (`09-cleanup.sh`) uses label selectors to find and delete only the resources created by the test suite:
+The cleanup script (`07-cleanup.sh`) uses label selectors to find and delete only the resources created by the test suite:
 
 ```bash
 oc delete vm -n vm-perf-test -l app=vm-perf-test

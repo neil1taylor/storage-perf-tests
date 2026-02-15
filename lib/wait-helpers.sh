@@ -40,9 +40,29 @@ wait_for_all_vms_running() {
 
   log_info "Waiting for ${#vm_names[@]} VMs to reach Running state..."
 
+  if [[ ${#vm_names[@]} -eq 1 ]]; then
+    # Single VM — run directly (no backgrounding overhead)
+    if ! wait_for_vm_running "${vm_names[0]}" "${timeout}"; then
+      log_error "VM ${vm_names[0]} did not reach Running state"
+      return 1
+    fi
+    log_info "All ${#vm_names[@]} VMs are Running"
+    return 0
+  fi
+
+  # Fork wait_for_vm_running per VM — VMs boot simultaneously, so waiting
+  # in parallel avoids serializing N polling loops
+  local -a pids=()
+  local -A pid_to_vm=()
   for vm_name in "${vm_names[@]}"; do
-    if ! wait_for_vm_running "${vm_name}" "${timeout}"; then
-      log_error "VM ${vm_name} did not reach Running state"
+    wait_for_vm_running "${vm_name}" "${timeout}" &
+    pids+=($!)
+    pid_to_vm[$!]="${vm_name}"
+  done
+
+  for pid in "${pids[@]}"; do
+    if ! wait "${pid}"; then
+      log_error "VM ${pid_to_vm[${pid}]} did not reach Running state"
       ((failed += 1))
     fi
   done

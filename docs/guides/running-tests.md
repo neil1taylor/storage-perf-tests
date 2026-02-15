@@ -48,7 +48,7 @@ oc get sc | grep perf-test
 
 **What it does:**
 - If `FILE_CSI_DISCOVERY=auto`, discovers all `vpc-file` StorageClasses on the cluster
-- If `FILE_CSI_DEDUP=true` (the default), filters out `-metro-` and `-retain-` StorageClass variants that produce identical I/O performance on a single-zone cluster
+- If `FILE_CSI_DEDUP=true` (the default), filters out `-metro-`, `-retain-`, and `-regional*` StorageClass variants (metro/retain produce identical I/O on single-zone clusters; regional SCs use the `rfs` profile which requires IBM support allowlisting)
 - Writes the filtered list to `results/file-storage-classes.txt`
 - Falls back to the `FILE_CSI_PROFILES` list if discovery finds nothing
 
@@ -56,7 +56,7 @@ oc get sc | grep perf-test
 ```
 [INFO] Discovering IBM Cloud File CSI StorageClasses...
 [INFO] Found 17 vpc-file StorageClasses
-[INFO] FILE_CSI_DEDUP=true — filtering -metro- and -retain- variants
+[INFO] FILE_CSI_DEDUP=true — filtering -metro-, -retain-, and -regional* variants
 [INFO] After dedup: 5 unique file storage classes:
 [INFO]   ibmc-vpc-file-500-iops
 [INFO]   ibmc-vpc-file-1000-iops
@@ -74,7 +74,7 @@ This is the main step. Choose one of three modes:
 ### Full Test Matrix
 
 ```bash
-./06-run-tests.sh
+./04-run-tests.sh
 ```
 
 Runs every combination of pools, VM sizes, PVC sizes, concurrency levels, fio profiles, and block sizes. See [Test Matrix Explained](../architecture/test-matrix-explained.md) for details on what this covers.
@@ -84,10 +84,10 @@ Runs every combination of pools, VM sizes, PVC sizes, concurrency levels, fio pr
 ### Quick Smoke Test
 
 ```bash
-./06-run-tests.sh --quick
+./04-run-tests.sh --quick
 ```
 
-Runs a reduced matrix: small VM only, 50Gi PVC only, concurrency 1 only, 2 profiles (random-rw, sequential-rw), 2 block sizes (4k, 1M).
+Runs a reduced matrix: small VM only, 150Gi PVC only, concurrency 1 only, 2 profiles (random-rw, sequential-rw), 2 block sizes (4k, 1M).
 
 **Duration:** 2-4 hours
 
@@ -96,7 +96,7 @@ Runs a reduced matrix: small VM only, 50Gi PVC only, concurrency 1 only, 2 profi
 ### Single Pool Test
 
 ```bash
-./06-run-tests.sh --pool rep3
+./04-run-tests.sh --pool rep3
 ```
 
 Runs the full matrix but only for one storage pool. Useful for:
@@ -124,7 +124,7 @@ VMs are created once per (pool × vm_size × pvc_size × concurrency) group and 
 Progress is logged with test numbering:
 ```
 [INFO] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[INFO] Test 42/324: pool=rep3 vm=small pvc=50Gi conc=1 profile=random-rw bs=4k
+[INFO] Test 42/480: pool=rep3 vm=small pvc=150Gi conc=1 profile=random-rw bs=4k
 [INFO] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -158,7 +158,7 @@ Results collected before the interruption are preserved. You can re-run with `--
 ## Step 4: Aggregate Results
 
 ```bash
-./07-collect-results.sh
+./05-collect-results.sh
 ```
 
 **What it does:**
@@ -178,7 +178,7 @@ Results collected before the interruption are preserved. You can re-run with `--
 ## Step 5: Generate Reports
 
 ```bash
-./08-generate-report.sh
+./06-generate-report.sh
 ```
 
 **What it does:**
@@ -204,7 +204,7 @@ Open the HTML dashboard in a browser for the best analysis experience. See [Unde
 ### VMs and PVCs Only (Default)
 
 ```bash
-./09-cleanup.sh
+./07-cleanup.sh
 ```
 
 Removes all VMs, PVCs, and DataVolumes labeled `app=vm-perf-test`. Preserves storage pools and StorageClasses for future test runs.
@@ -212,7 +212,7 @@ Removes all VMs, PVCs, and DataVolumes labeled `app=vm-perf-test`. Preserves sto
 ### Full Cleanup
 
 ```bash
-./09-cleanup.sh --all
+./07-cleanup.sh --all
 ```
 
 Removes everything: VMs, PVCs, custom CephBlockPools, custom StorageClasses, and the test namespace.
@@ -220,7 +220,7 @@ Removes everything: VMs, PVCs, custom CephBlockPools, custom StorageClasses, and
 ### Dry Run
 
 ```bash
-./09-cleanup.sh --all --dry-run
+./07-cleanup.sh --all --dry-run
 ```
 
 Shows what would be deleted without actually deleting anything. Always run this first if you're unsure.
@@ -232,11 +232,11 @@ Shows what would be deleted without actually deleting anything. Always run this 
 ```bash
 ./01-setup-storage-pools.sh
 ./02-setup-file-storage.sh
-./06-run-tests.sh --quick            # Quick smoke test first
-./07-collect-results.sh
-./08-generate-report.sh
+./04-run-tests.sh --quick            # Quick smoke test first
+./05-collect-results.sh
+./06-generate-report.sh
 # Review results, verify everything works
-./09-cleanup.sh                      # Clean VMs only, keep pools
+./07-cleanup.sh                      # Clean VMs only, keep pools
 ```
 
 ### Full Benchmark Run
@@ -244,20 +244,20 @@ Shows what would be deleted without actually deleting anything. Always run this 
 ```bash
 ./01-setup-storage-pools.sh          # Skip if pools already exist
 ./02-setup-file-storage.sh
-./06-run-tests.sh                    # Full matrix (12-24 hours)
-./07-collect-results.sh
-./08-generate-report.sh
+./04-run-tests.sh                    # Full matrix (12-24 hours)
+./05-collect-results.sh
+./06-generate-report.sh
 # Analyze reports
-./09-cleanup.sh --all                # Full cleanup when done
+./07-cleanup.sh --all                # Full cleanup when done
 ```
 
 ### Focused Pool Comparison
 
 ```bash
-./06-run-tests.sh --pool rep3
-./06-run-tests.sh --pool ec-2-1
-./07-collect-results.sh
-./08-generate-report.sh
+./04-run-tests.sh --pool rep3
+./04-run-tests.sh --pool ec-2-1
+./05-collect-results.sh
+./06-generate-report.sh
 # Compare rep3 vs ec-2-1 in the dashboard
 ```
 

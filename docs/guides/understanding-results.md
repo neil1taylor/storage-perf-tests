@@ -2,7 +2,7 @@
 
 [Back to Index](../index.md)
 
-This page explains how to read and analyze the test suite output — from raw fio JSON to the HTML dashboard. After running `07-collect-results.sh` and `08-generate-report.sh`, you'll have several report formats to work with.
+This page explains how to read and analyze the test suite output — from raw fio JSON to the HTML dashboard. After running `05-collect-results.sh` and `06-generate-report.sh`, you'll have several report formats to work with.
 
 ## Result Directory Structure
 
@@ -61,13 +61,13 @@ For read-only jobs, write fields are 0 (and vice versa). Mixed jobs have both po
 
 ## Aggregated CSV
 
-`07-collect-results.sh` parses all JSON files into a single CSV. The columns are:
+`05-collect-results.sh` parses all JSON files into a single CSV. The columns are:
 
 | Column | Description |
 |--------|-------------|
-| `storage_pool` | Pool name (e.g., rep3, ec-4-2, ibmc-vpc-file-dp2) |
+| `storage_pool` | Pool name (e.g., rep3, ec-2-1, ibmc-vpc-file-1000-iops) |
 | `vm_size` | VM size label (small, medium, large) |
-| `pvc_size` | PVC size (10Gi, 50Gi, 100Gi) |
+| `pvc_size` | PVC size (150Gi, 500Gi, 1000Gi) |
 | `concurrency` | Number of VMs in this test |
 | `fio_profile` | Profile name (sequential-rw, random-rw, etc.) |
 | `block_size` | Block size (4k, 64k, 1M, or native) |

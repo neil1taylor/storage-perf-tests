@@ -10,7 +10,7 @@ The test suite transforms templates through three stages before applying them to
 
 ```
 Stage 1: fio Profile Rendering
-  05-fio-profiles/<profile>.fio
+  fio-profiles/<profile>.fio
         │
         │  render_fio_profile()
         │  substitutes ${VARIABLE} placeholders
@@ -18,7 +18,7 @@ Stage 1: fio Profile Rendering
   Rendered fio job content (in memory)
 
 Stage 2: Cloud-init Rendering
-  03-cloud-init/fio-runner.yaml
+  cloud-init/fio-runner.yaml
         │
         │  render_cloud_init()
         │  substitutes __PLACEHOLDER__ patterns
@@ -27,7 +27,7 @@ Stage 2: Cloud-init Rendering
   Rendered cloud-init YAML (in memory)
 
 Stage 3: VM Manifest Rendering
-  04-vm-templates/vm-template.yaml
+  vm-templates/vm-template.yaml
         │
         │  create_test_vm()
         │  substitutes __PLACEHOLDER__ patterns
@@ -53,7 +53,7 @@ For reused VMs (subsequent permutations in the same group):
 
 **Function:** `render_fio_profile()` in `lib/vm-helpers.sh`
 
-**Input:** A `.fio` template file from `05-fio-profiles/`
+**Input:** A `.fio` template file from `fio-profiles/`
 
 **Placeholder style:** `${VARIABLE}` (shell-style)
 
@@ -112,7 +112,7 @@ For profiles in `FIO_FIXED_BS_PROFILES` (db-oltp, app-server, data-pipeline), th
 
 **Function:** `render_cloud_init()` in `lib/vm-helpers.sh`
 
-**Input:** The cloud-init template (`03-cloud-init/fio-runner.yaml`)
+**Input:** The cloud-init template (`cloud-init/fio-runner.yaml`)
 
 **Placeholder style:** `__PLACEHOLDER__` (double-underscore)
 
@@ -153,7 +153,7 @@ indented_fio=$(echo "${fio_job_content}" | sed 's/^/      /')
 
 **Function:** `create_test_vm()` in `lib/vm-helpers.sh`
 
-**Input:** The VM template (`04-vm-templates/vm-template.yaml`)
+**Input:** The VM template (`vm-templates/vm-template.yaml`)
 
 **Placeholder style:** `__PLACEHOLDER__` (double-underscore)
 
@@ -226,14 +226,14 @@ If a VM fails to create or behaves unexpectedly:
 ```bash
 source 00-config.sh
 source lib/vm-helpers.sh
-render_fio_profile "05-fio-profiles/random-rw.fio" "4k"
+render_fio_profile "fio-profiles/random-rw.fio" "4k"
 ```
 
 ### Check cloud-init rendering
 ```bash
 ensure_ssh_key
-rendered_fio=$(render_fio_profile "05-fio-profiles/random-rw.fio" "4k")
-render_cloud_init "03-cloud-init/fio-runner.yaml" "${rendered_fio}" "test-vm" "/mnt/data"
+rendered_fio=$(render_fio_profile "fio-profiles/random-rw.fio" "4k")
+render_cloud_init "cloud-init/fio-runner.yaml" "${rendered_fio}" "test-vm" "/mnt/data"
 ```
 
 ### Check the full VM manifest

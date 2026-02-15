@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 08-generate-report.sh — Generate HTML, Markdown, and XLSX reports
+# 06-generate-report.sh — Generate HTML, Markdown, and XLSX reports
 # =============================================================================
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -224,7 +224,7 @@ main() {
   if [[ ! -f "${csv_file}" ]]; then
     log_warn "CSV file not found: ${csv_file}"
     log_info "Running result collection first..."
-    bash "${SCRIPT_DIR}/07-collect-results.sh"
+    bash "${SCRIPT_DIR}/05-collect-results.sh"
   fi
 
   if [[ ! -f "${csv_file}" ]]; then
