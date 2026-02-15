@@ -17,7 +17,14 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 ## Key Commands
 
 ```bash
-# Full workflow (sequential):
+# Full pipeline (single command):
+./run-all.sh                       # Full pipeline: setup → test → collect → report
+./run-all.sh --quick               # Quick smoke test pipeline
+./run-all.sh --quick --skip-setup  # Re-run tests (pools already exist)
+./run-all.sh --quick --cleanup     # Quick test + clean up VMs/PVCs
+./run-all.sh --overview --cleanup-all  # Overview + full cleanup
+
+# Individual steps (sequential):
 ./01-setup-storage-pools.sh        # Create CephBlockPools + StorageClasses
 ./02-setup-file-storage.sh         # Discover IBM Cloud File CSI StorageClasses
 ./03-setup-block-storage.sh        # Discover IBM Cloud Block CSI StorageClasses (VSI clusters)
@@ -83,10 +90,11 @@ This suite supports both **bare metal (BM)** and **VSI** single-zone ROKS cluste
 
 - **BM clusters:** NVMe-backed ODF, no IBM Cloud Block CSI available. `03-setup-block-storage.sh` exits cleanly.
 - **VSI clusters:** IBM Cloud Block-backed ODF, plus IBM Cloud Block CSI available for direct testing. All three backends (ODF, File CSI, Block CSI) are tested.
-- **EC pool constraints:** EC pools require k+m unique hosts (using `failureDomain: host`). With 3 workers, only pools needing ≤3 failure domains work (rep2, rep3, ec-2-1). Pools ec-2-2 (needs 4) and ec-4-2 (needs 6) have been removed from `00-config.sh`.
+- **EC pool constraints:** EC pools require k+m unique hosts (using `failureDomain: host`). With 3 workers, only pools needing ≤3 failure domains work (rep2, rep3, ec-2-1). Pools requiring more hosts (ec-2-2 needs 4, ec-4-2 needs 6) are defined in `00-config.sh` for portability across cluster sizes but are automatically skipped when the cluster has insufficient hosts. Topology skips are logged as warnings and do not count as failures.
 - **EC StorageClass setup:** RBD cannot store image metadata directly on an erasure-coded pool. EC StorageClasses use `pool` (replicated, for metadata) + `dataPool` (EC, for data blocks). `01-setup-storage-pools.sh` automatically sets `pool: ocs-storagecluster-cephblockpool` and `dataPool: perf-test-<ec-pool>` for EC pools.
 - **File/Block CSI deduplication:** Auto-discovery finds many StorageClasses, but `-metro-`, `-retain-`, and `-regional*` variants are filtered out by default. Metro/retain produce identical I/O performance on a single-zone cluster; regional SCs use the `rfs` profile which requires IBM support allowlisting. `FILE_CSI_DEDUP=true` and `BLOCK_CSI_DEDUP=true` (both default) enable this filtering. Set to `false` for multi-zone clusters where metro topology may affect latency, or if `rfs` has been allowlisted.
 - **PVC size minimums:** IBM Cloud File dp2 profile enforces a max ~25 IOPS/GB ratio. The 3000-IOPS SC requires ≥120Gi to provision, so the minimum PVC size in the test matrix is 150Gi.
+- **Rep2 vs Rep3 on 3-node clusters:** On a 3-worker cluster, rep3 reads can outperform rep2 reads because (a) rep3 uses the pre-tuned OOB pool while rep2 uses a freshly created pool with potentially unconverged PG autoscaler, and (b) rep3 on exactly 3 nodes gives perfectly balanced PG distribution (every OSD holds all PGs) while rep2 creates uneven primary OSD pairing. Rep2 should outperform rep3 for writes (2 replica acks vs 3). The `01-setup-storage-pools.sh` script waits for PG autoscaler convergence to minimize the first factor.
 
 ## Conventions
 

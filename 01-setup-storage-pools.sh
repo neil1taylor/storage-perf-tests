@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/00-config.sh"
 source "${SCRIPT_DIR}/lib/vm-helpers.sh"
+source "${SCRIPT_DIR}/lib/wait-helpers.sh"
 
 # ---------------------------------------------------------------------------
 # Create (or verify) a StorageClass for a given ODF pool
@@ -253,7 +254,6 @@ main() {
 
     if [[ "${required_hosts}" -gt "${osd_hosts}" ]]; then
       log_warn "Pool ${name} requires ${required_hosts} hosts (failureDomain=host) but only ${osd_hosts} available — skipping"
-      pool_failures=$((pool_failures + 1))
       continue
     fi
 
@@ -291,6 +291,9 @@ main() {
       }
     fi
   done
+
+  # Wait for PG autoscaler to converge before benchmarks begin
+  wait_for_pg_convergence "${PG_CONVERGENCE_TIMEOUT}" || true
 
   log_info "=== ODF storage pool setup complete ==="
   log_info "StorageClasses available:"

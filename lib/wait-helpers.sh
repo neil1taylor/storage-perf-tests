@@ -215,6 +215,64 @@ wait_for_all_fio_complete() {
 }
 
 # ---------------------------------------------------------------------------
+# Wait for PG autoscaler to converge on all perf-test pools
+# ---------------------------------------------------------------------------
+wait_for_pg_convergence() {
+  local timeout="${1:-${PG_CONVERGENCE_TIMEOUT:-300}}"
+  local interval="${PG_CONVERGENCE_INTERVAL:-30}"
+
+  log_info "Waiting for PG autoscaler to converge on perf-test pools..."
+
+  # Find the rook-ceph-tools pod
+  local tools_pod
+  tools_pod=$(oc get pod -n "${ODF_NAMESPACE}" -l app=rook-ceph-tools \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+  if [[ -z "${tools_pod}" ]]; then
+    log_warn "rook-ceph-tools pod not found in ${ODF_NAMESPACE} — skipping PG convergence check"
+    return 0
+  fi
+
+  local start_time
+  start_time=$(date +%s)
+
+  while true; do
+    local elapsed=$(( $(date +%s) - start_time ))
+    if [[ ${elapsed} -ge ${timeout} ]]; then
+      log_warn "PG autoscaler did not converge within ${timeout}s — proceeding anyway"
+      return 1
+    fi
+
+    local autoscale_json
+    autoscale_json=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
+      ceph osd pool autoscale-status --format json 2>/dev/null || echo "[]")
+
+    # Filter to perf-test pools and check convergence
+    local unconverged
+    unconverged=$(echo "${autoscale_json}" | jq -r '
+      [.[] | select(.pool_name | startswith("perf-test-"))
+           | select(.pg_num != .new_pg_num)]
+      | length')
+
+    if [[ "${unconverged}" == "0" ]]; then
+      log_info "PG autoscaler converged for all perf-test pools ($(_format_duration "${elapsed}"))"
+      return 0
+    fi
+
+    # Log per-pool status
+    echo "${autoscale_json}" | jq -r '
+      .[] | select(.pool_name | startswith("perf-test-"))
+          | "\(.pool_name): pg_num=\(.pg_num) target=\(.new_pg_num)"' | \
+    while IFS= read -r line; do
+      log_info "  ${line}"
+    done
+
+    log_info "PG convergence: ${unconverged} pool(s) still adjusting ($(_format_duration "${elapsed}") elapsed)"
+    sleep "${interval}"
+  done
+}
+
+# ---------------------------------------------------------------------------
 # Wait for PVC to be Bound
 # ---------------------------------------------------------------------------
 wait_for_pvc_bound() {

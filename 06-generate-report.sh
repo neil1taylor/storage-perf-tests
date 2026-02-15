@@ -192,7 +192,7 @@ ws_info = wb.create_sheet("Test Config")
 info_rows = [
     ("Run ID", "${RUN_ID}"),
     ("Date", "$(date -u +%Y-%m-%dT%H:%M:%SZ)"),
-    ("Cluster", "IBM Cloud ROKS (${BM_FLAVOR} bare metal, NVMe)"),
+    ("Cluster", "${CLUSTER_DESCRIPTION}"),
     ("VM Sizes", "${VM_SIZES[*]}"),
     ("PVC Sizes", "${PVC_SIZES[*]}"),
     ("Concurrency", "${CONCURRENCY_LEVELS[*]}"),

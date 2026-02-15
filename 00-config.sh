@@ -146,6 +146,8 @@ export FIO_COMPLETION_TIMEOUT=900 # max wait for a single fio run
 export POLL_INTERVAL=10           # seconds between status checks
 export DV_STALL_THRESHOLD="${DV_STALL_THRESHOLD:-5}"   # polls with no progress change before warning
 export DV_STALL_ACTION="${DV_STALL_ACTION:-warn}"       # "warn" = log warning; "fail" = abort immediately
+export PG_CONVERGENCE_TIMEOUT="${PG_CONVERGENCE_TIMEOUT:-300}"  # max wait for PG autoscaler convergence
+export PG_CONVERGENCE_INTERVAL="${PG_CONVERGENCE_INTERVAL:-30}" # seconds between PG convergence checks
 
 # ---------------------------------------------------------------------------
 # Results / reporting

@@ -17,7 +17,13 @@ parse_fio_json_to_csv() {
 
   if [[ ! -f "${json_file}" ]]; then
     log_warn "Missing fio JSON: ${json_file}"
-    return 1
+    return 0
+  fi
+
+  # Validate JSON before parsing — fio may prepend error text (e.g. ENOSPC)
+  if ! jq empty "${json_file}" 2>/dev/null; then
+    log_warn "Skipping invalid JSON: ${json_file}"
+    return 0
   fi
 
   jq -r --arg pool "${pool_name}" \
@@ -71,7 +77,7 @@ aggregate_results_csv() {
     fi
 
     parse_fio_json_to_csv "${json_file}" \
-      "${pool}" "${vmsize}" "${pvcsize}" "${concurrency}" "${profile}" "${blocksize}"
+      "${pool}" "${vmsize}" "${pvcsize}" "${concurrency}" "${profile}" "${blocksize}" || true
   done >> "${output_csv}"
 
   local lines
