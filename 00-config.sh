@@ -150,7 +150,7 @@ export FIO_PROFILES
 # ---------------------------------------------------------------------------
 export VM_READY_TIMEOUT=600       # seconds to wait for VM to become Ready
 export VM_SSH_TIMEOUT=300         # seconds to wait for SSH inside VM
-export FIO_COMPLETION_TIMEOUT=900 # max wait for a single fio run
+export FIO_COMPLETION_TIMEOUT=1800 # max wait for a single fio run (30min; multi-job profiles with stonewall can exceed 15min at high concurrency on slow pools)
 export POLL_INTERVAL=10           # seconds between status checks
 export DV_STALL_THRESHOLD="${DV_STALL_THRESHOLD:-5}"   # polls with no progress change before warning
 export DV_STALL_ACTION="${DV_STALL_ACTION:-warn}"       # "warn" = log warning; "fail" = abort immediately
