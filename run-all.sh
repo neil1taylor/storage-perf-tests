@@ -26,6 +26,7 @@ SKIP_SETUP=false
 DO_CLEANUP=""
 NO_REPORTS=false
 NOTIFY_URL=""
+RANK_MODE=false
 PASSTHROUGH_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -35,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --cleanup-all)   DO_CLEANUP="--all"; shift ;;
     --no-reports)    NO_REPORTS=true; shift ;;
     --notify)        NOTIFY_URL="$2"; shift 2 ;;
+    --rank)          RANK_MODE=true; PASSTHROUGH_ARGS+=("$1"); shift ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo ""
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --quick              Quick smoke test"
       echo "  --pool <name>        Test single pool"
       echo "  --overview           Overview mode"
+      echo "  --rank               Rank mode: 3 tests/pool with ranking report"
       echo "  --parallel [N]       Run pools in parallel"
       echo "  --resume <run-id>    Resume an interrupted run"
       echo "  --dry-run            Preview test matrix without running"
@@ -99,7 +102,11 @@ if [[ "${NO_REPORTS}" != true ]]; then
   bash "${SCRIPT_DIR}/05-collect-results.sh"
 
   log_info "--- Step 6/6: Generating reports ---"
-  bash "${SCRIPT_DIR}/06-generate-report.sh"
+  if [[ "${RANK_MODE}" == true ]]; then
+    bash "${SCRIPT_DIR}/06-generate-report.sh" --rank
+  else
+    bash "${SCRIPT_DIR}/06-generate-report.sh"
+  fi
 else
   log_info "Skipping collect/report steps 05-06 (--no-reports)"
 fi

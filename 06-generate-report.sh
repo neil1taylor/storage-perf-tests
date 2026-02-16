@@ -13,6 +13,7 @@ source "${SCRIPT_DIR}/lib/report-helpers.sh"
 # ---------------------------------------------------------------------------
 COMPARE_RUN_1=""
 COMPARE_RUN_2=""
+RANK_MODE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,9 +22,13 @@ while [[ $# -gt 0 ]]; do
       COMPARE_RUN_2="$3"
       shift 3
       ;;
+    --rank)
+      RANK_MODE=true; shift
+      ;;
     --help)
-      echo "Usage: $0 [--compare <run-id-1> <run-id-2>]"
+      echo "Usage: $0 [--compare <run-id-1> <run-id-2>] [--rank]"
       echo "  --compare <id1> <id2>   Compare two runs side-by-side with delta analysis"
+      echo "  --rank                  Generate StorageClass ranking report"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -504,11 +509,18 @@ main() {
     generate_xlsx_report "${csv_file}" "${summary_csv}" "${REPORTS_DIR}/report-${RUN_ID}.xlsx"
   fi
 
+  # Generate ranking report in rank mode
+  if [[ "${RANK_MODE}" == true ]]; then
+    local ranking_html="${REPORTS_DIR}/ranking-${RUN_ID}.html"
+    generate_ranking_html_report "${csv_file}" "${ranking_html}" "${RUN_ID}"
+  fi
+
   log_info ""
   log_info "=== Reports Generated ==="
   log_info "  Markdown: ${REPORTS_DIR}/report-${RUN_ID}.md"
   log_info "  HTML:     ${REPORTS_DIR}/report-${RUN_ID}.html"
   [[ -f "${REPORTS_DIR}/report-${RUN_ID}.xlsx" ]] && log_info "  XLSX:     ${REPORTS_DIR}/report-${RUN_ID}.xlsx"
+  [[ -f "${REPORTS_DIR}/ranking-${RUN_ID}.html" ]] && log_info "  Ranking:  ${REPORTS_DIR}/ranking-${RUN_ID}.html"
   log_info "  Raw CSV:  ${csv_file}"
   log_info "  Summary:  ${summary_csv}"
 }

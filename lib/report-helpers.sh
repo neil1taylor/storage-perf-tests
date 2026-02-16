@@ -482,3 +482,437 @@ HTMLEOF
 
   log_info "HTML dashboard generated: ${output_html}"
 }
+
+# ---------------------------------------------------------------------------
+# Generate StorageClass ranking HTML report (rank mode)
+# ---------------------------------------------------------------------------
+generate_ranking_html_report() {
+  local csv_file="$1"
+  local output_html="$2"
+  local run_id="$3"
+
+  log_info "Generating ranking report: ${output_html}"
+
+  local ranking_json
+  ranking_json=$(python3 << 'PYEOF_RANK'
+import csv, json, sys, os
+
+csv_file = sys.argv[1]
+
+# Read CSV and aggregate by (pool, profile, block_size)
+# Sum IOPS/BW across fio jobs per test, average latency
+groups = {}
+with open(csv_file, 'r') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        pool = row.get('storage_pool', '')
+        profile = row.get('fio_profile', '')
+        bs = row.get('block_size', '')
+        key = f"{pool}|{profile}|{bs}"
+
+        if key not in groups:
+            groups[key] = {
+                'pool': pool, 'profile': profile, 'block_size': bs,
+                'read_iops': 0, 'write_iops': 0,
+                'read_bw_kib': 0, 'write_bw_kib': 0,
+                'read_lat_avg_ms': 0, 'write_lat_avg_ms': 0,
+                'read_lat_p99_ms': 0, 'write_lat_p99_ms': 0,
+                'job_count': 0
+            }
+
+        g = groups[key]
+        g['read_iops'] += float(row.get('read_iops', 0) or 0)
+        g['write_iops'] += float(row.get('write_iops', 0) or 0)
+        g['read_bw_kib'] += float(row.get('read_bw_kib', 0) or 0)
+        g['write_bw_kib'] += float(row.get('write_bw_kib', 0) or 0)
+        g['read_lat_avg_ms'] += float(row.get('read_lat_avg_ms', 0) or 0)
+        g['write_lat_avg_ms'] += float(row.get('write_lat_avg_ms', 0) or 0)
+        g['read_lat_p99_ms'] += float(row.get('read_lat_p99_ms', 0) or 0)
+        g['write_lat_p99_ms'] += float(row.get('write_lat_p99_ms', 0) or 0)
+        g['job_count'] += 1
+
+# Average latencies across jobs (IOPS/BW are already summed correctly)
+for g in groups.values():
+    n = g['job_count']
+    if n > 0:
+        g['read_lat_avg_ms'] /= n
+        g['write_lat_avg_ms'] /= n
+        g['read_lat_p99_ms'] /= n
+        g['write_lat_p99_ms'] /= n
+
+# Build per-pool metrics from the 3 expected workloads
+pools = {}
+for g in groups.values():
+    pool = g['pool']
+    if pool not in pools:
+        pools[pool] = {}
+    wk = f"{g['profile']}/{g['block_size']}"
+    pools[pool][wk] = g
+
+# Per-workload rankings
+workloads = [
+    {
+        'id': 'random_iops',
+        'title': 'Random 4k IOPS',
+        'key': 'random-rw/4k',
+        'metric': lambda g: g['read_iops'] + g['write_iops'],
+        'display': lambda g: {
+            'total_iops': round(g['read_iops'] + g['write_iops']),
+            'read_iops': round(g['read_iops']),
+            'write_iops': round(g['write_iops']),
+        },
+        'higher_better': True,
+    },
+    {
+        'id': 'seq_bw',
+        'title': 'Sequential 1M Throughput',
+        'key': 'sequential-rw/1M',
+        'metric': lambda g: (g['read_bw_kib'] + g['write_bw_kib']) / 1024,
+        'display': lambda g: {
+            'total_mib': round((g['read_bw_kib'] + g['write_bw_kib']) / 1024, 1),
+            'read_mib': round(g['read_bw_kib'] / 1024, 1),
+            'write_mib': round(g['write_bw_kib'] / 1024, 1),
+        },
+        'higher_better': True,
+    },
+    {
+        'id': 'mixed_iops',
+        'title': 'Mixed 70/30 4k IOPS',
+        'key': 'mixed-70-30/4k',
+        'metric': lambda g: g['read_iops'] + g['write_iops'],
+        'display': lambda g: {
+            'total_iops': round(g['read_iops'] + g['write_iops']),
+            'read_iops': round(g['read_iops']),
+            'write_iops': round(g['write_iops']),
+        },
+        'higher_better': True,
+    },
+]
+
+# Build workload rankings
+workload_rankings = []
+for wl in workloads:
+    ranking = []
+    for pool_name, wks in pools.items():
+        if wl['key'] in wks:
+            g = wks[wl['key']]
+            val = wl['metric'](g)
+            entry = {'pool': pool_name, 'value': round(val, 2)}
+            entry.update(wl['display'](g))
+            ranking.append(entry)
+    ranking.sort(key=lambda x: x['value'], reverse=wl['higher_better'])
+    workload_rankings.append({
+        'id': wl['id'],
+        'title': wl['title'],
+        'higher_better': wl['higher_better'],
+        'ranking': ranking,
+    })
+
+# Latency ranking (from random-rw/4k — most latency-sensitive)
+latency_ranking = []
+for pool_name, wks in pools.items():
+    if 'random-rw/4k' in wks:
+        g = wks['random-rw/4k']
+        latency_ranking.append({
+            'pool': pool_name,
+            'read_lat_avg': round(g['read_lat_avg_ms'], 3),
+            'write_lat_avg': round(g['write_lat_avg_ms'], 3),
+            'read_p99': round(g['read_lat_p99_ms'], 3),
+            'write_p99': round(g['write_lat_p99_ms'], 3),
+            'avg_p99': round((g['read_lat_p99_ms'] + g['write_lat_p99_ms']) / 2, 3),
+        })
+latency_ranking.sort(key=lambda x: x['avg_p99'])
+
+# Composite score: normalize each dimension to 0-100 (best=100)
+# Weights: random IOPS 40%, sequential BW 30%, mixed IOPS 20%, p99 latency 10%
+dimensions = [
+    ('random_iops', 'random-rw/4k', lambda g: g['read_iops'] + g['write_iops'], True, 0.40),
+    ('seq_bw', 'sequential-rw/1M', lambda g: (g['read_bw_kib'] + g['write_bw_kib']) / 1024, True, 0.30),
+    ('mixed_iops', 'mixed-70-30/4k', lambda g: g['read_iops'] + g['write_iops'], True, 0.20),
+    ('p99_lat', 'random-rw/4k', lambda g: (g['read_lat_p99_ms'] + g['write_lat_p99_ms']) / 2, False, 0.10),
+]
+
+# Collect raw values per pool for each dimension
+pool_names = sorted(pools.keys())
+raw_scores = {p: {} for p in pool_names}
+for dim_id, wk_key, metric_fn, higher_better, weight in dimensions:
+    vals = {}
+    for p in pool_names:
+        if wk_key in pools[p]:
+            vals[p] = metric_fn(pools[p][wk_key])
+    if not vals:
+        continue
+    best = max(vals.values()) if higher_better else min(vals.values())
+    if best == 0:
+        continue
+    for p, v in vals.items():
+        if higher_better:
+            normalized = (v / best) * 100
+        else:
+            normalized = (best / v) * 100 if v > 0 else 0
+        raw_scores[p][dim_id] = round(normalized, 1)
+
+composite = []
+for p in pool_names:
+    scores = raw_scores[p]
+    weighted = 0
+    total_weight = 0
+    breakdown = {}
+    for dim_id, _, _, _, weight in dimensions:
+        if dim_id in scores:
+            weighted += scores[dim_id] * weight
+            total_weight += weight
+            breakdown[dim_id] = scores[dim_id]
+    final = round(weighted / total_weight, 1) if total_weight > 0 else 0
+    composite.append({
+        'pool': p,
+        'score': final,
+        'breakdown': breakdown,
+    })
+composite.sort(key=lambda x: x['score'], reverse=True)
+
+print(json.dumps({
+    'pools': pool_names,
+    'workload_rankings': workload_rankings,
+    'latency_ranking': latency_ranking,
+    'composite': composite,
+    'weights': {d[0]: d[4] for d in dimensions},
+}))
+PYEOF_RANK
+  "${csv_file}")
+
+  cat > "${output_html}" << 'RANK_HTML_EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StorageClass Ranking</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+    .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 2rem; }
+    .header h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+    .header .meta { color: #aaa; font-size: 0.9rem; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .section h2 { font-size: 1.3rem; color: #1a1a2e; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0; }
+    .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.6rem 0.8rem; text-align: right; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; font-weight: 600; text-align: left; position: sticky; top: 0; }
+    td:first-child, th:first-child { text-align: left; }
+    .rank-1 td { background: #fff9e6; }
+    .rank-2 td { background: #f5f5f5; }
+    .rank-3 td { background: #fdf0ed; }
+    .medal { font-size: 1.1rem; margin-right: 0.3rem; }
+    .score-bar { display: inline-block; height: 20px; border-radius: 3px; vertical-align: middle; min-width: 2px; }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 1rem; }
+    .collapsible { cursor: pointer; user-select: none; }
+    .collapsible::after { content: ' [+]'; font-size: 0.8rem; color: #999; }
+    .collapsible.open::after { content: ' [-]'; }
+    .collapse-content { display: none; }
+    .collapse-content.open { display: block; }
+    .weight-badge { display: inline-block; background: #e0e0e0; color: #555; font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 3px; margin-left: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>StorageClass Performance Ranking</h1>
+    <div class="meta" id="meta"></div>
+  </div>
+  <div class="container">
+    <div class="section">
+      <h2>Overall Composite Ranking</h2>
+      <div class="card">
+        <table id="compositeTable"></table>
+      </div>
+      <div class="card"><canvas id="compositeChart" height="80"></canvas></div>
+    </div>
+    <div class="section">
+      <h2>Per-Workload Rankings</h2>
+      <div class="chart-grid" id="workloadCharts"></div>
+    </div>
+    <div class="section">
+      <h2>Latency Ranking (Random 4k)</h2>
+      <div class="card">
+        <table id="latencyTable"></table>
+      </div>
+    </div>
+    <div class="section">
+      <h2 class="collapsible" onclick="toggleCollapse(this)">Raw Data</h2>
+      <div class="collapse-content">
+        <div class="card"><table id="rawTable"></table></div>
+      </div>
+    </div>
+  </div>
+  <script>
+RANK_HTML_EOF
+
+  # Inject the JSON data and run_id into the HTML
+  printf '    const DATA = %s;\n' "${ranking_json}" >> "${output_html}"
+  printf '    const RUN_ID = "%s";\n' "${run_id}" >> "${output_html}"
+
+  cat >> "${output_html}" << 'RANK_HTML_EOF2'
+    const COLORS = ['#e63946','#457b9d','#2a9d8f','#e9c46a','#f4a261','#264653',
+                    '#a8dadc','#d62828','#023e8a','#780000','#6a4c93','#1982c4',
+                    '#8ac926','#ff595e','#ffca3a'];
+    const MEDALS = ['&#x1F947;', '&#x1F948;', '&#x1F949;'];
+
+    document.getElementById('meta').innerHTML =
+      'Run: ' + RUN_ID + ' | Weights: Random IOPS 40%, Sequential BW 30%, Mixed IOPS 20%, p99 Latency 10%';
+
+    // Composite table
+    (function() {
+      const comp = DATA.composite;
+      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th>Composite Score</th>';
+      html += '<th>Random IOPS<span class="weight-badge">40%</span></th>';
+      html += '<th>Sequential BW<span class="weight-badge">30%</span></th>';
+      html += '<th>Mixed IOPS<span class="weight-badge">20%</span></th>';
+      html += '<th>p99 Latency<span class="weight-badge">10%</span></th>';
+      html += '</tr></thead><tbody>';
+      comp.forEach((c, i) => {
+        const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
+        const medal = i < 3 ? '<span class="medal">' + MEDALS[i] + '</span>' : '';
+        const pct = c.score;
+        const barColor = COLORS[i % COLORS.length];
+        html += '<tr' + cls + '><td>' + medal + '#' + (i+1) + '</td>';
+        html += '<td><strong>' + c.pool + '</strong></td>';
+        html += '<td><span class="score-bar" style="width:' + (pct * 2) + 'px;background:' + barColor + '"></span> ' + pct + '</td>';
+        const dims = ['random_iops', 'seq_bw', 'mixed_iops', 'p99_lat'];
+        dims.forEach(d => {
+          const v = c.breakdown[d] !== undefined ? c.breakdown[d] : '-';
+          html += '<td>' + v + '</td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('compositeTable').innerHTML = html;
+    })();
+
+    // Composite bar chart
+    (function() {
+      const comp = DATA.composite;
+      new Chart(document.getElementById('compositeChart'), {
+        type: 'bar',
+        data: {
+          labels: comp.map(c => c.pool),
+          datasets: [{
+            label: 'Composite Score',
+            data: comp.map(c => c.score),
+            backgroundColor: comp.map((_, i) => COLORS[i % COLORS.length]),
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { beginAtZero: true, max: 105, title: { display: true, text: 'Score (best = 100)' } },
+          }
+        }
+      });
+    })();
+
+    // Per-workload charts and tables
+    (function() {
+      const container = document.getElementById('workloadCharts');
+      DATA.workload_rankings.forEach((wl, wi) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const unit = wl.id === 'seq_bw' ? 'MiB/s' : 'IOPS';
+        const valKey = wl.id === 'seq_bw' ? 'total_mib' : 'total_iops';
+        const readKey = wl.id === 'seq_bw' ? 'read_mib' : 'read_iops';
+        const writeKey = wl.id === 'seq_bw' ? 'write_mib' : 'write_iops';
+
+        let html = '<h3 style="margin-bottom:0.5rem">' + wl.title + '</h3>';
+        html += '<table><thead><tr><th>Rank</th><th>StorageClass</th><th>Total ' + unit + '</th>';
+        html += '<th>Read</th><th>Write</th></tr></thead><tbody>';
+        wl.ranking.forEach((r, i) => {
+          const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
+          const medal = i < 3 ? '<span class="medal">' + MEDALS[i] + '</span>' : '';
+          html += '<tr' + cls + '><td>' + medal + '#' + (i+1) + '</td>';
+          html += '<td>' + r.pool + '</td>';
+          html += '<td><strong>' + (r[valKey] !== undefined ? r[valKey].toLocaleString() : r.value) + '</strong></td>';
+          html += '<td>' + (r[readKey] !== undefined ? r[readKey].toLocaleString() : '-') + '</td>';
+          html += '<td>' + (r[writeKey] !== undefined ? r[writeKey].toLocaleString() : '-') + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+
+        const canvasId = 'wlChart' + wi;
+        html += '<canvas id="' + canvasId + '" height="60" style="margin-top:0.5rem"></canvas>';
+        card.innerHTML = html;
+        container.appendChild(card);
+
+        new Chart(document.getElementById(canvasId), {
+          type: 'bar',
+          data: {
+            labels: wl.ranking.map(r => r.pool),
+            datasets: [
+              { label: 'Read', data: wl.ranking.map(r => r[readKey] || 0), backgroundColor: '#457b9d' },
+              { label: 'Write', data: wl.ranking.map(r => r[writeKey] || 0), backgroundColor: '#e63946' },
+            ]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: { legend: { position: 'top' } },
+            scales: { x: { beginAtZero: true, stacked: true, title: { display: true, text: unit } }, y: { stacked: true } }
+          }
+        });
+      });
+    })();
+
+    // Latency table
+    (function() {
+      const lat = DATA.latency_ranking;
+      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th>Read Avg (ms)</th>';
+      html += '<th>Write Avg (ms)</th><th>Read p99 (ms)</th><th>Write p99 (ms)</th>';
+      html += '<th>Avg p99 (ms)</th></tr></thead><tbody>';
+      lat.forEach((r, i) => {
+        const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
+        const medal = i < 3 ? '<span class="medal">' + MEDALS[i] + '</span>' : '';
+        html += '<tr' + cls + '><td>' + medal + '#' + (i+1) + '</td>';
+        html += '<td>' + r.pool + '</td>';
+        html += '<td>' + r.read_lat_avg + '</td><td>' + r.write_lat_avg + '</td>';
+        html += '<td>' + r.read_p99 + '</td><td>' + r.write_p99 + '</td>';
+        html += '<td><strong>' + r.avg_p99 + '</strong></td></tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('latencyTable').innerHTML = html;
+    })();
+
+    // Raw data table (from composite + workload data)
+    (function() {
+      const comp = DATA.composite;
+      const wls = DATA.workload_rankings;
+      let html = '<thead><tr><th>StorageClass</th><th>Composite</th>';
+      wls.forEach(wl => { html += '<th>' + wl.title + '</th>'; });
+      html += '<th>Avg p99 (ms)</th></tr></thead><tbody>';
+      comp.forEach(c => {
+        html += '<tr><td>' + c.pool + '</td><td>' + c.score + '</td>';
+        wls.forEach(wl => {
+          const entry = wl.ranking.find(r => r.pool === c.pool);
+          html += '<td>' + (entry ? entry.value : '-') + '</td>';
+        });
+        const latEntry = DATA.latency_ranking.find(r => r.pool === c.pool);
+        html += '<td>' + (latEntry ? latEntry.avg_p99 : '-') + '</td>';
+        html += '</tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('rawTable').innerHTML = html;
+    })();
+
+    function toggleCollapse(el) {
+      el.classList.toggle('open');
+      el.nextElementSibling.classList.toggle('open');
+    }
+  </script>
+</body>
+</html>
+RANK_HTML_EOF2
+
+  log_info "Ranking report generated: ${output_html}"
+}

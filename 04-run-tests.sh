@@ -29,6 +29,7 @@ source "${SCRIPT_DIR}/lib/wait-helpers.sh"
 FILTER_POOL=""
 QUICK_MODE=false
 OVERVIEW_MODE=false
+RANK_MODE=false
 PARALLEL_POOLS=1
 RESUME_RUN_ID=""
 DRY_RUN=false
@@ -40,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --pool)     FILTER_POOL="$2"; shift 2 ;;
     --quick)    QUICK_MODE=true; shift ;;
     --overview) OVERVIEW_MODE=true; shift ;;
+    --rank)     RANK_MODE=true; shift ;;
     --parallel)
       if [[ $# -gt 1 ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
         PARALLEL_POOLS="$2"; shift 2
@@ -52,11 +54,12 @@ while [[ $# -gt 0 ]]; do
     --filter)   FILTER_PATTERN="$2"; shift 2 ;;
     --exclude)  EXCLUDE_PATTERN="$2"; shift 2 ;;
     --help)
-      echo "Usage: $0 [--pool <name>] [--quick] [--overview] [--parallel [N]]"
+      echo "Usage: $0 [--pool <name>] [--quick] [--overview] [--rank] [--parallel [N]]"
       echo "         [--resume <run-id>] [--dry-run] [--filter <pattern>] [--exclude <pattern>]"
       echo "  --pool <name>    Test only a specific storage pool"
       echo "  --quick          Quick mode: small VM, 150Gi PVC, concurrency=1 only"
       echo "  --overview       Overview mode: 2 tests/pool (random 4k + sequential 1M) across all pools"
+      echo "  --rank           Rank mode: 3 tests/pool (random 4k + sequential 1M + mixed 4k), 60s runtime"
       echo "  --parallel [N]   Run pools in parallel (auto-scale to cluster capacity, or specify N)"
       echo "  --resume <id>    Resume an interrupted run, skipping completed tests"
       echo "  --dry-run        Preview test matrix without creating any resources"
@@ -69,8 +72,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Mutual exclusivity guard
-if [[ "${QUICK_MODE}" == true && "${OVERVIEW_MODE}" == true ]]; then
-  echo "Error: --quick and --overview are mutually exclusive" >&2
+_mode_count=0
+[[ "${QUICK_MODE}" == true ]] && ((_mode_count += 1))
+[[ "${OVERVIEW_MODE}" == true ]] && ((_mode_count += 1))
+[[ "${RANK_MODE}" == true ]] && ((_mode_count += 1))
+if [[ ${_mode_count} -gt 1 ]]; then
+  echo "Error: --quick, --overview, and --rank are mutually exclusive" >&2
   exit 1
 fi
 
@@ -92,6 +99,17 @@ if [[ "${OVERVIEW_MODE}" == true ]]; then
   FIO_BLOCK_SIZES=("4k" "1M")
   FIO_PROFILES=("random-rw" "sequential-rw")
   log_info "Overview mode enabled — 2 tests per pool (random-rw/4k + sequential-rw/1M)"
+fi
+
+# Override for rank mode
+if [[ "${RANK_MODE}" == true ]]; then
+  VM_SIZES=("small:2:4Gi")
+  PVC_SIZES=("150Gi")
+  CONCURRENCY_LEVELS=(1)
+  FIO_BLOCK_SIZES=("4k" "1M")
+  FIO_PROFILES=("random-rw" "sequential-rw" "mixed-70-30")
+  FIO_RUNTIME=60
+  log_info "Rank mode enabled — 3 tests per pool (random-rw/4k + sequential-rw/1M + mixed-70-30/4k), 60s runtime"
 fi
 
 # ---------------------------------------------------------------------------
@@ -303,6 +321,11 @@ calculate_pool_tests() {
                 [[ "${fio_profile}" == "random-rw" && "${block_size}" != "4k" ]] && continue
                 [[ "${fio_profile}" == "sequential-rw" && "${block_size}" != "1M" ]] && continue
               fi
+              if [[ "${RANK_MODE}" == true ]]; then
+                [[ "${fio_profile}" == "random-rw" && "${block_size}" != "4k" ]] && continue
+                [[ "${fio_profile}" == "sequential-rw" && "${block_size}" != "1M" ]] && continue
+                [[ "${fio_profile}" == "mixed-70-30" && "${block_size}" != "4k" ]] && continue
+              fi
               ((count += 1))
             done
           fi
@@ -368,6 +391,11 @@ if [[ "${DRY_RUN}" == true ]]; then
                 if [[ "${OVERVIEW_MODE}" == true ]]; then
                   [[ "${profile}" == "random-rw" && "${bs}" != "4k" ]] && continue
                   [[ "${profile}" == "sequential-rw" && "${bs}" != "1M" ]] && continue
+                fi
+                if [[ "${RANK_MODE}" == true ]]; then
+                  [[ "${profile}" == "random-rw" && "${bs}" != "4k" ]] && continue
+                  [[ "${profile}" == "sequential-rw" && "${bs}" != "1M" ]] && continue
+                  [[ "${profile}" == "mixed-70-30" && "${bs}" != "4k" ]] && continue
                 fi
                 key="${pool_name}:${size_label}:${pvc_size}:${conc}:${profile}:${bs}"
                 if should_run_test "${key}"; then
@@ -481,6 +509,12 @@ run_single_pool() {
               if [[ "${OVERVIEW_MODE}" == true ]]; then
                 [[ "${fio_profile}" == "random-rw" && "${block_size}" != "4k" ]] && continue
                 [[ "${fio_profile}" == "sequential-rw" && "${block_size}" != "1M" ]] && continue
+              fi
+              # Rank mode: each profile paired with its canonical block size
+              if [[ "${RANK_MODE}" == true ]]; then
+                [[ "${fio_profile}" == "random-rw" && "${block_size}" != "4k" ]] && continue
+                [[ "${fio_profile}" == "sequential-rw" && "${block_size}" != "1M" ]] && continue
+                [[ "${fio_profile}" == "mixed-70-30" && "${block_size}" != "4k" ]] && continue
               fi
               group_profiles+=("${fio_profile}")
               group_block_sizes+=("${block_size}")
