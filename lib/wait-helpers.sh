@@ -120,7 +120,7 @@ wait_for_all_fio_complete() {
 
       local svc_state
       svc_state=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
-        --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
+        --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
         --username=fedora --command="systemctl show perf-test.service -p ActiveState --value" \
         "vm/${vm_name}" 2>/dev/null || echo "unknown")
 
@@ -144,7 +144,7 @@ wait_for_all_fio_complete() {
         # Query both exit code and PID to distinguish "never started" from "completed"
         local svc_info
         svc_info=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
-          --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" \
+          --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
           --username=fedora --command="systemctl show perf-test.service -p ExecMainPID,ExecMainStatus --value" \
           "vm/${vm_name}" 2>/dev/null || echo "0
 1")
