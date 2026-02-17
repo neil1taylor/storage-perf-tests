@@ -193,6 +193,8 @@ Pay attention to the gap between average and p99 latency:
 - **Large gap:** Tail latency spikes — some operations are much slower than average
 - This is especially important for database workloads where p99 affects user experience
 
+For a deep dive into why different backends produce different latency patterns (Ceph read/write asymmetry, NFS consistency, EC write penalties), see [Latency Patterns and Storage Tradeoffs](latency-patterns.md).
+
 ### Comparing db-oltp Results
 
 The db-oltp profile has four distinct jobs. Look at them individually:
@@ -338,6 +340,7 @@ When comparing results:
 
 ## Next Steps
 
+- [Latency Patterns](latency-patterns.md) — Read/write asymmetry, Ceph vs NFS vs EC tradeoffs
 - [fio Profiles Reference](../architecture/fio-profiles-reference.md) — What each profile measures
 - [fio Benchmarking](../concepts/fio-benchmarking.md) — Understanding the metrics
 - [Ceph Pool / vSAN Policy Mapping](../concepts/ceph-and-odf.md#vmware-vsan-comparison) — Which pool to compare against which vSAN policy

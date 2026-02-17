@@ -53,6 +53,7 @@ Practical how-to documentation for running and customizing the test suite.
 | [Running Tests](guides/running-tests.md) | Step-by-step test execution walkthrough |
 | [Understanding Results](guides/understanding-results.md) | Reading fio JSON, CSV columns, HTML dashboard, analysis tips |
 | [CephBlockPool Setup](guides/ceph-pool-setup.md) | Correct pool configuration, PG autoscaler, OOB-aligned settings |
+| [Latency Patterns](guides/latency-patterns.md) | Read/write asymmetry, Ceph vs NFS vs EC tradeoffs, ranking interpretation |
 | [Comparing Runs](guides/comparing-runs.md) | End-to-end comparison workflow, delta calculation, A/B testing patterns |
 | [Customization](guides/customization.md) | Adding pools, profiles, VM sizes, adjusting parameters |
 | [Troubleshooting](guides/troubleshooting.md) | Common failures and how to fix them |
