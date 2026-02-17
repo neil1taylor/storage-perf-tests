@@ -147,10 +147,11 @@ See [Ceph and ODF](../concepts/ceph-and-odf.md) and [Erasure Coding Explained](.
 
 **Important:** EC pools require a minimum number of **hosts** (not just OSDs) when using `failureDomain: host` (the default). Each chunk must be placed on a separate host:
 - ec-2-1 needs at least 3 hosts
+- ec-3-1 needs at least 4 hosts
 - ec-2-2 needs at least 4 hosts
 - ec-4-2 needs at least 6 hosts
 
-If your cluster has only 3 bare metal workers, only rep2, rep3, and ec-2-1 will work. Remove ec-2-2 and ec-4-2 from the `ODF_POOLS` array, or the pools will fail to reach `Ready` state. See [Erasure Coding Explained](../concepts/erasure-coding-explained.md#failure-domains-and-node-requirements) for details.
+If your cluster has only 3 bare metal workers, only rep2, rep3, and ec-2-1 will work. Pools requiring more hosts (ec-3-1, ec-2-2, ec-4-2) are automatically skipped when the cluster has insufficient hosts. See [Erasure Coding Explained](../concepts/erasure-coding-explained.md#failure-domains-and-node-requirements) for details.
 
 ## IBM Cloud File CSI
 

@@ -677,34 +677,45 @@ composite.sort(key=lambda x: x['score'], reverse=True)
 # Classify pools by type/description for context
 import re
 def classify_pool(name):
+    # Returns (type, description, vsan_equivalent, storage_overhead)
     if re.match(r'^rep(\d+)(-.*)?$', name):
         m = re.match(r'^rep(\d+)(-.*)?$', name)
-        n = m.group(1)
+        n = int(m.group(1))
         suffix = m.group(2) or ''
         variant = ''
         if suffix == '-virt':
             variant = ' (VM-optimized SC with write-back caching features)'
         elif suffix == '-enc':
             variant = ' (encrypted at-rest via LUKS)'
-        return ('ODF Replicated ' + n + '-way', 'Ceph RBD block storage with ' + n + 'x replication across failure domains.' + variant)
+        ftt = n - 1
+        vsan = 'RAID-1, FTT=' + str(ftt)
+        overhead = str(n) + 'x'
+        return ('ODF Replicated ' + str(n) + '-way', 'Ceph RBD block storage with ' + str(n) + 'x replication across failure domains.' + variant, vsan, overhead)
     if re.match(r'^ec-(\d+)-(\d+)', name):
         m = re.match(r'^ec-(\d+)-(\d+)', name)
-        k, c = m.group(1), m.group(2)
-        return ('ODF Erasure Coded ' + k + '+' + c, 'Ceph RBD with erasure coding (' + k + ' data + ' + c + ' coding chunks). Better space efficiency than replication.')
+        k, c = int(m.group(1)), int(m.group(2))
+        ratio = '{:.2f}'.format((k + c) / k).rstrip('0').rstrip('.') + 'x'
+        if c == 1:
+            vsan = 'RAID-5, FTT=1'
+        elif c == 2:
+            vsan = 'RAID-6, FTT=2'
+        else:
+            vsan = 'No direct equivalent (FTT=' + str(c) + ')'
+        return ('ODF Erasure Coded ' + str(k) + '+' + str(c), 'Ceph RBD with erasure coding (' + str(k) + ' data + ' + str(c) + ' coding chunks). Better space efficiency than replication.', vsan, ratio)
     if 'vpc-file' in name:
         tier = re.search(r'(\d+)-iops', name)
         tier_str = tier.group(1) + ' IOPS tier' if tier else 'min-IOPS (auto-scaled)'
-        return ('IBM Cloud File CSI', 'NFS-based file storage via VPC File CSI driver. ' + tier_str + '.')
+        return ('IBM Cloud File CSI', 'NFS-based file storage via VPC File CSI driver. ' + tier_str + '.', 'N/A (managed service)', '1x (managed)')
     if 'vpc-block' in name:
         tier = re.search(r'(\d+)-iops', name)
         tier_str = tier.group(1) + ' IOPS tier' if tier else 'auto-scaled IOPS'
-        return ('IBM Cloud Block CSI', 'iSCSI-based block storage via VPC Block CSI driver. ' + tier_str + '.')
-    return ('Unknown', name)
+        return ('IBM Cloud Block CSI', 'iSCSI-based block storage via VPC Block CSI driver. ' + tier_str + '.', 'N/A (managed service)', '1x (managed)')
+    return ('Unknown', name, 'Unknown', 'Unknown')
 
 pool_info = []
 for p in pool_names:
-    ptype, desc = classify_pool(p)
-    pool_info.append({'name': p, 'type': ptype, 'description': desc})
+    ptype, desc, vsan, overhead = classify_pool(p)
+    pool_info.append({'name': p, 'type': ptype, 'description': desc, 'vsan': vsan, 'overhead': overhead})
 
 # Extract test config from CSV data
 test_config = {}
@@ -853,9 +864,9 @@ RANK_HTML_EOF
     (function() {
       const info = DATA.pool_info || [];
       if (!info.length) return;
-      let html = '<thead><tr><th>StorageClass</th><th>Type</th><th>Description</th></tr></thead><tbody>';
+      let html = '<thead><tr><th>StorageClass</th><th>Type</th><th>vSAN Equivalent</th><th>Storage Overhead</th><th>Description</th></tr></thead><tbody>';
       info.forEach(p => {
-        html += '<tr><td><strong>' + p.name + '</strong></td><td>' + p.type + '</td><td>' + p.description + '</td></tr>';
+        html += '<tr><td><strong>' + p.name + '</strong></td><td>' + p.type + '</td><td>' + p.vsan + '</td><td>' + p.overhead + '</td><td>' + p.description + '</td></tr>';
       });
       html += '</tbody>';
       document.getElementById('poolInfoTable').innerHTML = html;

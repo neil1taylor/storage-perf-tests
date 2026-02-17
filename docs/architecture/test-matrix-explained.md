@@ -66,9 +66,9 @@ Total = 12 pools × 3 vm_sizes × 3 pvc_sizes × 3 concurrency × 12
       = 3,888 test permutations
 ```
 
-With 7 ODF pools only: 7 × 3 × 3 × 3 × 12 = 2,268 permutations.
+With 8 ODF pools only: 8 × 3 × 3 × 3 × 12 = 2,592 permutations.
 
-**Note:** ec-2-2 (needs 4 hosts) and ec-4-2 (needs 6 hosts) are included in the config but automatically skipped on clusters with fewer OSD hosts. The actual pool count depends on your cluster topology.
+**Note:** ec-3-1 and ec-2-2 (need 4 hosts) and ec-4-2 (needs 6 hosts) are included in the config but automatically skipped on clusters with fewer OSD hosts. The actual pool count depends on your cluster topology.
 
 ## Quick Mode
 

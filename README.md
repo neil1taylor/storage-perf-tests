@@ -36,7 +36,8 @@ New to this stack? Start with the [suggested reading path](docs/index.md#suggest
 | rep3-enc | Replicated (size=3) | ODF encrypted SC (Key Protect) |
 | rep2 | Replicated (size=2) | Reduced replication |
 | ec-2-1 | Erasure Coded (2+1) | Space-efficient, lower redundancy (needs 3 hosts) |
-| ec-2-2 | Erasure Coded (2+2) | Balanced EC (needs 4 hosts) |
+| ec-3-1 | Erasure Coded (3+1) | vSAN RAID-5 equivalent, best capacity efficiency (needs 4 hosts) |
+| ec-2-2 | Erasure Coded (2+2) | Dual-parity EC (needs 4 hosts) |
 | ec-4-2 | Erasure Coded (4+2) | Production-grade EC (needs 6 hosts) |
 
 ### IBM Cloud File CSI (dp2 profile)

@@ -106,18 +106,19 @@ For teams migrating from VMware vSAN, these Ceph pool types map to familiar vSAN
 
 | Ceph Pool | vSAN Equivalent | Overhead | Fault Tolerance | Min Hosts (Ceph) | Min Hosts (vSAN) |
 |-----------|----------------|----------|-----------------|-------------------|-------------------|
-| **rep2** | RAID-1 FTT=1 | 2x | 1 failure | 2 | 3 (includes witness) |
-| **rep3** | RAID-1 FTT=2 | 3x | 2 failures | 3 | 5 (2×FTT+1) |
-| **ec-2-1** | RAID-5 FTT=1 | 1.5x | 1 failure | 3 | 4 (3+1) |
-| **ec-2-2** | RAID-5 FTT=2 | 2x | 2 failures | 4 | 6 |
-| **ec-4-2** | RAID-6 FTT=2 | 1.5x | 2 failures | 6 | 6 |
+| **rep2** | RAID-1, FTT=1 | 2x | 1 failure | 2 | 3 (includes witness) |
+| **rep3** | RAID-1, FTT=2 | 3x | 2 failures | 3 | 5 (2×FTT+1) |
+| **ec-2-1** | RAID-5, FTT=1 | 1.5x | 1 failure | 3 | 4 (3+1) |
+| **ec-3-1** | RAID-5, FTT=1 | 1.33x | 1 failure | 4 | 4 (3+1) |
+| **ec-2-2** | RAID-6, FTT=2 | 2x | 2 failures | 4 | 6 (4+2) |
+| **ec-4-2** | RAID-6, FTT=2 | 1.5x | 2 failures | 6 | 6 (4+2) |
 
 Key differences:
 
 - **Lower host minimums:** Ceph separates its cluster quorum (MON daemons) from data placement. A rep3 pool needs only 3 hosts because each host stores one full copy. vSAN RAID-1 FTT=2 needs 5 hosts because it embeds a witness requirement in the per-object placement formula (2×FTT+1).
 - **rep2 is the closest match to standard vSAN RAID-1:** Most vSAN deployments use FTT=1 (RAID-1), which stores 2 copies. Ceph's rep2 is the direct equivalent — same 2x overhead, same single-failure tolerance.
 - **EC performance tradeoffs are similar:** Both Ceph EC and vSAN RAID-5/6 show higher write latency than replication (parity computation + more I/Os per write), but competitive sequential read throughput. The benchmark results from this suite quantify the exact gap on ODF.
-- **Capacity efficiency gains are identical:** EC-2-1 and vSAN RAID-5 FTT=1 both achieve 1.5x overhead vs 2x for their replication equivalents — a 25% capacity saving for the same fault tolerance.
+- **Capacity efficiency gains are identical:** EC-3-1 and vSAN RAID-5 FTT=1 both achieve 1.33x overhead — the most space-efficient option for single-failure tolerance. EC-2-1 achieves 1.5x overhead, still a 25% saving over rep2's 2x.
 
 ### vSAN Performance: RAID-1 vs Erasure Coding
 
@@ -128,7 +129,7 @@ Published vSAN benchmarks do not provide a clean apples-to-apples RAID-1 vs RAID
 - **Lenovo ThinkAgile paper:** Compared OSA (RAID-1, 3 disk groups, SAS SSD) vs ESA (RAID-5, 8× NVMe) on 4× VX650 V3 nodes with HCIBench. Found OSA outperformed ESA on 25 GbE, while ESA leveraged 100 GbE for up to 250% better throughput on mixed workloads — but the results conflate the RAID policy change with the hardware architecture change ([Lenovo Press: Scalable vSAN Architectures](https://lenovopress.lenovo.com/lp1872-scalable-vmware-vsan-storage-architectures-on-lenovo-thinkagile-vx)).
 - **StorageReview HCIBench:** Tested vSAN OSA RAID-1 on 4× DL380 G9 (SAS SSD + HDD disk groups) achieving 227k IOPS 4k random read and 64k IOPS 4k random write, but only tested RAID-1 ([StorageReview: vSAN HCIBench Performance](https://www.storagereview.com/vmware_virtual_san_review_hcibench_synthetic_performance)).
 
-The key takeaway for migration planning: vSAN customers moving from RAID-1 to ODF should compare against **rep2** (same protection model). Those considering erasure coding for capacity savings should compare vSAN RAID-5 against **ec-2-1**. The results from this suite provide the ODF side of that comparison with standardized fio workloads across multiple block sizes, concurrency levels, and VM configurations.
+The key takeaway for migration planning: vSAN customers moving from RAID-1 to ODF should compare against **rep2** (same protection model). Those considering erasure coding for capacity savings should compare vSAN RAID-5 FTT=1 against **ec-3-1** (exact equivalent: 3 data + 1 coding, 1.33x overhead, 4 hosts) or **ec-2-1** (same fault tolerance, fewer hosts but 1.5x overhead). The results from this suite provide the ODF side of that comparison with standardized fio workloads across multiple block sizes, concurrency levels, and VM configurations.
 
 ### Benchmark Methodology: HCIBench vs This Suite
 

@@ -87,6 +87,7 @@ declare -a ODF_POOLS=(
   "rep3-enc:replicated:3"
   "rep2:replicated:2"
   "ec-2-1:erasurecoded:2:1"
+  "ec-3-1:erasurecoded:3:1"
   "ec-2-2:erasurecoded:2:2"
   "ec-4-2:erasurecoded:4:2"
 )
