@@ -21,12 +21,13 @@ If you're new to the technology stack, we recommend reading in this order:
 3. [Storage in Kubernetes](concepts/storage-in-kubernetes.md) — PVs, PVCs, StorageClasses
 4. [Ceph and ODF](concepts/ceph-and-odf.md) — The storage backend
 5. [Erasure Coding Explained](concepts/erasure-coding-explained.md) — EC vs replication
-6. [OpenShift Virtualization](concepts/openshift-virtualization.md) — Running VMs on Kubernetes
-7. [fio Benchmarking](concepts/fio-benchmarking.md) — The I/O testing tool
-8. [CephBlockPool Setup](guides/ceph-pool-setup.md) — Creating custom pools (practical, hands-on)
-9. [Prerequisites](guides/prerequisites.md) — Setting up your environment
-10. [Running Tests](guides/running-tests.md) — Step-by-step walkthrough
-11. [Understanding Results](guides/understanding-results.md) — Reading the output
+6. [Failure Domains and Topology](concepts/failure-domains-and-topology.md) — CRUSH, racks, node placement
+7. [OpenShift Virtualization](concepts/openshift-virtualization.md) — Running VMs on Kubernetes
+8. [fio Benchmarking](concepts/fio-benchmarking.md) — The I/O testing tool
+9. [CephBlockPool Setup](guides/ceph-pool-setup.md) — Creating custom pools (practical, hands-on)
+10. [Prerequisites](guides/prerequisites.md) — Setting up your environment
+11. [Running Tests](guides/running-tests.md) — Step-by-step walkthrough
+12. [Understanding Results](guides/understanding-results.md) — Reading the output
 
 ## Concepts
 
@@ -39,6 +40,7 @@ Foundational knowledge for understanding the technology stack.
 | [Storage in Kubernetes](concepts/storage-in-kubernetes.md) | PersistentVolumes, PVCs, StorageClasses, CSI, dynamic provisioning |
 | [Ceph and ODF](concepts/ceph-and-odf.md) | Ceph architecture, ODF/Rook-Ceph, replicated and erasure-coded pools |
 | [Erasure Coding Explained](concepts/erasure-coding-explained.md) | How EC works, storage efficiency, fault tolerance, performance trade-offs |
+| [Failure Domains and Topology](concepts/failure-domains-and-topology.md) | CRUSH hierarchy, ROKS rack assignment, node placement, failureDomain options |
 | [OpenShift Virtualization](concepts/openshift-virtualization.md) | KubeVirt, VMs on Kubernetes, DataVolumes, cloud-init, virtctl |
 | [fio Benchmarking](concepts/fio-benchmarking.md) | fio parameters, I/O patterns, IOPS, bandwidth, latency metrics |
 

@@ -129,15 +129,15 @@ Low average latency with high p99 latency means occasional stalls — important 
 ### Understanding the Relationship
 
 ```
-          ┌──────────────────────────────────────────────┐
-          │        Performance Triangle                   │
-          │                                               │
-          │   IOPS ←──── Block Size ────→ Bandwidth      │
-          │    ↑                              ↑           │
-          │    │         Latency              │           │
-          │    │        (inverse)             │           │
-          │    └──────────────────────────────┘           │
-          └──────────────────────────────────────────────┘
+          ┌───────────────────────────────────────────┐
+          │        Performance Triangle               │
+          │                                           │
+          │   IOPS ←──── Block Size ────→ Bandwidth   │
+          │    ↑                              ↑       │
+          │    │         Latency              │       │
+          │    │        (inverse)             │       │
+          │    └──────────────────────────────┘       │
+          └───────────────────────────────────────────┘
 
 Small blocks (4k)  → High IOPS, low bandwidth
 Large blocks (1M)  → Low IOPS, high bandwidth

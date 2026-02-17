@@ -59,7 +59,7 @@ The last two values need some explanation:
 
 - **`deviceClass`** — Ceph classifies each OSD's underlying drive as `ssd` or `hdd`. When you create a pool, you specify which class to use. This ensures your pool's data lands on the right type of drive. On ROKS bare metal, all NVMe drives are classified as `ssd`.
 
-- **`failureDomain`** — Controls how Ceph distributes copies of your data. With `failureDomain: host`, each copy must land on a different worker node. With `failureDomain: rack`, each copy lands on a different rack. The goal is to survive hardware failures — if one host/rack goes down, the other copies are still available. Your custom pool should use the same `failureDomain` as the OOB pool.
+- **`failureDomain`** — Controls how Ceph distributes copies of your data. With `failureDomain: host`, each copy must land on a different worker node. With `failureDomain: rack`, each copy lands on a different rack. The goal is to survive hardware failures — if one host/rack goes down, the other copies are still available. Your custom pool should use the same `failureDomain` as the OOB pool. See [Failure Domains and Topology](../concepts/failure-domains-and-topology.md) for a deep dive on failure domain options, CRUSH placement, and ROKS rack topology.
 
 This information determines what pool configurations are possible:
 
@@ -574,6 +574,7 @@ mapOptions: krbd:rxbounce
 
 ## Next Steps
 
+- [Failure Domains and Topology](../concepts/failure-domains-and-topology.md) — CRUSH hierarchy, ROKS racks, failureDomain options, node placement
 - [Ceph and ODF](../concepts/ceph-and-odf.md) — Pool architecture, CRUSH, RBD fundamentals
 - [Erasure Coding Explained](../concepts/erasure-coding-explained.md) — EC pools in depth
 - [Customization](customization.md) — Adding pools to the test suite

@@ -11,9 +11,9 @@ By default, `04-run-tests.sh` runs pools sequentially — one pool finishes all 
 ```
 Sequential (default):
   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-  │   rep2   │ │   rep3   │ │  ec-2-1  │ │  file-dp2│
+  │   rep2   │ │   rep3   │ │  ec-2-1  │ │ file-dp2 │
   └──────────┘ └──────────┘ └──────────┘ └──────────┘
-  ├─────────────────── total time ──────────────────────┤
+  ├─────────────────── total time ──────────────────┤
 
 Parallel (--parallel 2):
   ┌──────────┐ ┌──────────┐

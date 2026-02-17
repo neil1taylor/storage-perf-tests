@@ -29,13 +29,13 @@ Erasure coding is based on the same mathematics used in RAID, CDs, QR codes, and
 With k=4 data chunks and m=2 parity chunks:
 
 ```
-Original Data: [A][B][C][D]
-                │  │  │  │
-                ▼  ▼  ▼  ▼
-Encoding:    [A][B][C][D][P1][P2]     ← 6 chunks total
-              │  │  │  │   │   │
-              ▼  ▼  ▼  ▼   ▼   ▼
-Stored on:  OSD1 OSD2 OSD3 OSD4 OSD5 OSD6
+Original Data: [A] [B]  [C]  [D]
+                │   │    │    │
+                ▼   ▼    ▼    ▼
+Encoding:      [A] [B]  [C]  [D]  [P1] [P2]     ← 6 chunks total
+                │   │    │    │    │    │
+                ▼   ▼    ▼    ▼    ▼    ▼
+Stored on:    OSD1 OSD2 OSD3 OSD4 OSD5 OSD6
 ```
 
 - **Normal reads:** Read chunks A, B, C, D from OSDs 1-4 (parity chunks are not read)
@@ -121,7 +121,7 @@ The benchmark results give you data-driven answers to these questions rather tha
 
 ## Failure Domains and Node Requirements
 
-An often-overlooked constraint: EC pools require enough **failure domains** (typically hosts) to place each chunk on a separate domain. With `failureDomain: host` (the default in this project), you need at least k+m hosts.
+An often-overlooked constraint: EC pools require enough **failure domains** (typically hosts) to place each chunk on a separate domain. With `failureDomain: host` (the default in this project), you need at least k+m hosts. See [Failure Domains and Topology](failure-domains-and-topology.md) for a comprehensive explanation of failure domains, CRUSH placement, and ROKS rack topology.
 
 ### What Works With N Bare Metal Nodes?
 
@@ -162,6 +162,7 @@ spec:
 
 ## Next Steps
 
+- [Failure Domains and Topology](failure-domains-and-topology.md) — CRUSH hierarchy, ROKS racks, failureDomain options, min-domain tables
 - [Ceph and ODF](ceph-and-odf.md) — How Ceph pools are configured and managed
 - [Understanding Results](../guides/understanding-results.md) — Comparing pool performance in benchmark output
 - [Test Matrix Explained](../architecture/test-matrix-explained.md) — How pools fit into the test matrix

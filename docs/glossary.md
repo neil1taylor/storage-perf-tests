@@ -24,6 +24,8 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Concurrency** — In this project, the number of VMs running the same fio test simultaneously against the same storage pool. Tests contention and scalability. Default levels: 1, 5, 10.
 
+**CRUSH (Controlled Replication Under Scalable Hashing)** — Ceph's algorithm for determining which OSDs store which data. CRUSH uses a hierarchy (root → rack → host → osd) to ensure replicas or EC chunks are placed on separate failure domains. See [Failure Domains and Topology](concepts/failure-domains-and-topology.md).
+
 **CSI (Container Storage Interface)** — A standard API that allows storage vendors to provide plugins for Kubernetes. ODF uses a CSI driver for Ceph RBD; IBM Cloud provides a CSI driver for VPC file storage. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
 **DataVolume** — A KubeVirt/CDI custom resource that combines a PVC with a source reference (e.g., a DataSource pointing to a pre-cached golden image). Used for VM root disks. This project uses the CDI `storage:` API (rather than `pvc:`) so CDI can determine the optimal access mode and volume mode from the StorageProfile, enabling fast CSI cloning on Ceph RBD. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
@@ -41,6 +43,8 @@ Quick-reference for terms used throughout this project and its documentation.
 **ENI / VNI (Virtual Network Interface)** — A dedicated network interface attached to an IBM Cloud File share mount target when `isENIEnabled: "true"` (default on all ROKS File CSI StorageClasses). Provides security-group-based access control and a dedicated network path to the share. Each PVC creates one VNI, consuming one IP address from the VPC subnet.
 
 **Erasure Coding (EC)** — A data protection method that splits data into k data chunks and m parity chunks. More storage-efficient than replication but has higher CPU overhead. See [Erasure Coding Explained](concepts/erasure-coding-explained.md).
+
+**Failure Domain** — A group of components that can fail together. Ceph uses failure domains (`osd`, `host`, `rack`, `zone`) to ensure data replicas are placed on separate physical boundaries. This project uses `failureDomain: host` for all pools. See [Failure Domains and Topology](concepts/failure-domains-and-topology.md).
 
 **fio (Flexible I/O Tester)** — An open-source tool for benchmarking and stress-testing I/O subsystems. The core measurement tool in this project. See [fio Benchmarking](concepts/fio-benchmarking.md).
 
@@ -83,6 +87,8 @@ Quick-reference for terms used throughout this project and its documentation.
 **PV (PersistentVolume)** — A piece of storage in a Kubernetes cluster, provisioned by an administrator or dynamically via a StorageClass. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
 **PVC (PersistentVolumeClaim)** — A request for storage by a pod or VM. Binds to a PV. This project tests PVC sizes of 150Gi, 500Gi, and 1000Gi (minimum 150Gi for IBM Cloud File dp2 3000-IOPS compatibility). See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
+
+**Rack (ROKS)** — A logical grouping in the CRUSH hierarchy. ROKS assigns worker nodes to 3 racks (`rack0`, `rack1`, `rack2`) in round-robin order. On a 3-node cluster, each rack has one node. Add nodes in multiples of 3 to maintain balanced rack distribution. See [Failure Domains and Topology](concepts/failure-domains-and-topology.md#roks-topology-how-racks-work).
 
 **RADOS (Reliable Autonomic Distributed Object Store)** — The foundational layer of Ceph that provides distributed object storage. All higher-level Ceph interfaces (RBD, CephFS, RGW) are built on top of RADOS. See [Ceph and ODF](concepts/ceph-and-odf.md).
 

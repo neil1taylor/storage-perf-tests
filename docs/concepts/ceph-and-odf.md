@@ -27,11 +27,11 @@ Ceph is the storage engine behind ODF and is one of the most widely deployed sof
 │   RBD    │  CephFS  │   RADOS Gateway   │
 │  (block) │  (file)  │   (object/S3)     │
 ├──────────┴──────────┴───────────────────┤
-│              RADOS                       │
-│     (distributed object storage)         │
+│              RADOS                      │
+│     (distributed object storage)        │
 ├──────────┬──────────┬───────────────────┤
 │   OSD    │   OSD    │    OSD   ...      │
-│  (NVMe)  │  (NVMe)  │   (NVMe)         │
+│  (NVMe)  │  (NVMe)  │   (NVMe)          │
 └──────────┴──────────┴───────────────────┘
 ```
 
@@ -50,7 +50,7 @@ When data is written to a Ceph RBD (block device):
 
 1. Data is split into fixed-size objects (default 4MB)
 2. Each object is mapped to a **Placement Group (PG)**
-3. The PG is mapped to a set of OSDs using the **CRUSH** algorithm (Controlled Replication Under Scalable Hashing — Ceph's rule-based system for distributing data across disks while respecting failure domains like hosts and racks)
+3. The PG is mapped to a set of OSDs using the **CRUSH** algorithm (Controlled Replication Under Scalable Hashing — Ceph's rule-based system for distributing data across disks while respecting failure domains like hosts and racks). See [Failure Domains and Topology](failure-domains-and-topology.md) for a deep dive on CRUSH and failure domains.
 4. Data is written to the primary OSD, which replicates to secondary OSDs
 
 The CRUSH algorithm ensures data is distributed evenly and can survive the failure of specific nodes or racks.
@@ -70,11 +70,11 @@ A **replicated pool** stores N copies of every object:
            Write "Hello"
                 │
                 ▼
-  ┌──────┐  ┌──────┐  ┌──────┐
-  │ OSD.1│  │ OSD.4│  │ OSD.7│
-  │Hello │  │Hello │  │Hello │
-  │(copy1)│ │(copy2)│ │(copy3)│
-  └──────┘  └──────┘  └──────┘
+  ┌───────┐  ┌───────┐  ┌───────┐
+  │ OSD.1 │  │ OSD.4 │  │ OSD.7 │
+  │ Hello │  │ Hello │  │ Hello │
+  │(copy1)│  │(copy2)│  │(copy3)│
+  └───────┘  └───────┘  └───────┘
          replication size = 3
 ```
 
@@ -248,6 +248,7 @@ oc exec -n openshift-storage $(oc get pods -n openshift-storage -l app=rook-ceph
 
 ## Next Steps
 
+- [Failure Domains and Topology](failure-domains-and-topology.md) — CRUSH hierarchy, ROKS rack assignment, failureDomain options
 - [CephBlockPool Setup Guide](../guides/ceph-pool-setup.md) — Step-by-step pool creation, correct settings, PG autoscaler deep dive
 - [Erasure Coding Explained](erasure-coding-explained.md) — Deep dive into EC vs replication
 - [Storage in Kubernetes](storage-in-kubernetes.md) — How PVCs connect to Ceph pools
