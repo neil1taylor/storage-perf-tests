@@ -494,10 +494,10 @@ generate_ranking_html_report() {
   log_info "Generating ranking report: ${output_html}"
 
   local ranking_json
-  ranking_json=$(python3 << 'PYEOF_RANK'
+  ranking_json=$(RANKING_CSV_FILE="${csv_file}" python3 << 'PYEOF_RANK'
 import csv, json, sys, os
 
-csv_file = sys.argv[1]
+csv_file = os.environ['RANKING_CSV_FILE']
 
 # Read CSV and aggregate by (pool, profile, block_size)
 # Sum IOPS/BW across fio jobs per test, average latency
@@ -679,7 +679,7 @@ print(json.dumps({
     'weights': {d[0]: d[4] for d in dimensions},
 }))
 PYEOF_RANK
-  "${csv_file}")
+  )
 
   cat > "${output_html}" << 'RANK_HTML_EOF'
 <!DOCTYPE html>
