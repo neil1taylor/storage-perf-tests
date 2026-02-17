@@ -2,204 +2,113 @@
 
 [Back to Index](../index.md)
 
-This guide explains how to create a correctly configured CephBlockPool on ODF. It covers the settings that are critical for performance and why the ODF out-of-box (OOB) pool outperforms naive custom pools.
+This guide walks you through creating a custom CephBlockPool on a ROKS cluster with OpenShift Data Foundation (ODF). It starts with what you already have, walks through creating your first pool step by step, then explains why each setting matters and how the internals work. Each concept is introduced as it becomes relevant — you don't need to read anything else first.
 
-If you're unfamiliar with Ceph pools, PGs, or CRUSH, read [Ceph and ODF](../concepts/ceph-and-odf.md) first.
+For a deeper background on Ceph architecture, see [Ceph and ODF](../concepts/ceph-and-odf.md).
 
-## The Problem: Custom Pools with 1 PG
+## What You Start With
 
-A newly created CephBlockPool with default settings gets **1 Placement Group**. Every I/O operation for the entire pool funnels through a single OSD primary, regardless of how many OSDs exist in the cluster. This creates a ~6x bottleneck compared to the OOB pool's 256 PGs spread across all OSDs.
+A fresh ROKS cluster with ODF installed gives you two pre-configured storage pools:
 
-This happens because the PG autoscaler decides PG count based on:
+| Pool | StorageClass | Type | Purpose |
+|------|-------------|------|---------|
+| `ocs-storagecluster-cephblockpool` | `ocs-storagecluster-ceph-rbd` | Replicated (size=3) | Block storage for PVCs |
+| `ocs-storagecluster-cephfilesystem-data0` | `ocs-storagecluster-cephfs` | Replicated (size=3) | Shared filesystem storage |
 
-1. **`target_size_ratio`** — a hint telling the autoscaler what fraction of cluster capacity the pool will use
-2. **Actual stored data** — how much data is currently in the pool
+A few terms to understand:
 
-With no `target_size_ratio` and no data (empty pool or data deleted after a test run), the autoscaler assigns the minimum: 1 PG.
+- **Pool** — A logical partition of your Ceph storage cluster. Each pool has its own data protection policy (how many copies of your data are kept) and its own performance characteristics. Think of it like a volume group that determines where and how data is stored.
+- **StorageClass** — A Kubernetes resource that connects your PVCs (storage requests) to a specific pool. When a workload requests storage, the StorageClass tells Kubernetes which pool to provision it from and what features to enable.
+- **Replicated (size=3)** — Every piece of data is stored as 3 copies across different disks. This protects against disk or node failures — if one copy is lost, the other two still exist.
 
-The OOB rep3 pool (`ocs-storagecluster-cephblockpool`) has `targetSizeRatio: 0.49`, telling the autoscaler it will use ~49% of cluster capacity. The autoscaler pre-allocates 256 PGs, distributing I/O across all OSDs.
+These are the **out-of-box (OOB) pools**. ODF created them with carefully chosen settings that ensure good performance. The most important setting is one you can't see from the table: `targetSizeRatio: 0.49` on each pool. This will become important shortly — it controls how well I/O is distributed across your cluster's disks.
 
-### How to Check PG Counts
+You'll also see a few internal pools (`.mgr`, `.nfs`, `cephfilesystem-metadata`) — you can ignore these.
+
+To see your current pools, run:
 
 ```bash
 TOOLS_POD=$(oc get pods -n openshift-storage -l app=rook-ceph-tools -o name)
-
-# PG autoscaler status — shows current and target PG counts
 oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool autoscale-status
-
-# Example output:
-# POOL                                 SIZE  TARGET SIZE  RATE  RAW CAPACITY   RATIO  TARGET RATIO  EFFECTIVE RATIO  BIAS  PG_NUM  NEW PG_NUM  AUTOSCALE  BULK
-# ocs-storagecluster-cephblockpool      42G                3.0        17.4T  0.0072          0.49           0.6757   1.0     256         256  on         False
-# perf-test-rep2                        12M                2.0        17.4T  0.0000                                  1.0       1           1  on         False
-#                                                                                                    ^^^^^^^^^^^^^^                    ^^^
-#                                                                                                    no target ratio               stuck at 1 PG
-
-# Detailed pool info
-oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool ls detail --format json | \
-  jq '.[] | select(.pool_name | test("perf-test|cephblockpool")) | {pool_name, pg_num, pg_num_target, options}'
 ```
 
-## OOB Pool vs Naive Custom Pool
+This connects to the Ceph management tools running inside your cluster and shows the status of every pool, including how many **Placement Groups (PGs)** each one has. PGs are explained in the [Understanding PG Autoscaling](#understanding-pg-autoscaling) section — for now, just know that more PGs = better performance, and the OOB pools typically have 256+.
 
-Here is the OOB CephBlockPool spec (retrieved from the cluster) compared to what a minimal custom pool looks like:
+## Step 1: Check Your Cluster
 
-### OOB Pool (correct)
-
-```yaml
-apiVersion: ceph.rook.io/v1
-kind: CephBlockPool
-metadata:
-  name: ocs-storagecluster-cephblockpool
-  namespace: openshift-storage
-spec:
-  failureDomain: host
-  deviceClass: ssd
-  enableCrushUpdates: true
-  enableRBDStats: true
-  replicated:
-    size: 3
-    requireSafeReplicaSize: true
-    targetSizeRatio: 0.49
-```
-
-### Naive Custom Pool (broken)
-
-```yaml
-apiVersion: ceph.rook.io/v1
-kind: CephBlockPool
-metadata:
-  name: perf-test-rep2
-  namespace: openshift-storage
-spec:
-  failureDomain: host
-  replicated:
-    size: 2
-    requireSafeReplicaSize: true
-  deviceClass: ""
-```
-
-The differences that matter:
-
-| Setting | OOB | Naive Custom | Impact |
-|---------|-----|-------------|--------|
-| `targetSizeRatio` | `0.49` | *(missing)* | **1 PG instead of 256 — single OSD bottleneck** |
-| `deviceClass` | `ssd` | `""` | May place data on wrong device class in mixed clusters |
-| `enableCrushUpdates` | `true` | *(missing)* | CRUSH rules not updated on topology changes |
-| `enableRBDStats` | `true` | *(missing)* | No per-image I/O stats for monitoring |
-
-## Required Settings
-
-### 1. `targetSizeRatio` — Critical
-
-This is the single most important setting. Without it, the PG autoscaler has no basis for pre-allocating PGs to an empty pool.
-
-**For replicated pools**, set it as a field under `replicated:`:
-
-```yaml
-spec:
-  replicated:
-    size: 2
-    targetSizeRatio: 0.1
-```
-
-**For erasure-coded pools**, set it in the `parameters` map (the `erasureCoded` CRD field doesn't support it directly):
-
-```yaml
-spec:
-  parameters:
-    target_size_ratio: "0.1"
-  erasureCoded:
-    dataChunks: 2
-    codingChunks: 1
-```
-
-**Choosing the value:** The ratios across all pools should sum to roughly 1.0. The OOB pool claims 0.49. With up to 5 custom pools at 0.1 each, the total is ~1.0. The autoscaler normalizes the ratios, so exact values are less important than having *something* set — even 0.01 is vastly better than nothing, as it moves the pool from 1 PG to a reasonable count based on cluster size.
-
-| Scenario | OOB Pool | Custom Pools | Suggested Ratio |
-|----------|----------|-------------|-----------------|
-| 1 custom pool | 0.49 | 1 | 0.3–0.5 |
-| 2–5 custom pools | 0.49 | 2–5 | 0.1 each |
-| 6+ custom pools | 0.49 | 6+ | 0.05–0.08 each |
-
-After setting `targetSizeRatio`, the autoscaler will scale PGs over the next few minutes. Typical results on a 3-node cluster:
-
-| Ratio | Approximate PG Count |
-|-------|---------------------|
-| 0.49 | 256 |
-| 0.1 | 32–64 |
-| 0.05 | 16–32 |
-| 0.01 | 4–8 |
-
-### 2. `deviceClass: ssd`
-
-Restricts the pool to OSDs on the `ssd` CRUSH class. On ODF bare metal clusters, NVMe drives are classified as `ssd`. Setting this explicitly ensures the pool targets the correct device class.
-
-With `deviceClass: ""` (empty string), the pool uses the default CRUSH root. On a single-class cluster this works by accident, but on a mixed-media cluster (NVMe + HDD), data could land on the wrong tier.
-
-```yaml
-spec:
-  deviceClass: ssd
-```
-
-To check available device classes:
+Before creating a pool, you need to know a few things about your cluster's storage topology. The key concept here is **OSDs (Object Storage Daemons)** — these are the processes that manage your physical disks. Each NVMe drive on a bare metal worker runs one OSD, so a 3-node cluster with 8 NVMe drives per node has 24 OSDs.
 
 ```bash
+# How many worker nodes have OSDs?
+oc get pods -n openshift-storage -l app=rook-ceph-osd \
+  -o jsonpath='{.items[*].spec.nodeName}' | tr ' ' '\n' | sort -u | wc -l
+
+# How many OSDs total? (one per NVMe drive)
+oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd tree | grep -c "up "
+
+# What device class are the OSDs?
+# On ROKS bare metal this is usually "ssd" (NVMe drives are classified as SSD)
 oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd crush class ls
-# ["ssd"]
+
+# What failureDomain does the OOB pool use?
+oc get cephblockpool ocs-storagecluster-cephblockpool -n openshift-storage \
+  -o jsonpath='{.spec.failureDomain}'
 ```
 
-### 3. `enableCrushUpdates: true`
+The last two values need some explanation:
 
-Allows the Rook operator to update CRUSH rules when the cluster topology changes (node add/remove, OSD replacement). Without this, CRUSH maps can become stale after scaling events, leading to uneven data distribution.
+- **`deviceClass`** — Ceph classifies each OSD's underlying drive as `ssd` or `hdd`. When you create a pool, you specify which class to use. This ensures your pool's data lands on the right type of drive. On ROKS bare metal, all NVMe drives are classified as `ssd`.
 
-```yaml
-spec:
-  enableCrushUpdates: true
-```
+- **`failureDomain`** — Controls how Ceph distributes copies of your data. With `failureDomain: host`, each copy must land on a different worker node. With `failureDomain: rack`, each copy lands on a different rack. The goal is to survive hardware failures — if one host/rack goes down, the other copies are still available. Your custom pool should use the same `failureDomain` as the OOB pool.
 
-### 4. `enableRBDStats: true`
+This information determines what pool configurations are possible:
 
-Enables per-RBD-image I/O statistics collection. This allows monitoring individual volume performance via:
+- **Replicated pools** need at least N hosts (where N = replication size). A rep2 pool needs 2+ hosts, rep3 needs 3+.
+- **Erasure-coded pools** need at least k+m hosts. An ec-2-1 pool needs 3+ hosts, ec-4-2 needs 6+. See [Erasure Coding Explained](../concepts/erasure-coding-explained.md) for details on EC pools.
 
-```bash
-oc exec -n openshift-storage ${TOOLS_POD} -- rbd perf image iostat --pool=perf-test-rep2
-```
+## Step 2: Create the CephBlockPool
 
-Negligible overhead. No reason to leave it off.
-
-```yaml
-spec:
-  enableRBDStats: true
-```
-
-## Complete Correct Examples
-
-### Replicated Pool
+A **CephBlockPool** is a Kubernetes custom resource that tells the Rook operator to create a new Ceph pool. Here is a correctly configured replicated pool. Every setting is important — see [Why These Settings Matter](#why-these-settings-matter) for what goes wrong without each one.
 
 ```yaml
 apiVersion: ceph.rook.io/v1
 kind: CephBlockPool
 metadata:
-  name: perf-test-rep2
+  name: my-custom-pool
   namespace: openshift-storage
 spec:
-  failureDomain: host
-  deviceClass: ssd
-  enableCrushUpdates: true
-  enableRBDStats: true
+  failureDomain: host            # Match your OOB pool (from Step 1)
+  deviceClass: ssd               # Match your OSD device class (from Step 1)
+  enableCrushUpdates: true       # Keep data distribution rules current on topology changes
+  enableRBDStats: true           # Enable per-volume I/O monitoring
   replicated:
-    size: 2
-    requireSafeReplicaSize: true
-    targetSizeRatio: 0.1
+    size: 2                      # Replication factor (2 = two copies of every object)
+    requireSafeReplicaSize: true # Refuse writes if replication can't be met
+    targetSizeRatio: 0.1         # Tell Ceph this pool will use ~10% of cluster capacity
 ```
 
-### Erasure-Coded Pool
+The `targetSizeRatio` is the most critical setting here. It controls how Ceph distributes I/O across your disks. Without it, your pool gets catastrophically bad performance — this is explained fully in [Understanding PG Autoscaling](#understanding-pg-autoscaling), but in short: 0.1 is the right value for a custom pool alongside the OOB pools.
+
+Apply it:
+
+```bash
+oc apply -f my-custom-pool.yaml
+```
+
+Wait for it to become Ready:
+
+```bash
+oc get cephblockpool my-custom-pool -n openshift-storage -w
+# Wait for PHASE to show "Ready"
+```
+
+For an **erasure-coded (EC) pool**, the structure is slightly different. EC pools split data into chunks and add parity data for fault tolerance, using less raw storage than replication (see [Erasure Coding Explained](../concepts/erasure-coding-explained.md)). The `targetSizeRatio` goes in the `parameters` map because the `erasureCoded` CRD field doesn't support it directly:
 
 ```yaml
 apiVersion: ceph.rook.io/v1
 kind: CephBlockPool
 metadata:
-  name: perf-test-ec-2-1
+  name: my-ec-pool
   namespace: openshift-storage
 spec:
   failureDomain: host
@@ -207,27 +116,35 @@ spec:
   enableCrushUpdates: true
   enableRBDStats: true
   parameters:
-    target_size_ratio: "0.1"
+    target_size_ratio: "0.1"     # Note: string value in parameters map
   erasureCoded:
-    dataChunks: 2
-    codingChunks: 1
+    dataChunks: 2                # k data chunks
+    codingChunks: 1              # m parity chunks (need k+m hosts)
 ```
 
-**EC host requirement:** EC pools need k+m unique failure domains. With `failureDomain: host`, ec-2-1 needs 3 hosts, ec-2-2 needs 4, ec-4-2 needs 6. Pools that exceed the available host count will fail to reach `Ready` status.
+## Step 3: Create the StorageClass
 
-## StorageClass Configuration
+A CephBlockPool on its own isn't directly usable by workloads. In Kubernetes, storage is provisioned through **StorageClasses** — when a pod or VM requests a PVC (PersistentVolumeClaim), the StorageClass tells Kubernetes which pool to create the volume in and what features to enable.
 
-Each CephBlockPool needs a matching StorageClass. The critical parameters for VM workloads are `imageFeatures` and `mapOptions`:
+You need to create a StorageClass that points to your new pool. The easiest way is to copy the settings from the OOB StorageClass and change the pool name.
+
+First, get the `clusterID` from an existing SC (this identifies your Ceph cluster and is the same for all StorageClasses):
+
+```bash
+oc get sc ocs-storagecluster-ceph-rbd -o jsonpath='{.parameters.clusterID}'
+```
+
+Then create the StorageClass:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: perf-test-sc-rep2
+  name: my-custom-sc
 provisioner: openshift-storage.rbd.csi.ceph.com
 parameters:
-  clusterID: <from existing SC>
-  pool: perf-test-rep2
+  clusterID: <paste clusterID from above>
+  pool: my-custom-pool
   imageFormat: "2"
   imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff
   mapOptions: krbd:rxbounce
@@ -243,81 +160,387 @@ allowVolumeExpansion: true
 volumeBindingMode: Immediate
 ```
 
-### Image Features Explained
+The `imageFeatures` and `mapOptions` lines are important for VM workloads — they enable write-back caching, fast cloning, and a correctness fix for kernel-space block devices. These are explained in [Why These Settings Matter](#imagefeatures-and-mapoptions-storageclass). The `csi.storage.k8s.io/*` parameters tell the CSI driver where to find the secrets it needs to communicate with Ceph — these are the same for all ODF StorageClasses on a ROKS cluster.
 
-| Feature | Purpose | Performance Impact |
-|---------|---------|-------------------|
+For **erasure-coded pools**, add `dataPool` and point `pool` to the OOB replicated pool. This is because RBD (the block storage layer) can't store image metadata on an EC pool — it needs a replicated pool for metadata and uses the EC pool only for the actual data blocks:
+
+```yaml
+parameters:
+  pool: ocs-storagecluster-cephblockpool   # Replicated pool for metadata
+  dataPool: my-ec-pool                      # EC pool for data blocks
+```
+
+Apply it:
+
+```bash
+oc apply -f my-custom-sc.yaml
+```
+
+## Step 4: Wait for PG Convergence
+
+After creating the pool, Ceph needs a few minutes to set up **Placement Groups (PGs)** — the internal data structures that distribute I/O across your OSDs. A tool called the **PG autoscaler** runs inside Ceph and automatically determines how many PGs each pool needs. The more PGs, the more evenly I/O is spread across disks.
+
+This is where `targetSizeRatio` pays off — it told the autoscaler to pre-allocate PGs proportional to the pool's expected size, rather than starting at the minimum of 1 PG. Don't create PVCs on the new pool until PGs have stabilized.
+
+```bash
+# Watch the PG count increase
+watch -n5 "oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool autoscale-status | grep my-custom"
+```
+
+You should see `PG_NUM` climb from 1 through powers of 2 (1 → 2 → 4 → 8 → 16 → 32 → ...) until it stabilizes. When `PG_NUM` stops changing and `NEW PG_NUM` is empty, convergence is complete. This typically takes 2–5 minutes for small ratios.
+
+## Step 5: Verify Everything
+
+```bash
+# 1. Pool is Ready
+oc get cephblockpool my-custom-pool -n openshift-storage -o jsonpath='{.status.phase}'
+# Should print: Ready
+
+# 2. PG count is reasonable (not stuck at 1)
+oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool autoscale-status | grep my-custom
+# PG_NUM should be 32+ for a 0.1 ratio
+
+# 3. StorageClass exists
+oc get sc my-custom-sc
+
+# 4. Test PVC creation
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-my-custom-pool
+spec:
+  storageClassName: my-custom-sc
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+
+# Should reach Bound within ~30 seconds
+oc get pvc test-my-custom-pool -w
+
+# Clean up
+oc delete pvc test-my-custom-pool
+```
+
+At this point you have a working custom pool with a matching StorageClass. The rest of this guide explains why each setting matters and how the PG autoscaler works under the hood.
+
+---
+
+## Why These Settings Matter
+
+If you followed the steps above, your pool already has all of these settings. This section explains *why* each one is needed and what goes wrong without it — useful for understanding, troubleshooting, or reviewing pools created by others.
+
+### The OOB Pool Spec
+
+For reference, here's what the OOB pool looks like (retrieved from the cluster). This is the "known good" configuration that ODF creates automatically:
+
+```yaml
+spec:
+  failureDomain: host
+  deviceClass: ssd
+  enableCrushUpdates: true
+  enableRBDStats: true
+  replicated:
+    size: 3
+    replicasPerFailureDomain: 1
+    targetSizeRatio: 0.49
+```
+
+A naive custom pool (e.g., from a tutorial or Rook quickstart) typically omits most of these:
+
+| Setting | OOB | Naive Custom | Impact |
+|---------|-----|-------------|--------|
+| `targetSizeRatio` | `0.49` | *(missing)* | **1 PG instead of 256 — single OSD bottleneck (~6x slower)** |
+| `deviceClass` | `ssd` | `""` | May place data on wrong device class in mixed clusters |
+| `enableCrushUpdates` | `true` | *(missing)* | CRUSH rules not updated on topology changes |
+| `enableRBDStats` | `true` | *(missing)* | No per-image I/O stats for monitoring |
+
+### `targetSizeRatio` — Why It's Critical
+
+As explained in [Understanding PG Autoscaling](#understanding-pg-autoscaling), this setting controls how many PGs the autoscaler allocates. Without it, a new empty pool gets 1 PG and all I/O bottlenecks on a single OSD (~6x slower than the OOB pool).
+
+The OOB pools each use 0.49, expecting to be the only two significant pools (0.49 + 0.49 = 0.98). When you add custom pools, the ratios no longer need to sum to exactly 1.0 — the autoscaler normalizes them. What matters is having *something* set. Even 0.01 is vastly better than nothing.
+
+**Choosing a value:** Use 0.1 for most custom pools. With up to 5 custom pools at 0.1 each plus the two OOB pools at 0.49, the total is ~1.5, which the autoscaler handles fine via normalization. See [PG Autoscaler Deep Dive](#pg-autoscaler-deep-dive) for the full math.
+
+### `deviceClass: ssd`
+
+Restricts the pool to OSDs on the `ssd` CRUSH class. On ROKS bare metal, NVMe drives are classified as `ssd`. With `deviceClass: ""` (empty string), the pool uses the default CRUSH root — on a single-class cluster this works by accident, but on a mixed-media cluster data could land on the wrong tier.
+
+### `enableCrushUpdates: true`
+
+**CRUSH** is the algorithm Ceph uses to determine which OSDs store which PGs. It uses a set of rules based on the cluster topology (which OSDs are on which hosts/racks). When nodes are added or removed, these rules may need updating.
+
+`enableCrushUpdates: true` allows the Rook operator to update CRUSH rules automatically when the topology changes. Without this, CRUSH maps can become stale after scaling events, leading to uneven data distribution.
+
+### `enableRBDStats: true`
+
+**RBD (RADOS Block Device)** is the block storage layer that sits on top of Ceph pools. Each PVC backed by an ODF StorageClass is an RBD image inside a pool.
+
+`enableRBDStats: true` enables per-image I/O statistics, allowing you to monitor individual volume performance:
+
+```bash
+oc exec -n openshift-storage ${TOOLS_POD} -- rbd perf image iostat --pool=my-custom-pool
+```
+
+Negligible overhead. No reason to leave it off.
+
+### `imageFeatures` and `mapOptions` (StorageClass)
+
+The StorageClass `imageFeatures` parameter controls which RBD capabilities are enabled on volumes created from this StorageClass. These are set once at volume creation time. For VM workloads, the critical features are:
+
+| Feature | Purpose | Impact |
+|---------|---------|--------|
 | `exclusive-lock` | Enables write-back caching and single-writer optimizations | **Major** — without it, write IOPS can be up to 7x worse |
 | `object-map` | Bitmap tracking allocated objects for sparse images | Speeds up operations on thin-provisioned images |
 | `fast-diff` | Accelerates snapshot diff and DataVolume clone operations | Faster VM boot from golden image clones |
 | `deep-flatten` | Makes clones fully independent after flattening | Required for clean snapshot/clone lifecycle |
 | `layering` | Enables copy-on-write cloning | Required for DataVolume cloning |
 
-### `mapOptions: krbd:rxbounce`
+`mapOptions: krbd:rxbounce` is a correctness fix for kernel-space RBD — without it, guest OSes can encounter CRC errors on reads. Trivial overhead.
 
-The `rxbounce` option is a correctness fix for kernel-space RBD (`krbd`). Without it, guest OSes can encounter CRC errors on reads from RBD-backed block devices. The overhead is trivial (extra memory copy on the receive path).
+**StorageClass parameters are immutable in Kubernetes.** If you need to change these on an existing SC, you must delete and recreate it. Existing PVCs are unaffected — the parameters were baked in at provisioning time.
 
-### EC StorageClass: `pool` vs `dataPool`
+---
 
-RBD cannot store image metadata on an erasure-coded pool. EC StorageClasses must use a replicated pool for metadata (`pool`) and the EC pool for data blocks (`dataPool`):
+## Understanding PG Autoscaling
 
-```yaml
-parameters:
-  pool: ocs-storagecluster-cephblockpool       # Replicated — stores image headers/metadata
-  dataPool: perf-test-ec-2-1                    # Erasure-coded — stores data blocks
+Now that you have a working pool, this section explains what's happening under the hood — how PGs work, why `targetSizeRatio` is so important, and what happens when you add multiple custom pools alongside the OOB ones.
+
+For the exact formula and impact modelling, see [PG Autoscaler Deep Dive](#pg-autoscaler-deep-dive).
+
+### What Are Placement Groups?
+
+When data is written to a Ceph pool, it's split into objects. But Ceph doesn't map objects directly to individual disks (OSDs) — there are millions of objects and only a handful of OSDs. Instead, it uses an intermediate layer called **Placement Groups (PGs)**.
+
+Each object is hashed to a PG, and each PG is assigned to a set of OSDs. For a rep2 pool, each PG maps to 2 OSDs (primary + one replica). The primary OSD handles all reads and writes for that PG's objects.
+
+```
+Object → hash → PG → [primary OSD, replica OSD]
 ```
 
-### StorageClass Immutability
+The number of PGs determines how well I/O is parallelised:
 
-StorageClass parameters are **immutable** in Kubernetes. If you need to change `imageFeatures`, `mapOptions`, or any other parameter on an existing SC, you must delete and recreate it:
+- **1 PG** = all I/O through one OSD primary, other OSDs sit idle (bottleneck)
+- **64 PGs** = I/O spread across many OSDs (good)
+- **256 PGs** = I/O well distributed across all OSDs (what the OOB pools have)
+
+This is why the PG count matters so much for performance — it's the difference between using one disk and using all of them.
+
+### How the Autoscaler Decides PG Count
+
+The PG autoscaler (a built-in Ceph module) automatically determines how many PGs each pool should have. It uses two signals:
+
+1. **`target_size_ratio`** — A hint you set on the pool: "This pool will use X% of cluster capacity." The autoscaler pre-allocates PGs proportionally.
+2. **Actual stored data** — How much data is currently in the pool. The autoscaler adjusts PGs as data grows.
+
+For a newly created pool, signal 2 is zero — there's no data yet. If signal 1 is also missing (no `targetSizeRatio`), the autoscaler has no information to work with and assigns the minimum: **1 PG**. This is why a custom pool without `targetSizeRatio` performs ~6x worse than the OOB pool — all I/O is bottlenecked on a single OSD.
+
+### How Ratios Work With Multiple Pools
+
+The OOB pools claim 0.49 each (totalling 0.98). When you add a custom pool at 0.1, the total becomes 1.08. The autoscaler normalizes: each pool's effective share is its ratio divided by the total. With a total of 1.08:
+
+- OOB RBD: 0.49 / 1.08 = 0.45 effective (was 0.50)
+- OOB CephFS: 0.49 / 1.08 = 0.45 effective (was 0.50)
+- Custom pool: 0.10 / 1.08 = 0.09 effective
+
+The OOB pools lose a small fraction of their effective share, but their actual PG counts don't change — the autoscaler has a **threshold** (default 3.0) that prevents PG adjustments unless the ideal count differs from the current count by more than 3x. This means you can add many custom pools without affecting the OOB pools. See the [scenario modelling table](#impact-of-custom-pools-on-oob-pools) for the full analysis.
+
+### Checking PG Status
 
 ```bash
-oc delete sc perf-test-sc-rep2
-# Then re-create with corrected parameters
+TOOLS_POD=$(oc get pods -n openshift-storage -l app=rook-ceph-tools -o name)
+
+# PG autoscaler status — key columns are PG_NUM, NEW PG_NUM, TARGET RATIO, EFFECTIVE RATIO
+oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool autoscale-status
+
+# Detailed pool info as JSON
+oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool ls detail --format json | \
+  jq '.[] | select(.pool_name | test("my-custom|cephblockpool")) | {pool_name, pg_num, pg_num_target, options}'
 ```
 
-Existing PVCs bound to the old SC are unaffected — the parameters were already baked in at provisioning time.
+In the `autoscale-status` output:
+- `PG_NUM` is the current PG count
+- `NEW PG_NUM` shows what the autoscaler wants to change it to (empty = no change planned)
+- `TARGET RATIO` is the value you set
+- `EFFECTIVE RATIO` is after normalization
 
-## Waiting for PG Convergence
+---
 
-After creating pools with `targetSizeRatio`, the PG autoscaler needs time to create and distribute PGs. Monitor progress:
+## PG Autoscaler Deep Dive
+
+This section covers the exact formula, threshold behaviour, and impact modelling. It builds on the concepts introduced in [Understanding PG Autoscaling](#understanding-pg-autoscaling) — you should read that section first if you haven't already.
+
+### The Formula
+
+Recall that each PG maps to a set of OSDs — for a rep3 pool, each PG creates 3 **PG instances** (one on the primary OSD, one on each replica OSD). The autoscaler's goal is that each OSD holds approximately `mon_target_pg_per_osd` PG instances across all pools.
+
+Key cluster parameters (from `ceph config dump`):
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `mon_target_pg_per_osd` | 200 | Target PG instances per OSD across all pools |
+| `mon_max_pg_per_osd` | 1000 | Hard ceiling — pool creation fails above this |
+| Autoscaler threshold | 3.0 | Ratio between ideal and actual before autoscaler acts |
+
+The calculation:
+
+```
+1. Total target PG instances = mon_target_pg_per_osd × num_osds
+   Example: 200 × 24 = 4,800
+
+2. Normalization (when sum of all target_size_ratios > 1.0):
+   effective_ratio = pool.target_ratio / sum(all target_ratios)
+
+3. Ideal PG count for each pool:
+   ideal = (effective_ratio × num_osds × mon_target_pg_per_osd) / pool.replication_size
+
+4. Decision (threshold = 3.0):
+   if ideal > current × threshold  → scale UP (double per step)
+   if ideal < current / threshold  → scale DOWN (halve per step)
+   else                            → no change (within dead zone)
+```
+
+### The Threshold Dead Zone
+
+The threshold (3.0) creates a wide band where the autoscaler accepts the current PG count as "close enough." This is deliberate — PG changes trigger data migration, so Ceph is conservative.
+
+For example, a pool with 64 PGs and an ideal of 153:
+- Scale up? 153 < 64 × 3 (192) → no
+- Scale down? 153 > 64 / 3 (21) → no
+- Result: 64 PGs stays, even though the "ideal" is 153
+
+The autoscaler only acts when the gap exceeds 3x. Pools often stabilize at a PG count that's 1/2 to 1/3 of their ideal.
+
+### How PGs Scale Up
+
+The autoscaler doesn't jump directly to the ideal. It doubles the PG count in steps with a cooldown between each:
+
+```
+1 → 2 → 4 → 8 → 16 → 32 → 64 → ...
+```
+
+At each step, it re-evaluates whether ideal/current still exceeds the threshold. Once the ratio drops below 3.0, it stops. This means the final PG count depends on what other pools existed at the time (since they affect the effective ratio).
+
+### Impact of Custom Pools on OOB Pools
+
+**Will adding custom pools reduce OOB pool PG counts?**
+
+For the OOB RBD pool (typically 256 PGs) to scale **down**, the autoscaler needs:
+
+```
+ideal < 256 / 3 = 85 PGs
+```
+
+Working backwards through the formula with 24 OSDs, that requires `effective_ratio < 0.053`, meaning `total_ratios > 0.49 / 0.053 = 9.2`. At 0.1 per custom pool, that's **~80 custom pools**. Not a realistic concern.
+
+**Scenario modelling** (starting from OOB-only baseline of 0.98, 24 OSDs):
+
+| Custom Pools Added | Total Ratio | OOB Effective | OOB Ideal PGs | Ratio to Current (256) | Action? |
+|-------------------|-------------|---------------|---------------|----------------------|---------|
+| 0 (OOB only) | 0.98 | 0.500 | 800 | 3.12 | Scale up to 512 |
+| +1 pool (0.1) | 1.08 | 0.454 | 726 | 2.84 | No change |
+| +5 pools (0.5) | 1.48 | 0.331 | 530 | 2.07 | No change |
+| +10 pools (1.0) | 1.98 | 0.247 | 396 | 1.55 | No change |
+| +30 pools (3.0) | 3.98 | 0.123 | 197 | 0.77 | No change |
+| +80 pools (8.0) | 8.98 | 0.055 | 87 | 0.34 | **Scale down** |
+
+Note the first row: with *only* OOB pools (total 0.98), the ideal is 800 and 800/256 = 3.12, which just crosses the threshold. This means a fresh ROKS cluster with no custom pools may see the OOB RBD pool scale up from 256 to 512 PGs over time. Adding even one custom pool at 0.1 (total 1.08) brings the ratio to 2.84, keeping the OOB pool stable at 256. This is benign in both cases — more PGs is better for performance.
+
+### PG Instance Budget
+
+Each PG instance consumes memory and CPU on the OSD that hosts it. The cluster has a hard limit of `mon_max_pg_per_osd` (1000) instances per OSD.
+
+Example budget for a 24-OSD cluster with OOB pools + one custom pool:
+
+| Pool | PGs | Size | PG Instances |
+|------|-----|------|-------------|
+| cephblockpool (OOB RBD) | 256 | 3 | 768 |
+| cephfilesystem-data0 (OOB CephFS) | 512 | 3 | 1,536 |
+| cephfilesystem-metadata | 16 | 3 | 48 |
+| my-custom-pool | 64 | 2 | 128 |
+| .nfs | 32 | 3 | 96 |
+| .mgr | 32 | 3 | 96 |
+| **Total** | | | **2,672** |
+
+2,672 / 24 OSDs = **111 PG instances per OSD**. Target is 200, ceiling is 1,000. Substantial headroom for additional pools.
+
+### What Happens When Custom Pools Are Deleted
+
+When custom pools are removed, their target ratios leave the sum. The OOB pools' effective ratios increase and their ideal PG counts rise.
+
+For example, deleting a custom pool with ratio 0.1:
+
+```
+Before: total_ratios = 1.08, OOB effective = 0.454, OOB ideal = 726
+After:  total_ratios = 0.98, OOB effective = 0.500, OOB ideal = 800
+```
+
+800 / 256 = 3.12 — this just crosses the 3.0 threshold, so the autoscaler would scale the OOB RBD pool up to 512 PGs. This is benign (more PGs = better I/O distribution), but triggers data rebalancing.
+
+### Scale-Down Behaviour
+
+Even when the threshold is crossed downward, PG reduction is conservative:
+
+1. The autoscaler evaluates every ~60 seconds
+2. PG merging requires all PGs to be `active+clean` — any degraded PG blocks the merge
+3. PG count halves per step (256 → 128 → 64), not jumped directly to target
+4. Each halving step waits for rebalancing to complete before proceeding
+
+In practice, PG reduction is rare on production clusters. The autoscaler is far more aggressive about increasing PGs than decreasing them.
+
+### The `noautoscale` Escape Hatch
+
+If you need to freeze PG counts (e.g., during a performance test where PG rebalancing would skew results):
 
 ```bash
-# Watch PG autoscaler converge
-watch -n5 "oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool autoscale-status | grep perf-test"
+# Freeze a specific pool
+ceph osd pool set my-custom-pool pg_autoscale_mode off
 
-# Check for 'misplaced' or 'remapped' PGs during scaling
-oc exec -n openshift-storage ${TOOLS_POD} -- ceph -s | grep -E 'pgs|misplaced|remapped'
+# Freeze cluster-wide
+ceph osd pool set noautoscale
+
+# Re-enable
+ceph osd pool set my-custom-pool pg_autoscale_mode on
 ```
 
-The autoscaler doubles PG count in steps (1 → 2 → 4 → 8 → 16 → 32 ...) with a cooldown between each step. Going from 1 PG to 32 PGs takes several minutes. Going from 1 to 128+ can take 10–15 minutes.
-
-**Do not run benchmarks until PG counts have stabilized.** The test suite's `01-setup-storage-pools.sh` calls `wait_for_pg_convergence()` to handle this automatically.
+---
 
 ## Common Pitfalls
 
 ### PG autoscaler shows convergence at 1 PG
 
-The convergence check verifies `pg_num == new_pg_num` — that the autoscaler has *finished* adjusting. But if the autoscaler *decided* 1 PG is correct (no size hint, no data), convergence completes instantly at 1 PG. Always verify the actual PG count, not just convergence status.
+The convergence check verifies `pg_num == new_pg_num` — that the autoscaler has *finished* adjusting. But if the autoscaler *decided* 1 PG is correct (no `targetSizeRatio`, no data), convergence completes instantly at 1 PG. Always check the actual PG count, not just convergence status.
 
 ### `requireSafeReplicaSize: true` with insufficient hosts
 
-With `requireSafeReplicaSize: true` (recommended), Ceph refuses to write if the pool cannot achieve the requested replication factor. A rep3 pool on a 2-node cluster will never reach `Ready`. Check OSD host count before creating pools:
-
-```bash
-oc get pods -n openshift-storage -l app=rook-ceph-osd \
-  -o jsonpath='{.items[*].spec.nodeName}' | tr ' ' '\n' | sort -u | wc -l
-```
+With `requireSafeReplicaSize: true` (recommended), Ceph refuses to write if the pool cannot achieve the requested replication factor. A rep3 pool on a 2-node cluster will never reach `Ready`. Always check host count first (see [Step 1](#step-1-check-your-cluster)).
 
 ### Pool created but StorageClass missing
 
-Creating the CephBlockPool does not automatically create a StorageClass. You must create both. If the pool is `Ready` but there's no SC, PVCs referencing it will stay `Pending`.
+Creating the CephBlockPool does not automatically create a StorageClass. You must create both. If the pool is `Ready` but there's no SC, PVCs referencing it will stay `Pending` with no useful error message.
+
+### StorageClass parameters are immutable
+
+If you made a mistake in the StorageClass (wrong `imageFeatures`, wrong pool name, etc.), you cannot edit it. You must delete and recreate:
+
+```bash
+oc delete sc my-custom-sc
+# Fix the YAML and re-apply
+oc apply -f my-custom-sc.yaml
+```
+
+Existing PVCs are unaffected — parameters were baked in at provisioning time.
 
 ### Changing CephBlockPool spec fields
 
-Most CephBlockPool spec fields (including `replicated.size`, `failureDomain`, `deviceClass`) can be updated by editing the CR. However, some changes (like changing `failureDomain` from `host` to `rack`) trigger a CRUSH rule rebuild and PG remapping, which causes data migration. Plan for this during maintenance windows.
+Most CephBlockPool spec fields (including `replicated.size`, `failureDomain`, `deviceClass`) can be updated by editing the CR. However, some changes (like `failureDomain` from `host` to `rack`) trigger a CRUSH rule rebuild and PG remapping, which causes data migration. Plan for this during maintenance windows.
 
-`targetSizeRatio` can be changed at any time — the autoscaler will adjust PG count on the next evaluation cycle (typically within 60 seconds).
+`targetSizeRatio` can be changed at any time — the autoscaler adjusts on the next evaluation cycle (within ~60 seconds).
+
+---
 
 ## Quick Reference
 
