@@ -107,11 +107,11 @@ main() {
       run_cmd oc delete dv "${dv}" -n "${TEST_NAMESPACE}" --wait=false || true
     done
 
-    # Clean up file-verify PVCs
+    # Clean up verification PVCs (file-verify-* and block-verify-*)
     local verify_pvcs
     verify_pvcs=$(oc get pvc -n "${TEST_NAMESPACE}" \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | \
-      grep "^file-verify-" || echo "")
+      grep -E "^(file|block)-verify-" || echo "")
     for pvc in ${verify_pvcs}; do
       log_info "  Deleting verification PVC: ${pvc}"
       run_cmd oc delete pvc "${pvc}" -n "${TEST_NAMESPACE}" --wait=false || true
