@@ -50,6 +50,7 @@ Practical how-to documentation for running and customizing the test suite.
 | [Configuration Reference](guides/configuration-reference.md) | Every parameter in `00-config.sh` fully documented |
 | [Running Tests](guides/running-tests.md) | Step-by-step test execution walkthrough |
 | [Understanding Results](guides/understanding-results.md) | Reading fio JSON, CSV columns, HTML dashboard, analysis tips |
+| [CephBlockPool Setup](guides/ceph-pool-setup.md) | Correct pool configuration, PG autoscaler, OOB-aligned settings |
 | [Customization](guides/customization.md) | Adding pools, profiles, VM sizes, adjusting parameters |
 | [Troubleshooting](guides/troubleshooting.md) | Common failures and how to fix them |
 | [VSI Storage Testing Guide](guides/vsi-storage-testing-guide.md) | VSI bandwidth constraints, IOPS tiers, ODF sizing for realistic benchmarks |

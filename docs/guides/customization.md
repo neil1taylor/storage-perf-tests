@@ -25,6 +25,8 @@ Format: `name:type:params`
 
 **Important:** Before adding an EC pool, verify your cluster has enough worker nodes. EC pools require k+m hosts when using `failureDomain: host`. For example, ec-8-3 needs 11 hosts. Check with `oc get nodes -l node-role.kubernetes.io/worker`.
 
+**Important:** Custom pools require correct settings (`targetSizeRatio`, `deviceClass`, `enableCrushUpdates`) to avoid severe performance bottlenecks. See the [CephBlockPool Setup Guide](ceph-pool-setup.md) for the full explanation and correct configuration.
+
 2. Run `./01-setup-storage-pools.sh` to create the new pool and StorageClass.
 
 3. Verify:
