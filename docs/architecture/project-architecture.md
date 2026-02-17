@@ -198,5 +198,6 @@ The test suite uses several error-handling strategies:
 ## Next Steps
 
 - [Test Matrix Explained](test-matrix-explained.md) — How the main loop works
+- [Parallel Execution](parallel-execution.md) — Pool-level dispatch, auto-scaling, and isolation
 - [Template Rendering](template-rendering.md) — The rendering pipeline
 - [Configuration Reference](../guides/configuration-reference.md) — All config parameters

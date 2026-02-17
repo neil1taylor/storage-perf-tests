@@ -252,7 +252,7 @@ Open the HTML dashboard in a browser for the best analysis experience. See [Unde
 ./06-generate-report.sh --compare perf-20260214-103000 perf-20260215-080000
 ```
 
-Generates a comparison HTML dashboard showing the percentage delta between two runs for all metrics. Useful for A/B testing storage configuration changes, firmware updates, or tuning adjustments. See [Understanding Results — Comparison Reports](understanding-results.md#comparison-reports) for details.
+Generates a comparison HTML dashboard showing the percentage delta between two runs for all metrics. Useful for A/B testing storage configuration changes, firmware updates, or tuning adjustments. See [Understanding Results — Comparison Reports](understanding-results.md#comparison-reports) for details. For the full workflow including prerequisites, interpretation, and typical patterns, see [Comparing Runs](comparing-runs.md).
 
 ## Step 6: Cleanup
 
@@ -358,5 +358,6 @@ Shows what would be deleted without actually deleting anything. Always run this 
 ## Next Steps
 
 - [Understanding Results](understanding-results.md) — How to read and analyze the output
+- [Comparing Runs](comparing-runs.md) — End-to-end comparison workflow
 - [Troubleshooting](troubleshooting.md) — What to do when things go wrong
 - [Test Matrix Explained](../architecture/test-matrix-explained.md) — Deep dive into the test loop

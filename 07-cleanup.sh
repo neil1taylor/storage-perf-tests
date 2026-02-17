@@ -148,17 +148,17 @@ main() {
       local sc_name="perf-test-sc-${name}"
 
       log_info "  Deleting StorageClass: ${sc_name}"
-      run_cmd oc delete sc "${sc_name}" || true
+      run_cmd oc delete sc "${sc_name}" --wait=false 2>/dev/null || true
 
       log_info "  Deleting CephBlockPool: ${pool_name}"
-      run_cmd oc delete cephblockpool "${pool_name}" -n "${ODF_NAMESPACE}" || true
+      run_cmd oc delete cephblockpool "${pool_name}" -n "${ODF_NAMESPACE}" --wait=false 2>/dev/null || true
     done
   fi
 
   # 4. Delete namespace
   if [[ "${CLEANUP_NAMESPACE}" == true ]]; then
     log_info "Deleting test namespace: ${TEST_NAMESPACE}"
-    run_cmd oc delete namespace "${TEST_NAMESPACE}" --wait=false || true
+    run_cmd oc delete namespace "${TEST_NAMESPACE}" --wait=false 2>/dev/null || true
   fi
 
   # 5. Clean up SSH keys

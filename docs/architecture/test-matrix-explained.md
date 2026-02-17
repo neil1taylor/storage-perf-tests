@@ -272,5 +272,6 @@ Results collected before the interruption are preserved in the `results/` direct
 ## Next Steps
 
 - [fio Profiles Reference](fio-profiles-reference.md) — What each profile tests
+- [Parallel Execution](parallel-execution.md) — Running multiple pools concurrently
 - [Project Architecture](project-architecture.md) — Overall design and libraries
 - [Running Tests](../guides/running-tests.md) — Practical guide to execution

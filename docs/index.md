@@ -53,6 +53,7 @@ Practical how-to documentation for running and customizing the test suite.
 | [Running Tests](guides/running-tests.md) | Step-by-step test execution walkthrough |
 | [Understanding Results](guides/understanding-results.md) | Reading fio JSON, CSV columns, HTML dashboard, analysis tips |
 | [CephBlockPool Setup](guides/ceph-pool-setup.md) | Correct pool configuration, PG autoscaler, OOB-aligned settings |
+| [Comparing Runs](guides/comparing-runs.md) | End-to-end comparison workflow, delta calculation, A/B testing patterns |
 | [Customization](guides/customization.md) | Adding pools, profiles, VM sizes, adjusting parameters |
 | [Troubleshooting](guides/troubleshooting.md) | Common failures and how to fix them |
 | [VSI Storage Testing Guide](guides/vsi-storage-testing-guide.md) | VSI bandwidth constraints, IOPS tiers, ODF sizing for realistic benchmarks |
@@ -66,4 +67,5 @@ Deep-dive into how the test suite works internally.
 | [Project Architecture](architecture/project-architecture.md) | Design philosophy, script pipeline, library functions, error handling |
 | [Test Matrix Explained](architecture/test-matrix-explained.md) | The test matrix dimensions, VM reuse optimization, permutation counting, quick mode |
 | [fio Profiles Reference](architecture/fio-profiles-reference.md) | All 6 fio profiles with per-job details and real-world analogies |
+| [Parallel Execution](architecture/parallel-execution.md) | Pool-level dispatch, auto-scaling, per-pool isolation, signal handling |
 | [Template Rendering](architecture/template-rendering.md) | The fio profile → cloud-init → VM template → oc apply pipeline |

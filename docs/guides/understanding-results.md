@@ -247,6 +247,8 @@ This is useful for:
 - **Cluster scaling** — Comparing performance with 3 vs 6 worker nodes
 - **Configuration tuning** — Testing fio parameter changes or Ceph tuning
 
+For the complete step-by-step workflow including prerequisites and tips for ensuring comparable runs, see [Comparing Runs](comparing-runs.md).
+
 ## Export and Further Analysis
 
 ### Custom CSV Analysis
