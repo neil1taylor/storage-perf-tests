@@ -148,6 +148,72 @@ The key difference in methodology is the **goal**: HCIBench typically deploys ma
 
 Results from both tools are valid for comparison as long as the fio parameters align (block size, read/write ratio, queue depth, runtime). The fio profiles in this suite (`random-rw`, `mixed-70-30`, `db-oltp`) are designed to match common HCIBench workload scenarios.
 
+## Placement Groups and Performance
+
+### What Are Placement Groups?
+
+**Placement Groups (PGs)** are the intermediate mapping layer between Ceph objects and OSDs. Every pool has a fixed number of PGs, and every RADOS object is assigned to exactly one PG via hashing. The PG is then mapped to a set of OSDs by the CRUSH algorithm.
+
+```
+Object → hash(object_name) mod pg_num → PG → CRUSH(PG) → [OSD.1, OSD.4, OSD.7]
+```
+
+PG count directly determines I/O parallelism: each PG has a single primary OSD that handles all writes and (by default) reads for objects in that PG. With too few PGs, I/O concentrates on a small number of primary OSDs, creating a bottleneck even if the cluster has many OSDs available.
+
+### The PG Autoscaler
+
+Ceph's **PG autoscaler** (`pg_autoscaler` module) automatically adjusts PG counts based on pool usage. It uses two signals:
+
+- **Actual data stored** — Scales PGs based on current pool size relative to the cluster
+- **`target_size_ratio`** — A hint telling the autoscaler what fraction of total cluster capacity this pool is expected to use
+
+The problem: for a newly created empty pool with no `target_size_ratio`, the autoscaler sees zero data and assigns the minimum PG count — typically **1 PG**. This is correct from a capacity perspective but catastrophic for performance.
+
+### Discovery: 1 PG vs 256 PGs
+
+Benchmarking revealed that `perf-test-rep2` was achieving ~6x lower IOPS than the OOB `rep3` pool backed by the same hardware. Investigation showed:
+
+| Pool | PG Count | Source |
+|------|----------|--------|
+| `ocs-storagecluster-cephblockpool` (OOB rep3) | 256 | `targetSizeRatio: 0.49` in OOB CephBlockPool CR |
+| `perf-test-rep2` (custom) | 1 | No `targetSizeRatio` set — autoscaler defaulted to minimum |
+
+With 1 PG, all I/O for the entire pool funnels through a single OSD primary, regardless of how many OSDs exist in the cluster. The other OSDs sit idle for that pool's I/O.
+
+### The Fix: `targetSizeRatio`
+
+The test suite now sets `targetSizeRatio: 0.1` on all custom pools, telling the autoscaler each pool will use ~10% of cluster capacity. This is enough to get a proper PG count allocated (typically 32-64 PGs depending on OSD count), distributing I/O across all available OSDs.
+
+Why 0.1 and not 0.49 (like the OOB pool)? The OOB pool is the only custom pool and can claim half the cluster. The test suite creates multiple custom pools (rep2, ec-2-1, ec-2-2, ec-4-2), and their ratios should sum to ≤1.0. At 0.1 each, up to 5 custom pools plus the OOB pool (0.49) sum to ~1.0.
+
+For replicated pools, `targetSizeRatio` is set as a native CRD field under `replicated:`. For erasure-coded pools, it's set via the `parameters` map (`target_size_ratio: "0.1"`) since the `erasureCoded` CRD field doesn't support it directly.
+
+### Other OOB-Aligned Settings
+
+Beyond PG count, the OOB pool has several settings that custom pools were missing:
+
+| Setting | Purpose | Impact |
+|---------|---------|--------|
+| `deviceClass: ssd` | Restricts the pool to SSD/NVMe-class OSDs only | Prevents accidental placement on HDD OSDs in mixed clusters |
+| `enableCrushUpdates: true` | Allows Rook to update CRUSH rules when topology changes | Required for automatic rebalancing after node add/remove |
+| `enableRBDStats: true` | Enables per-image I/O statistics collection | Enables monitoring via `rbd perf image iostat` |
+
+### Checking PG Counts
+
+To verify PG counts after pool creation, exec into the Ceph tools pod:
+
+```bash
+# Check PG autoscaler status for all pools
+oc exec -n openshift-storage $(oc get pods -n openshift-storage \
+  -l app=rook-ceph-tools -o name) -- ceph osd pool autoscale-status
+
+# Detailed pool info including PG count
+oc exec -n openshift-storage $(oc get pods -n openshift-storage \
+  -l app=rook-ceph-tools -o name) -- ceph osd pool ls detail
+```
+
+The `autoscale-status` output shows current PG count, target PG count, and whether the autoscaler plans to scale up. After setting `targetSizeRatio`, PG count should converge within a few minutes. The `01-setup-storage-pools.sh` script calls `wait_for_pg_convergence()` to block until PG counts stabilize before benchmarking begins.
+
 ## RBD (RADOS Block Device)
 
 **RBD** is Ceph's block storage interface. It presents a virtual block device to the host, backed by RADOS objects. This is what ODF uses to fulfill PVCs for VMs.
@@ -213,11 +279,16 @@ metadata:
   namespace: openshift-storage
 spec:
   failureDomain: host
+  deviceClass: ssd
+  enableCrushUpdates: true
+  enableRBDStats: true
   replicated:
     size: 2
+    requireSafeReplicaSize: true
+    targetSizeRatio: 0.1
 ```
 
-For erasure-coded pools:
+For erasure-coded pools (note: `targetSizeRatio` goes in the `parameters` map since the `erasureCoded` CRD field doesn't support it natively):
 
 ```yaml
 apiVersion: ceph.rook.io/v1
@@ -227,6 +298,11 @@ metadata:
   namespace: openshift-storage
 spec:
   failureDomain: host
+  deviceClass: ssd
+  enableCrushUpdates: true
+  enableRBDStats: true
+  parameters:
+    target_size_ratio: "0.1"
   erasureCoded:
     dataChunks: 4
     codingChunks: 2

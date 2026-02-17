@@ -93,10 +93,13 @@ metadata:
   namespace: ${ODF_NAMESPACE}
 spec:
   failureDomain: host
+  deviceClass: ssd
+  enableCrushUpdates: true
+  enableRBDStats: true
   replicated:
     size: ${rep_size}
     requireSafeReplicaSize: true
-  deviceClass: ""
+    targetSizeRatio: 0.1
 EOF
 
   elif [[ "${pool_type}" == "erasurecoded" ]]; then
@@ -110,10 +113,14 @@ metadata:
   namespace: ${ODF_NAMESPACE}
 spec:
   failureDomain: host
+  deviceClass: ssd
+  enableCrushUpdates: true
+  enableRBDStats: true
+  parameters:
+    target_size_ratio: "0.1"
   erasureCoded:
     dataChunks: ${data_chunks}
     codingChunks: ${coding_chunks}
-  deviceClass: ""
 EOF
   fi
 
