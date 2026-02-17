@@ -163,8 +163,8 @@ export PG_CONVERGENCE_INTERVAL="${PG_CONVERGENCE_INTERVAL:-30}" # seconds betwee
 export RESULTS_DIR="${RESULTS_DIR:-./results}"
 export REPORTS_DIR="${REPORTS_DIR:-./reports}"
 mkdir -p "${RESULTS_DIR}" "${REPORTS_DIR}"
-export TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-export RUN_ID="perf-${TIMESTAMP}"
+export TIMESTAMP="${TIMESTAMP:-$(date +%Y%m%d-%H%M%S)}"
+export RUN_ID="${RUN_ID:-perf-${TIMESTAMP}}"
 
 # ---------------------------------------------------------------------------
 # SSH key for VM access (generated if not provided)

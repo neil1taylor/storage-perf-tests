@@ -502,9 +502,12 @@ csv_file = os.environ['RANKING_CSV_FILE']
 # Read CSV and aggregate by (pool, profile, block_size)
 # Sum IOPS/BW across fio jobs per test, average latency
 groups = {}
+first_row = None
 with open(csv_file, 'r') as f:
     reader = csv.DictReader(f)
     for row in reader:
+        if first_row is None:
+            first_row = dict(row)
         pool = row.get('storage_pool', '')
         profile = row.get('fio_profile', '')
         bs = row.get('block_size', '')
@@ -671,12 +674,53 @@ for p in pool_names:
     })
 composite.sort(key=lambda x: x['score'], reverse=True)
 
+# Classify pools by type/description for context
+import re
+def classify_pool(name):
+    if re.match(r'^rep(\d+)(-.*)?$', name):
+        m = re.match(r'^rep(\d+)(-.*)?$', name)
+        n = m.group(1)
+        suffix = m.group(2) or ''
+        variant = ''
+        if suffix == '-virt':
+            variant = ' (VM-optimized SC with write-back caching features)'
+        elif suffix == '-enc':
+            variant = ' (encrypted at-rest via LUKS)'
+        return ('ODF Replicated ' + n + '-way', 'Ceph RBD block storage with ' + n + 'x replication across failure domains.' + variant)
+    if re.match(r'^ec-(\d+)-(\d+)', name):
+        m = re.match(r'^ec-(\d+)-(\d+)', name)
+        k, c = m.group(1), m.group(2)
+        return ('ODF Erasure Coded ' + k + '+' + c, 'Ceph RBD with erasure coding (' + k + ' data + ' + c + ' coding chunks). Better space efficiency than replication.')
+    if 'vpc-file' in name:
+        tier = re.search(r'(\d+)-iops', name)
+        tier_str = tier.group(1) + ' IOPS tier' if tier else 'min-IOPS (auto-scaled)'
+        return ('IBM Cloud File CSI', 'NFS-based file storage via VPC File CSI driver. ' + tier_str + '.')
+    if 'vpc-block' in name:
+        tier = re.search(r'(\d+)-iops', name)
+        tier_str = tier.group(1) + ' IOPS tier' if tier else 'auto-scaled IOPS'
+        return ('IBM Cloud Block CSI', 'iSCSI-based block storage via VPC Block CSI driver. ' + tier_str + '.')
+    return ('Unknown', name)
+
+pool_info = []
+for p in pool_names:
+    ptype, desc = classify_pool(p)
+    pool_info.append({'name': p, 'type': ptype, 'description': desc})
+
+# Extract test config from CSV data
+test_config = {}
+if first_row:
+    test_config['vm_size'] = first_row.get('vm_size', 'N/A')
+    test_config['pvc_size'] = first_row.get('pvc_size', 'N/A')
+    test_config['concurrency'] = first_row.get('concurrency', '1')
+
 print(json.dumps({
     'pools': pool_names,
     'workload_rankings': workload_rankings,
     'latency_ranking': latency_ranking,
     'composite': composite,
     'weights': {d[0]: d[4] for d in dimensions},
+    'pool_info': pool_info,
+    'test_config': test_config,
 }))
 PYEOF_RANK
   )
@@ -694,19 +738,25 @@ PYEOF_RANK
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
     .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 2rem; }
     .header h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
-    .header .meta { color: #aaa; font-size: 0.9rem; }
+    .header .meta { color: #aaa; font-size: 0.85rem; }
+    .methodology { background: white; border-radius: 8px; padding: 1.5rem 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1.5rem; line-height: 1.6; font-size: 0.92rem; color: #444; }
+    .methodology h2 { font-size: 1.15rem; color: #1a1a2e; margin: 0 0 0.8rem 0; padding: 0; border: none; }
+    .methodology p { margin: 0 0 0.7rem 0; }
+    .methodology p:last-child { margin-bottom: 0; }
+    .methodology .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 2rem; margin: 0.5rem 0; font-size: 0.88rem; }
+    .methodology .detail-grid dt { color: #777; }
+    .methodology .detail-grid dd { font-weight: 500; margin: 0; }
     .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
     .section { margin-bottom: 2rem; }
     .section h2 { font-size: 1.3rem; color: #1a1a2e; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0; }
     .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th, td { padding: 0.6rem 0.8rem; text-align: right; border-bottom: 1px solid #eee; }
-    th { background: #f8f9fa; font-weight: 600; text-align: left; position: sticky; top: 0; }
-    td:first-child, th:first-child { text-align: left; }
+    th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; font-weight: 600; position: sticky; top: 0; }
+    .num { text-align: right; }
     .rank-1 td { background: #fff9e6; }
     .rank-2 td { background: #f5f5f5; }
     .rank-3 td { background: #fdf0ed; }
-    .medal { font-size: 1.1rem; margin-right: 0.3rem; }
     .score-bar { display: inline-block; height: 20px; border-radius: 3px; vertical-align: middle; min-width: 2px; }
     .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 1rem; }
     .collapsible { cursor: pointer; user-select: none; }
@@ -723,6 +773,21 @@ PYEOF_RANK
     <div class="meta" id="meta"></div>
   </div>
   <div class="container">
+    <div class="methodology" id="methodology"></div>
+  </div>
+  <div class="container">
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggleCollapse(this)">About the StorageClasses</h2>
+      <div class="collapse-content open">
+        <div class="card"><table id="poolInfoTable"></table></div>
+      </div>
+    </div>
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggleCollapse(this)">About the Workloads</h2>
+      <div class="collapse-content open">
+        <div class="card"><table id="workloadInfoTable"></table></div>
+      </div>
+    </div>
     <div class="section">
       <h2>Overall Composite Ranking</h2>
       <div class="card">
@@ -758,32 +823,77 @@ RANK_HTML_EOF
     const COLORS = ['#e63946','#457b9d','#2a9d8f','#e9c46a','#f4a261','#264653',
                     '#a8dadc','#d62828','#023e8a','#780000','#6a4c93','#1982c4',
                     '#8ac926','#ff595e','#ffca3a'];
-    const MEDALS = ['&#x1F947;', '&#x1F948;', '&#x1F949;'];
+    // Header meta (run ID only)
+    document.getElementById('meta').innerHTML = 'Run: ' + RUN_ID;
 
-    document.getElementById('meta').innerHTML =
-      'Run: ' + RUN_ID + ' | Weights: Random IOPS 40%, Sequential BW 30%, Mixed IOPS 20%, p99 Latency 10%';
+    // Methodology write-up
+    (function() {
+      const cfg = DATA.test_config || {};
+      const pools = (DATA.pool_info || []).length;
+      let html = '<h2>How This Report Works</h2>';
+      html += '<p>This report ranks <strong>' + pools + ' StorageClasses</strong> by running the same set of I/O benchmarks against each one under identical conditions, then combining the results into a single composite score. The goal is to answer: <em>which StorageClass gives the best overall performance for VM workloads on this cluster?</em></p>';
+      html += '<p><strong>What was tested:</strong> Each StorageClass was provisioned as a ' + (cfg.pvc_size || '150Gi') + ' data disk attached to a ' + (cfg.vm_size || 'small') + ' VM (2 vCPU, 4 GiB RAM). Three fio benchmarks were run on each disk:</p>';
+      html += '<ul style="margin:0.3rem 0 0.7rem 1.5rem">';
+      html += '<li><strong>Random 4k Read/Write</strong> — measures how many small I/O operations per second the storage can handle (IOPS). This is what matters for databases and general VM activity.</li>';
+      html += '<li><strong>Sequential 1M Read/Write</strong> — measures raw data transfer speed (throughput in MiB/s). This is what matters for backups, large file copies, and data pipelines.</li>';
+      html += '<li><strong>Mixed 70/30 Read/Write at 4k</strong> — a realistic blend of 70% reads and 30% writes that simulates everyday application workloads like web servers and file shares.</li>';
+      html += '</ul>';
+      html += '<p><strong>How scoring works:</strong> Each StorageClass is scored 0-100 on each workload (100 = best performer). These are combined into a weighted composite score:</p>';
+      html += '<dl class="detail-grid">';
+      html += '<dt>Random IOPS</dt><dd>40% weight — most impactful for general VM performance</dd>';
+      html += '<dt>Sequential throughput</dt><dd>30% weight — important for data-heavy workloads</dd>';
+      html += '<dt>Mixed IOPS</dt><dd>20% weight — reflects real-world application patterns</dd>';
+      html += '<dt>p99 latency (lower is better)</dt><dd>10% weight — tail latency from random 4k I/O</dd>';
+      html += '</dl>';
+      html += '<p style="margin-top:0.5rem"><strong>Test parameters:</strong> Each benchmark ran for 60 seconds with a 10-second warmup, using direct I/O (O_DIRECT, bypassing OS cache), I/O depth of 32, and 4 parallel worker threads per job. All tests used a single VM with concurrency of ' + (cfg.concurrency || '1') + '.</p>';
+      document.getElementById('methodology').innerHTML = html;
+    })();
+
+    // Pool info table
+    (function() {
+      const info = DATA.pool_info || [];
+      if (!info.length) return;
+      let html = '<thead><tr><th>StorageClass</th><th>Type</th><th>Description</th></tr></thead><tbody>';
+      info.forEach(p => {
+        html += '<tr><td><strong>' + p.name + '</strong></td><td>' + p.type + '</td><td>' + p.description + '</td></tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('poolInfoTable').innerHTML = html;
+    })();
+
+    // Workload info table
+    (function() {
+      const workloads = [
+        { name: 'Random Read/Write', bs: '4k', desc: 'Small-block random I/O — measures IOPS capacity. Typical of databases and VM disk activity.' },
+        { name: 'Sequential Read/Write', bs: '1M', desc: 'Large-block sequential I/O — measures bandwidth/throughput. Typical of backups and bulk data transfer.' },
+        { name: 'Mixed 70/30', bs: '4k', desc: '70% reads / 30% writes — simulates typical application workloads like web apps and file servers.' },
+      ];
+      let html = '<thead><tr><th>Workload</th><th>Block Size</th><th>What It Measures</th></tr></thead><tbody>';
+      workloads.forEach(w => {
+        html += '<tr><td><strong>' + w.name + '</strong></td><td>' + w.bs + '</td><td>' + w.desc + '</td></tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('workloadInfoTable').innerHTML = html;
+    })();
 
     // Composite table
     (function() {
       const comp = DATA.composite;
-      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th>Composite Score</th>';
-      html += '<th>Random IOPS<span class="weight-badge">40%</span></th>';
-      html += '<th>Sequential BW<span class="weight-badge">30%</span></th>';
-      html += '<th>Mixed IOPS<span class="weight-badge">20%</span></th>';
-      html += '<th>p99 Latency<span class="weight-badge">10%</span></th>';
+      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th class="num">Composite Score</th>';
+      html += '<th class="num">Random IOPS<span class="weight-badge">40%</span></th>';
+      html += '<th class="num">Sequential BW<span class="weight-badge">30%</span></th>';
+      html += '<th class="num">Mixed IOPS<span class="weight-badge">20%</span></th>';
+      html += '<th class="num">p99 Latency<span class="weight-badge">10%</span></th>';
       html += '</tr></thead><tbody>';
       comp.forEach((c, i) => {
         const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
-        const medal = i < 3 ? '<span class="medal">' + MEDALS[i] + '</span>' : '';
-        const pct = c.score;
-        const barColor = COLORS[i % COLORS.length];
-        html += '<tr' + cls + '><td>' + medal + '#' + (i+1) + '</td>';
+        html += '<tr' + cls + '><td>#' + (i+1) + '</td>';
         html += '<td><strong>' + c.pool + '</strong></td>';
-        html += '<td><span class="score-bar" style="width:' + (pct * 2) + 'px;background:' + barColor + '"></span> ' + pct + '</td>';
+        html += '<td class="num">' + c.score + '</td>';
         const dims = ['random_iops', 'seq_bw', 'mixed_iops', 'p99_lat'];
         dims.forEach(d => {
           const v = c.breakdown[d] !== undefined ? c.breakdown[d] : '-';
-          html += '<td>' + v + '</td>';
+          html += '<td class="num">' + v + '</td>';
         });
         html += '</tr>';
       });
@@ -827,16 +937,15 @@ RANK_HTML_EOF
         const writeKey = wl.id === 'seq_bw' ? 'write_mib' : 'write_iops';
 
         let html = '<h3 style="margin-bottom:0.5rem">' + wl.title + '</h3>';
-        html += '<table><thead><tr><th>Rank</th><th>StorageClass</th><th>Total ' + unit + '</th>';
-        html += '<th>Read</th><th>Write</th></tr></thead><tbody>';
+        html += '<table><thead><tr><th>Rank</th><th>StorageClass</th><th class="num">Total ' + unit + '</th>';
+        html += '<th class="num">Read</th><th class="num">Write</th></tr></thead><tbody>';
         wl.ranking.forEach((r, i) => {
           const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
-          const medal = i < 3 ? '<span class="medal">' + MEDALS[i] + '</span>' : '';
-          html += '<tr' + cls + '><td>' + medal + '#' + (i+1) + '</td>';
+          html += '<tr' + cls + '><td>#' + (i+1) + '</td>';
           html += '<td>' + r.pool + '</td>';
-          html += '<td><strong>' + (r[valKey] !== undefined ? r[valKey].toLocaleString() : r.value) + '</strong></td>';
-          html += '<td>' + (r[readKey] !== undefined ? r[readKey].toLocaleString() : '-') + '</td>';
-          html += '<td>' + (r[writeKey] !== undefined ? r[writeKey].toLocaleString() : '-') + '</td>';
+          html += '<td class="num"><strong>' + (r[valKey] !== undefined ? r[valKey].toLocaleString() : r.value) + '</strong></td>';
+          html += '<td class="num">' + (r[readKey] !== undefined ? r[readKey].toLocaleString() : '-') + '</td>';
+          html += '<td class="num">' + (r[writeKey] !== undefined ? r[writeKey].toLocaleString() : '-') + '</td>';
           html += '</tr>';
         });
         html += '</tbody></table>';
@@ -868,17 +977,16 @@ RANK_HTML_EOF
     // Latency table
     (function() {
       const lat = DATA.latency_ranking;
-      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th>Read Avg (ms)</th>';
-      html += '<th>Write Avg (ms)</th><th>Read p99 (ms)</th><th>Write p99 (ms)</th>';
-      html += '<th>Avg p99 (ms)</th></tr></thead><tbody>';
+      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th class="num">Read Avg (ms)</th>';
+      html += '<th class="num">Write Avg (ms)</th><th class="num">Read p99 (ms)</th><th class="num">Write p99 (ms)</th>';
+      html += '<th class="num">Avg p99 (ms)</th></tr></thead><tbody>';
       lat.forEach((r, i) => {
         const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
-        const medal = i < 3 ? '<span class="medal">' + MEDALS[i] + '</span>' : '';
-        html += '<tr' + cls + '><td>' + medal + '#' + (i+1) + '</td>';
+        html += '<tr' + cls + '><td>#' + (i+1) + '</td>';
         html += '<td>' + r.pool + '</td>';
-        html += '<td>' + r.read_lat_avg + '</td><td>' + r.write_lat_avg + '</td>';
-        html += '<td>' + r.read_p99 + '</td><td>' + r.write_p99 + '</td>';
-        html += '<td><strong>' + r.avg_p99 + '</strong></td></tr>';
+        html += '<td class="num">' + r.read_lat_avg + '</td><td class="num">' + r.write_lat_avg + '</td>';
+        html += '<td class="num">' + r.read_p99 + '</td><td class="num">' + r.write_p99 + '</td>';
+        html += '<td class="num"><strong>' + r.avg_p99 + '</strong></td></tr>';
       });
       html += '</tbody>';
       document.getElementById('latencyTable').innerHTML = html;
@@ -888,17 +996,17 @@ RANK_HTML_EOF
     (function() {
       const comp = DATA.composite;
       const wls = DATA.workload_rankings;
-      let html = '<thead><tr><th>StorageClass</th><th>Composite</th>';
-      wls.forEach(wl => { html += '<th>' + wl.title + '</th>'; });
-      html += '<th>Avg p99 (ms)</th></tr></thead><tbody>';
+      let html = '<thead><tr><th>StorageClass</th><th class="num">Composite</th>';
+      wls.forEach(wl => { html += '<th class="num">' + wl.title + '</th>'; });
+      html += '<th class="num">Avg p99 (ms)</th></tr></thead><tbody>';
       comp.forEach(c => {
-        html += '<tr><td>' + c.pool + '</td><td>' + c.score + '</td>';
+        html += '<tr><td>' + c.pool + '</td><td class="num">' + c.score + '</td>';
         wls.forEach(wl => {
           const entry = wl.ranking.find(r => r.pool === c.pool);
-          html += '<td>' + (entry ? entry.value : '-') + '</td>';
+          html += '<td class="num">' + (entry ? entry.value : '-') + '</td>';
         });
         const latEntry = DATA.latency_ranking.find(r => r.pool === c.pool);
-        html += '<td>' + (latEntry ? latEntry.avg_p99 : '-') + '</td>';
+        html += '<td class="num">' + (latEntry ? latEntry.avg_p99 : '-') + '</td>';
         html += '</tr>';
       });
       html += '</tbody>';
