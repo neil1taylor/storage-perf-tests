@@ -50,7 +50,7 @@ When data is written to a Ceph RBD (block device):
 
 1. Data is split into fixed-size objects (default 4MB)
 2. Each object is mapped to a **Placement Group (PG)**
-3. The PG is mapped to a set of OSDs using the **CRUSH** algorithm
+3. The PG is mapped to a set of OSDs using the **CRUSH** algorithm (Controlled Replication Under Scalable Hashing — Ceph's rule-based system for distributing data across disks while respecting failure domains like hosts and racks)
 4. Data is written to the primary OSD, which replicates to secondary OSDs
 
 The CRUSH algorithm ensures data is distributed evenly and can survive the failure of specific nodes or racks.
@@ -164,55 +164,12 @@ PG count directly determines I/O parallelism: each PG has a single primary OSD t
 
 Ceph's **PG autoscaler** (`pg_autoscaler` module) automatically adjusts PG counts based on pool usage. It uses two signals:
 
-- **Actual data stored** — Scales PGs based on current pool size relative to the cluster
 - **`target_size_ratio`** — A hint telling the autoscaler what fraction of total cluster capacity this pool is expected to use
+- **Actual data stored** — Scales PGs based on current pool size relative to the cluster
 
-The problem: for a newly created empty pool with no `target_size_ratio`, the autoscaler sees zero data and assigns the minimum PG count — typically **1 PG**. This is correct from a capacity perspective but catastrophic for performance.
+For a newly created empty pool with no `target_size_ratio`, the autoscaler sees zero data and assigns the minimum: **1 PG**. This is correct from a capacity perspective but catastrophic for performance — all I/O funnels through a single OSD. The OOB pools avoid this by setting `targetSizeRatio: 0.49`, which pre-allocates 256+ PGs.
 
-### Discovery: 1 PG vs 256 PGs
-
-Benchmarking revealed that `perf-test-rep2` was achieving ~6x lower IOPS than the OOB `rep3` pool backed by the same hardware. Investigation showed:
-
-| Pool | PG Count | Source |
-|------|----------|--------|
-| `ocs-storagecluster-cephblockpool` (OOB rep3) | 256 | `targetSizeRatio: 0.49` in OOB CephBlockPool CR |
-| `perf-test-rep2` (custom) | 1 | No `targetSizeRatio` set — autoscaler defaulted to minimum |
-
-With 1 PG, all I/O for the entire pool funnels through a single OSD primary, regardless of how many OSDs exist in the cluster. The other OSDs sit idle for that pool's I/O.
-
-### The Fix: `targetSizeRatio`
-
-The test suite now sets `targetSizeRatio: 0.1` on all custom pools, telling the autoscaler each pool will use ~10% of cluster capacity. This is enough to get a proper PG count allocated (typically 32-64 PGs depending on OSD count), distributing I/O across all available OSDs.
-
-Why 0.1 and not 0.49 (like the OOB pool)? The OOB pool is the only custom pool and can claim half the cluster. The test suite creates multiple custom pools (rep2, ec-2-1, ec-2-2, ec-4-2), and their ratios should sum to ≤1.0. At 0.1 each, up to 5 custom pools plus the OOB pool (0.49) sum to ~1.0.
-
-For replicated pools, `targetSizeRatio` is set as a native CRD field under `replicated:`. For erasure-coded pools, it's set via the `parameters` map (`target_size_ratio: "0.1"`) since the `erasureCoded` CRD field doesn't support it directly.
-
-### Other OOB-Aligned Settings
-
-Beyond PG count, the OOB pool has several settings that custom pools were missing:
-
-| Setting | Purpose | Impact |
-|---------|---------|--------|
-| `deviceClass: ssd` | Restricts the pool to SSD/NVMe-class OSDs only | Prevents accidental placement on HDD OSDs in mixed clusters |
-| `enableCrushUpdates: true` | Allows Rook to update CRUSH rules when topology changes | Required for automatic rebalancing after node add/remove |
-| `enableRBDStats: true` | Enables per-image I/O statistics collection | Enables monitoring via `rbd perf image iostat` |
-
-### Checking PG Counts
-
-To verify PG counts after pool creation, exec into the Ceph tools pod:
-
-```bash
-# Check PG autoscaler status for all pools
-oc exec -n openshift-storage $(oc get pods -n openshift-storage \
-  -l app=rook-ceph-tools -o name) -- ceph osd pool autoscale-status
-
-# Detailed pool info including PG count
-oc exec -n openshift-storage $(oc get pods -n openshift-storage \
-  -l app=rook-ceph-tools -o name) -- ceph osd pool ls detail
-```
-
-The `autoscale-status` output shows current PG count, target PG count, and whether the autoscaler plans to scale up. After setting `targetSizeRatio`, PG count should converge within a few minutes. The `01-setup-storage-pools.sh` script calls `wait_for_pg_convergence()` to block until PG counts stabilize before benchmarking begins.
+Custom pools must set `targetSizeRatio` to avoid this bottleneck. For a complete explanation of the autoscaler formula, threshold behaviour, ratio normalization, and impact modelling, see the [CephBlockPool Setup Guide](../guides/ceph-pool-setup.md#understanding-pg-autoscaling).
 
 ## RBD (RADOS Block Device)
 
@@ -269,61 +226,9 @@ See the [VSI Storage Testing Guide — resourceProfile](../guides/vsi-storage-te
 
 ### CephBlockPool Custom Resource
 
-The test suite creates custom CephBlockPools via `01-setup-storage-pools.sh`:
+The test suite creates custom CephBlockPools via `01-setup-storage-pools.sh`. Custom pools must match the OOB pool's settings (`deviceClass`, `enableCrushUpdates`, `enableRBDStats`, `targetSizeRatio`) to avoid performance pitfalls. Each pool gets a corresponding StorageClass with VM-optimized RBD image features (`exclusive-lock`, `object-map`, `fast-diff`, etc.).
 
-```yaml
-apiVersion: ceph.rook.io/v1
-kind: CephBlockPool
-metadata:
-  name: perf-test-rep2
-  namespace: openshift-storage
-spec:
-  failureDomain: host
-  deviceClass: ssd
-  enableCrushUpdates: true
-  enableRBDStats: true
-  replicated:
-    size: 2
-    requireSafeReplicaSize: true
-    targetSizeRatio: 0.1
-```
-
-For erasure-coded pools (note: `targetSizeRatio` goes in the `parameters` map since the `erasureCoded` CRD field doesn't support it natively):
-
-```yaml
-apiVersion: ceph.rook.io/v1
-kind: CephBlockPool
-metadata:
-  name: perf-test-ec-4-2
-  namespace: openshift-storage
-spec:
-  failureDomain: host
-  deviceClass: ssd
-  enableCrushUpdates: true
-  enableRBDStats: true
-  parameters:
-    target_size_ratio: "0.1"
-  erasureCoded:
-    dataChunks: 4
-    codingChunks: 2
-```
-
-Each pool gets a corresponding StorageClass with the `perf-test-sc-` prefix. All custom StorageClasses are created with VM-optimized RBD image features:
-
-```yaml
-imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff
-mapOptions: krbd:rxbounce
-```
-
-These match the ODF out-of-box virtualization StorageClass (`ocs-storagecluster-ceph-rbd-virtualization`). The key features:
-
-- **exclusive-lock** — Enables write-back caching and single-writer optimizations. This is the biggest performance driver; without it, write IOPS can be up to 7x worse.
-- **object-map** — Bitmap tracking allocated objects, speeds up sparse image operations.
-- **fast-diff** — Speeds up DataVolume clone operations (built on object-map).
-- **deep-flatten** — Allows fully independent clones after flattening.
-- **rxbounce** — Correctness fix for guest OS CRC errors with kernel-space RBD (`krbd`). Adds trivial overhead.
-
-> **Note:** StorageClass parameters are immutable in Kubernetes. If you need to change these features on an existing SC, you must delete and recreate it (`oc delete sc <name>`, then re-run `01-setup-storage-pools.sh`).
+For step-by-step pool creation instructions, correct YAML examples, and a detailed explanation of each setting, see the [CephBlockPool Setup Guide](../guides/ceph-pool-setup.md).
 
 ## Monitoring Ceph Health
 
@@ -342,6 +247,7 @@ oc exec -n openshift-storage $(oc get pods -n openshift-storage -l app=rook-ceph
 
 ## Next Steps
 
+- [CephBlockPool Setup Guide](../guides/ceph-pool-setup.md) — Step-by-step pool creation, correct settings, PG autoscaler deep dive
 - [Erasure Coding Explained](erasure-coding-explained.md) — Deep dive into EC vs replication
 - [Storage in Kubernetes](storage-in-kubernetes.md) — How PVCs connect to Ceph pools
 - [Understanding Results](../guides/understanding-results.md) — How pool type affects benchmark numbers

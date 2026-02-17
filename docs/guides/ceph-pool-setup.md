@@ -89,6 +89,8 @@ spec:
 
 The `targetSizeRatio` is the most critical setting here. It controls how Ceph distributes I/O across your disks. Without it, your pool gets catastrophically bad performance — this is explained fully in [Understanding PG Autoscaling](#understanding-pg-autoscaling), but in short: 0.1 is the right value for a custom pool alongside the OOB pools.
 
+**Naming convention:** This guide uses `my-custom-pool` as a placeholder name. The test suite uses a `perf-test-` prefix (e.g., `perf-test-rep2`, `perf-test-ec-2-1`). Choose whatever naming fits your project — just keep it consistent between pool and StorageClass names.
+
 Apply it:
 
 ```bash
@@ -194,14 +196,18 @@ You should see `PG_NUM` climb from 1 through powers of 2 (1 → 2 → 4 → 8 �
 ```bash
 # 1. Pool is Ready
 oc get cephblockpool my-custom-pool -n openshift-storage -o jsonpath='{.status.phase}'
-# Should print: Ready
+# Expected output: Ready
 
 # 2. PG count is reasonable (not stuck at 1)
 oc exec -n openshift-storage ${TOOLS_POD} -- ceph osd pool autoscale-status | grep my-custom
-# PG_NUM should be 32+ for a 0.1 ratio
+# Expected: PG_NUM should be 32+ for a 0.1 ratio on a 24-OSD cluster.
+# Example output (columns: POOL, SIZE, TARGET SIZE, RATE, RAW CAPACITY, RATIO, TARGET RATIO, EFFECTIVE RATIO, BIAS, PG_NUM, NEW PG_NUM, AUTOSCALE, BULK):
+#   my-custom-pool   0       0.0   2.0   71577G  0.0000  0.1000  0.0926  1.0  64  -  on  False
+# If PG_NUM shows 1, targetSizeRatio was not set correctly.
 
 # 3. StorageClass exists
 oc get sc my-custom-sc
+# Expected: should list the SC with provisioner openshift-storage.rbd.csi.ceph.com
 
 # 4. Test PVC creation
 cat <<EOF | oc apply -f -
@@ -219,6 +225,7 @@ EOF
 
 # Should reach Bound within ~30 seconds
 oc get pvc test-my-custom-pool -w
+# Expected: STATUS transitions from Pending → Bound
 
 # Clean up
 oc delete pvc test-my-custom-pool

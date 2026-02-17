@@ -2,6 +2,8 @@
 
 This guide covers how OpenShift Data Foundation (ODF) encrypts data at rest on IBM Cloud ROKS clusters, how it integrates with IBM Key Protect, and the setup required to use encrypted StorageClasses.
 
+> **Prerequisite:** If you're creating custom CephBlockPools, read the [CephBlockPool Setup Guide](ceph-pool-setup.md) first for correct pool configuration (`targetSizeRatio`, `deviceClass`, etc.).
+
 ## Encryption Layers Overview
 
 Data at rest on a ROKS bare metal cluster can be encrypted at multiple layers. These layers are independent and cumulative:
@@ -157,8 +159,6 @@ ODF creates encrypted StorageClasses automatically when `encryption.storageClass
 | `ocs-storagecluster-ceph-rbd` | `ocs-storagecluster-cephblockpool` | No | Default rep3 |
 | `ocs-storagecluster-ceph-rbd-encrypted` | `ocs-storagecluster-cephblockpool` | Yes | Same pool, LUKS2 layer added |
 | `ocs-storagecluster-ceph-rbd-virtualization` | `ocs-storagecluster-cephblockpool` | No | Default for VMs (Block mode, RWX) |
-| `nrt-2-rbd` | `nrt-2` | No | Custom pool |
-| `nrt-2-rbd-encrypted` | `nrt-2` | Yes | Custom pool, encrypted |
 
 Note that the encrypted and non-encrypted variants use the **same underlying Ceph pool**. The LUKS2 layer is applied at the node level by the CSI driver, not within Ceph itself. This means pool-level metrics (IOPS, throughput from Ceph's perspective) are unaffected — the overhead shows up as CPU usage on the worker node.
 

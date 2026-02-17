@@ -72,6 +72,8 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **ODF (OpenShift Data Foundation)** — Red Hat's storage solution for OpenShift, built on Ceph (via Rook). Provides block, file, and object storage. See [Ceph and ODF](concepts/ceph-and-odf.md).
 
+**OOB (Out-of-Box)** — Resources created automatically by the ODF operator during installation. The OOB pools are `ocs-storagecluster-cephblockpool` (RBD) and `ocs-storagecluster-cephfilesystem-data0` (CephFS), each with `targetSizeRatio: 0.49`. OOB StorageClasses include `ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-ceph-rbd-virtualization`, and `ocs-storagecluster-ceph-rbd-encrypted`. See [CephBlockPool Setup](guides/ceph-pool-setup.md).
+
 **Operator** — A Kubernetes pattern for automating application lifecycle management. ODF and OpenShift Virtualization are both installed as operators. See [OpenShift Overview](concepts/openshift-overview.md).
 
 **OSD (Object Storage Daemon)** — The Ceph daemon responsible for storing data on a physical disk. Each NVMe drive in the cluster typically runs one OSD. See [Ceph and ODF](concepts/ceph-and-odf.md).
@@ -87,6 +89,12 @@ Quick-reference for terms used throughout this project and its documentation.
 **Ramp Time** — A warmup period before fio starts recording metrics. Allows caches and I/O queues to reach steady state. Default: 10 seconds.
 
 **RBD (RADOS Block Device)** — Ceph's block storage interface. Provides virtual block devices backed by RADOS objects. Used by ODF to fulfill PVCs. See [Ceph and ODF](concepts/ceph-and-odf.md).
+
+**RBD Image** — A single virtual block device within an RBD pool. Each PVC backed by an ODF StorageClass is one RBD image. Images are thin-provisioned, support snapshots and clones, and their data is striped across RADOS objects distributed via PGs. Features like `exclusive-lock` and `object-map` are set per image at creation time via the StorageClass `imageFeatures` parameter.
+
+**rep3-enc** — A test suite pool name that maps to the `ocs-storagecluster-ceph-rbd-encrypted` StorageClass. Uses the same OOB CephBlockPool as `rep3` but adds per-volume LUKS2 encryption via IBM Key Protect. Comparing `rep3` vs `rep3-enc` isolates the CPU overhead of encryption. See [Configuration Reference](guides/configuration-reference.md#the-three-rep3-variants) and [Encrypted Storage Setup](guides/encrypted-storage-setup.md).
+
+**rep3-virt** — A test suite pool name that maps to the `ocs-storagecluster-ceph-rbd-virtualization` StorageClass. Uses the same OOB CephBlockPool as `rep3` but enables VM-optimized RBD image features (`exclusive-lock`, `object-map`, `fast-diff`, `krbd:rxbounce`). Comparing `rep3` vs `rep3-virt` isolates the impact of these features (up to 7x write IOPS improvement). See [Configuration Reference](guides/configuration-reference.md#the-three-rep3-variants).
 
 **ROKS (Red Hat OpenShift on IBM Cloud)** — IBM's managed OpenShift service. This project runs on ROKS with bare metal bx3d workers that have local NVMe drives for ODF. See [OpenShift Overview](concepts/openshift-overview.md).
 

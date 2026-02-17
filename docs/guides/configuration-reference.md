@@ -108,6 +108,22 @@ Each entry is formatted as `name:type:params`:
 
 Pools requiring more OSD hosts than the cluster has are automatically skipped by `01-setup-storage-pools.sh`.
 
+### The Three rep3 Variants
+
+`rep3`, `rep3-virt`, and `rep3-enc` all use the **same underlying CephBlockPool** (`ocs-storagecluster-cephblockpool`) — no custom pool is created for any of them. They differ only in which OOB **StorageClass** they use:
+
+| Pool Name | StorageClass | What's Different |
+|-----------|-------------|-----------------|
+| `rep3` | `ocs-storagecluster-ceph-rbd` | Default ODF SC. Uses basic RBD image features. |
+| `rep3-virt` | `ocs-storagecluster-ceph-rbd-virtualization` | VM-optimized SC. Adds `exclusive-lock`, `object-map`, `fast-diff`, and `krbd:rxbounce` for better write performance and faster cloning. |
+| `rep3-enc` | `ocs-storagecluster-ceph-rbd-encrypted` | Encrypted SC. Adds a LUKS2 encryption layer via IBM Key Protect. Same pool, but each volume is encrypted at the node level. See [Encrypted Storage Setup](encrypted-storage-setup.md). |
+
+This mapping is handled by `get_storage_class_for_pool()` in `lib/vm-helpers.sh`.
+
+**Why test all three?** They isolate the performance impact of StorageClass-level features while holding the pool constant:
+- **rep3 vs rep3-virt** quantifies the benefit of `exclusive-lock` and other VM-optimized image features (up to 7x write IOPS difference)
+- **rep3 vs rep3-enc** quantifies the CPU overhead of per-volume LUKS2 encryption
+
 ```bash
 export ODF_DEFAULT_SC="ocs-storagecluster-ceph-rbd"
 ```

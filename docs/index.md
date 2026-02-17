@@ -7,6 +7,7 @@ This documentation covers everything you need to understand, run, and interpret 
 ## Who Is This For?
 
 - **New to Kubernetes/OpenShift?** Start with the [Concepts](#concepts) section.
+- **Want to create a custom Ceph pool?** See the [CephBlockPool Setup Guide](guides/ceph-pool-setup.md).
 - **Ready to run tests?** Jump to the [Guides](#guides) section.
 - **Want to understand the code?** See the [Architecture](#architecture) section.
 - **Looking up a term?** Check the [Glossary](glossary.md).
@@ -22,9 +23,10 @@ If you're new to the technology stack, we recommend reading in this order:
 5. [Erasure Coding Explained](concepts/erasure-coding-explained.md) — EC vs replication
 6. [OpenShift Virtualization](concepts/openshift-virtualization.md) — Running VMs on Kubernetes
 7. [fio Benchmarking](concepts/fio-benchmarking.md) — The I/O testing tool
-8. [Prerequisites](guides/prerequisites.md) — Setting up your environment
-9. [Running Tests](guides/running-tests.md) — Step-by-step walkthrough
-10. [Understanding Results](guides/understanding-results.md) — Reading the output
+8. [CephBlockPool Setup](guides/ceph-pool-setup.md) — Creating custom pools (practical, hands-on)
+9. [Prerequisites](guides/prerequisites.md) — Setting up your environment
+10. [Running Tests](guides/running-tests.md) — Step-by-step walkthrough
+11. [Understanding Results](guides/understanding-results.md) — Reading the output
 
 ## Concepts
 
