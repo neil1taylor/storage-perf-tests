@@ -118,29 +118,28 @@ main() {
     done
   fi
 
-  # 3. Delete test CephBlockPools and StorageClasses
+  # 3. Delete test CephBlockPools, CephFilesystems, and StorageClasses
   if [[ "${CLEANUP_POOLS}" == true ]]; then
-    log_info "Deleting test CephBlockPools and StorageClasses..."
+    log_info "Deleting test CephBlockPools, CephFilesystems, and StorageClasses..."
 
     for pool_def in "${ODF_POOLS[@]}"; do
-      local name
-      name=$(echo "${pool_def}" | cut -d: -f1)
+      IFS=':' read -r name type _ <<< "${pool_def}"
 
-      # Skip the default rep3 pool — don't delete it
+      # Skip pools that use existing out-of-box StorageClasses
       if [[ "${name}" == "rep3" ]]; then
         log_info "  Skipping default rep3 pool"
         continue
       fi
-
-      # Skip rep3-virt — uses existing ODF virtualization SC
       if [[ "${name}" == "rep3-virt" ]]; then
         log_info "  Skipping default rep3-virt pool"
         continue
       fi
-
-      # Skip rep3-enc — uses existing ODF encrypted SC
       if [[ "${name}" == "rep3-enc" ]]; then
         log_info "  Skipping default rep3-enc pool"
+        continue
+      fi
+      if [[ "${name}" == "cephfs-rep3" ]]; then
+        log_info "  Skipping default cephfs-rep3 pool"
         continue
       fi
 
@@ -150,8 +149,13 @@ main() {
       log_info "  Deleting StorageClass: ${sc_name}"
       run_cmd oc delete sc "${sc_name}" --wait=false 2>/dev/null || true
 
-      log_info "  Deleting CephBlockPool: ${pool_name}"
-      run_cmd oc delete cephblockpool "${pool_name}" -n "${ODF_NAMESPACE}" --wait=false 2>/dev/null || true
+      if [[ "${type}" == "cephfs" ]]; then
+        log_info "  Deleting CephFilesystem: ${pool_name}"
+        run_cmd oc delete cephfilesystem "${pool_name}" -n "${ODF_NAMESPACE}" --wait=false 2>/dev/null || true
+      else
+        log_info "  Deleting CephBlockPool: ${pool_name}"
+        run_cmd oc delete cephblockpool "${pool_name}" -n "${ODF_NAMESPACE}" --wait=false 2>/dev/null || true
+      fi
     done
   fi
 

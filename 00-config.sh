@@ -78,14 +78,17 @@ export CONCURRENCY_LEVELS
 
 # ---------------------------------------------------------------------------
 # ODF storage pools — name:type:params
-#   replicated  → failureDomain=host,replicated.size=N
-#   erasurecoded → failureDomain=host,erasureCoded.dataChunks=K,codingChunks=M
+#   replicated   → failureDomain=host,replicated.size=N
+#   erasurecoded  → failureDomain=host,erasureCoded.dataChunks=K,codingChunks=M
+#   cephfs        → CephFilesystem with data_replica_count=N (metadata pool always size=3)
 # ---------------------------------------------------------------------------
 declare -a ODF_POOLS=(
   "rep3:replicated:3"
   "rep3-virt:replicated:3"
   "rep3-enc:replicated:3"
+  "cephfs-rep3:cephfs:3"
   "rep2:replicated:2"
+  "cephfs-rep2:cephfs:2"
   "ec-2-1:erasurecoded:2:1"
   "ec-3-1:erasurecoded:3:1"
   "ec-2-2:erasurecoded:2:2"
@@ -95,6 +98,12 @@ export ODF_POOLS
 
 # Default ODF StorageClass (ROKS out-of-box, rep=3)
 export ODF_DEFAULT_SC="ocs-storagecluster-ceph-rbd"
+
+# Default ODF CephFS StorageClass (ROKS out-of-box)
+export ODF_DEFAULT_CEPHFS_SC="ocs-storagecluster-cephfs"
+
+# MDS readiness timeout for custom CephFilesystem creation (seconds)
+export MDS_READY_TIMEOUT="${MDS_READY_TIMEOUT:-300}"
 
 # ---------------------------------------------------------------------------
 # IBM Cloud File CSI — StorageClass profiles to test

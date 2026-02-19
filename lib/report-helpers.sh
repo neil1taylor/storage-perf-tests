@@ -138,6 +138,8 @@ MDEOF
     IFS=':' read -r name type p1 p2 <<< "${pool_def}"
     if [[ "${type}" == "replicated" ]]; then
       echo "| ${name} | Replicated | size=${p1} |" >> "${output_md}"
+    elif [[ "${type}" == "cephfs" ]]; then
+      echo "| ${name} | CephFS Replicated | data_size=${p1}, metadata_size=3 |" >> "${output_md}"
     else
       echo "| ${name} | Erasure Coded | k=${p1}, m=${p2} |" >> "${output_md}"
     fi
@@ -655,6 +657,22 @@ for dim_id, wk_key, metric_fn, higher_better, weight in dimensions:
             normalized = (best / v) * 100 if v > 0 else 0
         raw_scores[p][dim_id] = round(normalized, 1)
 
+# Adjust p99_lat scores by IOPS ratio to prevent low-throughput pools
+# from getting an unfair latency advantage
+iops_key = 'random-rw/4k'
+iops_fn = lambda g: g['read_iops'] + g['write_iops']
+iops_vals = {}
+for p in pool_names:
+    if iops_key in pools[p]:
+        iops_vals[p] = iops_fn(pools[p][iops_key])
+if iops_vals:
+    best_iops = max(iops_vals.values())
+    if best_iops > 0:
+        for p in pool_names:
+            if 'p99_lat' in raw_scores[p] and p in iops_vals:
+                iops_ratio = iops_vals[p] / best_iops
+                raw_scores[p]['p99_lat'] = round(raw_scores[p]['p99_lat'] * iops_ratio, 1)
+
 composite = []
 for p in pool_names:
     scores = raw_scores[p]
@@ -702,6 +720,9 @@ def classify_pool(name):
         else:
             vsan = 'No direct equivalent (FTT=' + str(c) + ')'
         return ('ODF Erasure Coded ' + str(k) + '+' + str(c), 'Ceph RBD with erasure coding (' + str(k) + ' data + ' + str(c) + ' coding chunks). Better space efficiency than replication.', vsan, ratio)
+    if re.match(r'^cephfs-rep(\d+)$', name):
+        n = int(re.match(r'^cephfs-rep(\d+)$', name).group(1))
+        return ('ODF CephFS Replicated ' + str(n) + '-way', 'Ceph Filesystem with ' + str(n) + 'x replicated data pool. Uses file-on-filesystem indirection in KubeVirt.', 'vSAN File Service (RAID-1, FTT=' + str(n-1) + ')', str(n) + 'x (data) + 3x (metadata)')
     if 'vpc-file' in name:
         tier = re.search(r'(\d+)-iops', name)
         tier_str = tier.group(1) + ' IOPS tier' if tier else 'min-IOPS (auto-scaled)'
@@ -845,16 +866,16 @@ RANK_HTML_EOF
       html += '<p>This report ranks <strong>' + pools + ' StorageClasses</strong> by running the same set of I/O benchmarks against each one under identical conditions, then combining the results into a single composite score. The goal is to answer: <em>which StorageClass gives the best overall performance for VM workloads on this cluster?</em></p>';
       html += '<p><strong>What was tested:</strong> Each StorageClass was provisioned as a ' + (cfg.pvc_size || '150Gi') + ' data disk attached to a ' + (cfg.vm_size || 'small') + ' VM (2 vCPU, 4 GiB RAM). Three fio benchmarks were run on each disk:</p>';
       html += '<ul style="margin:0.3rem 0 0.7rem 1.5rem">';
-      html += '<li><strong>Random 4k Read/Write</strong> — measures how many small I/O operations per second the storage can handle (IOPS). This is what matters for databases and general VM activity.</li>';
-      html += '<li><strong>Sequential 1M Read/Write</strong> — measures raw data transfer speed (throughput in MiB/s). This is what matters for backups, large file copies, and data pipelines.</li>';
-      html += '<li><strong>Mixed 70/30 Read/Write at 4k</strong> — a realistic blend of 70% reads and 30% writes that simulates everyday application workloads like web servers and file shares.</li>';
+      html += '<li><strong>Random 4k IOPS</strong> — measures how many small I/O operations per second the storage can handle (IOPS). This is what matters for databases and general VM activity.</li>';
+      html += '<li><strong>Sequential 1M Throughput</strong> — measures raw data transfer speed (throughput in MiB/s). This is what matters for backups, large file copies, and data pipelines.</li>';
+      html += '<li><strong>Mixed 70/30 4k IOPS</strong> — a realistic blend of 70% reads and 30% writes that simulates everyday application workloads like web servers and file shares.</li>';
       html += '</ul>';
       html += '<p><strong>How scoring works:</strong> Each StorageClass is scored 0-100 on each workload (100 = best performer). These are combined into a weighted composite score:</p>';
       html += '<dl class="detail-grid">';
-      html += '<dt>Random IOPS</dt><dd>40% weight — most impactful for general VM performance</dd>';
-      html += '<dt>Sequential throughput</dt><dd>30% weight — important for data-heavy workloads</dd>';
-      html += '<dt>Mixed IOPS</dt><dd>20% weight — reflects real-world application patterns</dd>';
-      html += '<dt>p99 latency (lower is better)</dt><dd>10% weight — tail latency from random 4k I/O</dd>';
+      html += '<dt>Random 4k IOPS</dt><dd>40% weight — most impactful for general VM performance</dd>';
+      html += '<dt>Sequential 1M throughput</dt><dd>30% weight — important for data-heavy workloads</dd>';
+      html += '<dt>Mixed 70/30 IOPS</dt><dd>20% weight — reflects real-world application patterns</dd>';
+      html += '<dt>p99 latency (lower is better)</dt><dd>10% weight — tail latency from random 4k I/O, weighted by throughput so pools doing fewer IOPS don\'t get an unfair advantage</dd>';
       html += '</dl>';
       html += '<p style="margin-top:0.5rem"><strong>Test parameters:</strong> Each benchmark ran for 60 seconds with a 10-second warmup, using direct I/O (O_DIRECT, bypassing OS cache), I/O depth of 32, and 4 parallel worker threads per job. All tests used a single VM with concurrency of ' + (cfg.concurrency || '1') + '.</p>';
       document.getElementById('methodology').innerHTML = html;
@@ -875,9 +896,10 @@ RANK_HTML_EOF
     // Workload info table
     (function() {
       const workloads = [
-        { name: 'Random Read/Write', bs: '4k', desc: 'Small-block random I/O — measures IOPS capacity. Typical of databases and VM disk activity.' },
-        { name: 'Sequential Read/Write', bs: '1M', desc: 'Large-block sequential I/O — measures bandwidth/throughput. Typical of backups and bulk data transfer.' },
-        { name: 'Mixed 70/30', bs: '4k', desc: '70% reads / 30% writes — simulates typical application workloads like web apps and file servers.' },
+        { name: 'Random 4k IOPS', bs: '4k', desc: 'Small-block random I/O — measures IOPS capacity. Typical of databases and VM disk activity.' },
+        { name: 'Sequential 1M Throughput', bs: '1M', desc: 'Large-block sequential I/O — measures bandwidth/throughput. Typical of backups and bulk data transfer.' },
+        { name: 'Mixed 70/30 4k IOPS', bs: '4k', desc: '70% reads / 30% writes — simulates typical application workloads like web apps and file servers.' },
+        { name: 'p99 Tail Latency', bs: '4k', desc: 'Derived from the Random 4k test. The 99th percentile I/O response time — 99% of operations complete faster than this. Lower is better. Measures worst-case storage responsiveness.' },
       ];
       let html = '<thead><tr><th>Workload</th><th>Block Size</th><th>What It Measures</th></tr></thead><tbody>';
       workloads.forEach(w => {
@@ -891,9 +913,9 @@ RANK_HTML_EOF
     (function() {
       const comp = DATA.composite;
       let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th class="num">Composite Score</th>';
-      html += '<th class="num">Random IOPS<span class="weight-badge">40%</span></th>';
-      html += '<th class="num">Sequential BW<span class="weight-badge">30%</span></th>';
-      html += '<th class="num">Mixed IOPS<span class="weight-badge">20%</span></th>';
+      html += '<th class="num">Random 4k IOPS<span class="weight-badge">40%</span></th>';
+      html += '<th class="num">Sequential 1M BW<span class="weight-badge">30%</span></th>';
+      html += '<th class="num">Mixed 70/30 IOPS<span class="weight-badge">20%</span></th>';
       html += '<th class="num">p99 Latency<span class="weight-badge">10%</span></th>';
       html += '</tr></thead><tbody>';
       comp.forEach((c, i) => {

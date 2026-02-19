@@ -1,6 +1,9 @@
 # SSH keys
 ssh-keys/
 
+# Cluster provisioning env (account-specific data)
+provision/cluster.env
+
 # Test results and reports (run-specific, large)
 results/
 reports/

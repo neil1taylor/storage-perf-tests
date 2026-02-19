@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virtualization. Tests ODF (Ceph) storage pools (replicated and erasure-coded), IBM Cloud File CSI, and IBM Cloud Block CSI against a matrix of VM sizes, PVC sizes, concurrency levels, fio profiles, and block sizes. Supports both bare metal (NVMe-backed ODF) and VSI (IBM Cloud Block-backed ODF) cluster topologies with auto-detection.
+VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virtualization. Tests ODF (Ceph) storage pools (RBD replicated, RBD erasure-coded, and CephFS), IBM Cloud File CSI, and IBM Cloud Block CSI against a matrix of VM sizes, PVC sizes, concurrency levels, fio profiles, and block sizes. Supports both bare metal (NVMe-backed ODF) and VSI (IBM Cloud Block-backed ODF) cluster topologies with auto-detection.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 ./run-all.sh --quick --notify https://hooks.slack.com/...  # Notify on completion
 
 # Individual steps (sequential):
-./01-setup-storage-pools.sh        # Create CephBlockPools + StorageClasses
+./01-setup-storage-pools.sh        # Create CephBlockPools, CephFilesystems + StorageClasses
 ./02-setup-file-storage.sh         # Discover IBM Cloud File CSI StorageClasses
 ./03-setup-block-storage.sh        # Discover IBM Cloud Block CSI StorageClasses (VSI clusters)
 ./04-run-tests.sh                  # Run full test matrix (12-24 hours)
@@ -58,7 +58,7 @@ Scripts are numbered `00-07` and run sequentially. Each script sources `00-confi
 
 ### Config-Driven Design
 
-`00-config.sh` is the single source of truth for all tunables: VM sizes, PVC sizes, ODF pool definitions, fio settings, timeouts, and file paths. It validates cluster connectivity on load (`oc cluster-info`) and fails with a clear error if the CLI is not authenticated. It also auto-detects the cluster type (BM vs VSI) from worker node labels and exports `CLUSTER_TYPE`, `WORKER_FLAVOR`, `WORKER_COUNT`, and `CLUSTER_DESCRIPTION`. All values are exported as environment variables or bash arrays. Other scripts consume these via `source 00-config.sh`.
+`00-config.sh` is the single source of truth for all tunables: VM sizes, PVC sizes, ODF pool definitions (RBD replicated, RBD erasure-coded, CephFS), fio settings, timeouts, and file paths. ODF_POOLS entries use the format `name:type:params` where type is `replicated` (RBD), `erasurecoded` (RBD EC), or `cephfs` (CephFilesystem with `name:cephfs:data_replica_count`, metadata pool is always size=3). It validates cluster connectivity on load (`oc cluster-info`) and fails with a clear error if the CLI is not authenticated. It also auto-detects the cluster type (BM vs VSI) from worker node labels and exports `CLUSTER_TYPE`, `WORKER_FLAVOR`, `WORKER_COUNT`, and `CLUSTER_DESCRIPTION`. All values are exported as environment variables or bash arrays. Other scripts consume these via `source 00-config.sh`.
 
 ### Template Rendering
 
@@ -173,7 +173,7 @@ The payload includes run ID, status, duration, and cluster description. Compatib
 
 ### Storage Pool Naming
 
-ODF pools use a `perf-test-` prefix for CephBlockPools and `perf-test-sc-` for StorageClasses. The default rep3 pool reuses the existing ROKS out-of-box SC (`ocs-storagecluster-ceph-rbd`). IBM Cloud File and Block CSI SCs are used by their cluster names directly.
+ODF pools use a `perf-test-` prefix for CephBlockPools/CephFilesystems and `perf-test-sc-` for StorageClasses. The default rep3 pool reuses the existing ROKS out-of-box SC (`ocs-storagecluster-ceph-rbd`). The default CephFS pool (`cephfs-rep3`) reuses the OOB SC (`ocs-storagecluster-cephfs`). Custom CephFS pools (e.g. `cephfs-rep2`) create a `CephFilesystem` CRD named `perf-test-cephfs-rep2` with a CephFS-specific StorageClass using the `cephfs.csi.ceph.com` provisioner. IBM Cloud File and Block CSI SCs are used by their cluster names directly.
 
 ### Resource Labeling
 
@@ -191,6 +191,7 @@ This suite supports both **bare metal (BM)** and **VSI** single-zone ROKS cluste
 - **File/Block CSI deduplication:** Auto-discovery finds many StorageClasses, but `-metro-`, `-retain-`, and `-regional*` variants are filtered out by default. Metro/retain produce identical I/O performance on a single-zone cluster; regional SCs use the `rfs` profile which requires IBM support allowlisting. `FILE_CSI_DEDUP=true` and `BLOCK_CSI_DEDUP=true` (both default) enable this filtering. Set to `false` for multi-zone clusters where metro topology may affect latency, or if `rfs` has been allowlisted.
 - **PVC size minimums:** IBM Cloud File dp2 profile enforces a max ~25 IOPS/GB ratio. The 3000-IOPS SC requires ≥120Gi to provision, so the minimum PVC size in the test matrix is 150Gi.
 - **Rep2 vs Rep3 on 3-node clusters:** On a 3-worker cluster, rep3 reads can outperform rep2 reads because (a) rep3 uses the pre-tuned OOB pool while rep2 uses a freshly created pool with potentially unconverged PG autoscaler, and (b) rep3 on exactly 3 nodes gives perfectly balanced PG distribution (every OSD holds all PGs) while rep2 creates uneven primary OSD pairing. Rep2 should outperform rep3 for writes (2 replica acks vs 3). The `01-setup-storage-pools.sh` script waits for PG autoscaler convergence to minimize the first factor.
+- **CephFS pools:** CephFS provides POSIX-compatible shared filesystem storage backed by Ceph. `cephfs-rep3` uses the OOB `ocs-storagecluster-cephfs` SC; `cephfs-rep2` creates a custom `CephFilesystem` CRD with a 2-replica data pool (metadata pool is always 3-replica for safety). CephFS PVCs use `volumeMode: Filesystem`; in KubeVirt this means file-on-filesystem indirection (KubeVirt creates a `disk.img` on the CephFS mount), so CephFS performance is expected to be lower than RBD due to MDS overhead and the extra indirection layer. Custom CephFilesystem creation requires MDS pod initialization (up to `MDS_READY_TIMEOUT=300s`). Some ODF versions limit to one CephFilesystem per cluster — if `cephfs-rep2` creation fails, it's caught and logged; `cephfs-rep3` OOB still works. CephFS StorageClasses use different secrets (`rook-csi-cephfs-provisioner`/`rook-csi-cephfs-node`) and do not use RBD-specific parameters (`imageFeatures`, `mapOptions`).
 - **PG autoscaler and `targetSizeRatio`:** Custom pools now set `targetSizeRatio: 0.1` (replicated) or `parameters.target_size_ratio: "0.1"` (EC) to ensure the PG autoscaler allocates a proper PG count. Without this, a newly created empty pool gets 1 PG, funneling all I/O through a single OSD primary (~6x bottleneck vs the OOB pool's 256 PGs). The OOB pool's `targetSizeRatio: 0.49` is too aggressive for multiple custom pools, so 0.1 is used (sum of all pools stays ≤1.0). Custom pools also now set `deviceClass: ssd`, `enableCrushUpdates: true`, and `enableRBDStats: true` to match OOB pool settings.
 
 ## Conventions

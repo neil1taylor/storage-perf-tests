@@ -476,6 +476,16 @@ run_single_pool() {
       echo "0 0 0 ${pool_total_tests}" > "${RESULTS_DIR}/${pool_name}/.pool-summary"
       return 0
     fi
+  elif oc get cephfilesystem "${odf_pool_name}" -n "${ODF_NAMESPACE}" &>/dev/null; then
+    local fs_phase
+    fs_phase=$(oc get cephfilesystem "${odf_pool_name}" -n "${ODF_NAMESPACE}" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || echo "unknown")
+    if [[ "${fs_phase}" != "Ready" ]]; then
+      log_warn "[${pool_name}] CephFilesystem ${odf_pool_name} is not Ready (phase=${fs_phase}) — skipping pool"
+      mkdir -p "${RESULTS_DIR}/${pool_name}"
+      echo "0 0 0 ${pool_total_tests}" > "${RESULTS_DIR}/${pool_name}/.pool-summary"
+      return 0
+    fi
   fi
 
   for vm_size_def in "${VM_SIZES[@]}"; do

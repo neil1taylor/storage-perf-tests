@@ -73,6 +73,119 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Create (or verify) a CephFS StorageClass for a given CephFilesystem
+# Idempotent: skips if the SC already exists (SC parameters are immutable).
+# ---------------------------------------------------------------------------
+ensure_cephfs_storage_class() {
+  local pool_name="$1"
+  local fs_name="perf-test-${pool_name}"
+  local sc_name="perf-test-sc-${pool_name}"
+
+  if oc get sc "${sc_name}" &>/dev/null; then
+    log_info "StorageClass ${sc_name} already exists — skipping"
+    return 0
+  fi
+
+  log_info "Creating CephFS StorageClass: ${sc_name}"
+
+  # Get clusterID from existing OOB CephFS SC, falling back to RBD SC
+  local cluster_id
+  cluster_id=$(oc get sc "${ODF_DEFAULT_CEPHFS_SC}" -o jsonpath='{.parameters.clusterID}' 2>/dev/null || \
+    oc get sc "${ODF_DEFAULT_SC}" -o jsonpath='{.parameters.clusterID}' 2>/dev/null || echo "openshift-storage")
+
+  cat <<EOF | oc apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ${sc_name}
+provisioner: openshift-storage.cephfs.csi.ceph.com
+parameters:
+  clusterID: ${cluster_id}
+  fsName: ${fs_name}
+  pool: ${fs_name}-data0
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: ${ODF_NAMESPACE}
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: ${ODF_NAMESPACE}
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node
+  csi.storage.k8s.io/node-stage-secret-namespace: ${ODF_NAMESPACE}
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate
+EOF
+
+  log_info "StorageClass ${sc_name} created"
+}
+
+# ---------------------------------------------------------------------------
+# Create a CephFilesystem + StorageClass for a CephFS pool configuration
+# ---------------------------------------------------------------------------
+create_ceph_filesystem() {
+  local pool_name="$1"
+  local data_replica_size="$2"
+  local fs_name="perf-test-${pool_name}"
+
+  log_info "Creating CephFilesystem: ${fs_name} (data replicas=${data_replica_size}, metadata replicas=3)"
+
+  cat <<EOF | oc apply -f -
+apiVersion: ceph.rook.io/v1
+kind: CephFilesystem
+metadata:
+  name: ${fs_name}
+  namespace: ${ODF_NAMESPACE}
+spec:
+  metadataPool:
+    replicated:
+      size: 3
+      requireSafeReplicaSize: true
+    deviceClass: ssd
+  dataPools:
+    - name: data0
+      failureDomain: host
+      deviceClass: ssd
+      replicated:
+        size: ${data_replica_size}
+        requireSafeReplicaSize: true
+        targetSizeRatio: 0.1
+  preserveFilesystemOnDelete: false
+  metadataServer:
+    activeCount: 1
+    activeStandby: true
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+      limits:
+        memory: 4Gi
+EOF
+
+  # Wait for CephFilesystem to become Ready (MDS initialization)
+  log_info "Waiting for CephFilesystem ${fs_name} to become Ready (timeout=${MDS_READY_TIMEOUT}s)..."
+  local retries=$(( MDS_READY_TIMEOUT / 10 ))
+  for ((i=1; i<=retries; i++)); do
+    local phase
+    phase=$(oc get cephfilesystem "${fs_name}" -n "${ODF_NAMESPACE}" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || echo "unknown")
+    if [[ "${phase}" == "Ready" ]]; then
+      log_info "CephFilesystem ${fs_name} is Ready"
+      break
+    fi
+    if [[ "${phase}" == "Failure" ]]; then
+      log_error "CephFilesystem ${fs_name} entered Failure state — some ODF versions limit to one CephFilesystem"
+      return 1
+    fi
+    if [[ $i -eq $retries ]]; then
+      log_error "CephFilesystem ${fs_name} did not become Ready within ${MDS_READY_TIMEOUT}s (last phase: ${phase})"
+      return 1
+    fi
+    sleep 10
+  done
+
+  # Create matching CephFS StorageClass
+  ensure_cephfs_storage_class "${pool_name}"
+}
+
+# ---------------------------------------------------------------------------
 # Create a CephBlockPool + StorageClass for each ODF pool configuration
 # ---------------------------------------------------------------------------
 create_ceph_block_pool() {
@@ -252,12 +365,22 @@ main() {
       fi
     fi
 
+    # Skip cephfs-rep3 — uses existing OOB CephFS SC
+    if [[ "${name}" == "cephfs-rep3" ]]; then
+      if oc get sc "${ODF_DEFAULT_CEPHFS_SC}" &>/dev/null; then
+        log_info "Skipping cephfs-rep3 — using existing default SC: ${ODF_DEFAULT_CEPHFS_SC}"
+        continue
+      fi
+    fi
+
     # Calculate minimum failure domains required
     local required_hosts=0
     if [[ "${type}" == "replicated" ]]; then
       required_hosts="${param1}"
     elif [[ "${type}" == "erasurecoded" ]]; then
       required_hosts=$(( param1 + param2 ))
+    elif [[ "${type}" == "cephfs" ]]; then
+      required_hosts="${param1}"
     fi
 
     if [[ "${required_hosts}" -gt "${osd_hosts}" ]]; then
@@ -269,6 +392,8 @@ main() {
       create_ceph_block_pool "${name}" "${type}" "${param1}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
     elif [[ "${type}" == "erasurecoded" ]]; then
       create_ceph_block_pool "${name}" "${type}" "${param1}" "${param2}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
+    elif [[ "${type}" == "cephfs" ]]; then
+      create_ceph_filesystem "${name}" "${param1}" || { log_warn "CephFilesystem ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
     fi
   done
 
@@ -279,7 +404,7 @@ main() {
     IFS=':' read -r name type param1 param2 <<< "${pool_def}"
 
     # Skip pools that use existing out-of-box StorageClasses
-    case "${name}" in rep3|rep3-virt|rep3-enc) continue ;; esac
+    case "${name}" in rep3|rep3-virt|rep3-enc|cephfs-rep3) continue ;; esac
 
     local full_pool_name="perf-test-${name}"
     local sc_name="perf-test-sc-${name}"
@@ -289,14 +414,26 @@ main() {
       continue
     fi
     local phase
-    phase=$(oc get cephblockpool "${full_pool_name}" -n "${ODF_NAMESPACE}" \
-      -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    if [[ "${type}" == "cephfs" ]]; then
+      phase=$(oc get cephfilesystem "${full_pool_name}" -n "${ODF_NAMESPACE}" \
+        -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    else
+      phase=$(oc get cephblockpool "${full_pool_name}" -n "${ODF_NAMESPACE}" \
+        -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+    fi
     if [[ "${phase}" == "Ready" ]]; then
       log_info "Pool ${full_pool_name} is Ready but SC ${sc_name} is missing — creating now"
-      ensure_storage_class "${name}" "${type}" || {
-        log_warn "Failed to create StorageClass ${sc_name} during reconciliation"
-        pool_failures=$((pool_failures + 1))
-      }
+      if [[ "${type}" == "cephfs" ]]; then
+        ensure_cephfs_storage_class "${name}" || {
+          log_warn "Failed to create StorageClass ${sc_name} during reconciliation"
+          pool_failures=$((pool_failures + 1))
+        }
+      else
+        ensure_storage_class "${name}" "${type}" || {
+          log_warn "Failed to create StorageClass ${sc_name} during reconciliation"
+          pool_failures=$((pool_failures + 1))
+        }
+      fi
     fi
   done
 
@@ -305,7 +442,7 @@ main() {
 
   log_info "=== ODF storage pool setup complete ==="
   log_info "StorageClasses available:"
-  oc get sc | grep -E "(perf-test-sc|${ODF_DEFAULT_SC})" || true
+  oc get sc | grep -E "(perf-test-sc|${ODF_DEFAULT_SC}|${ODF_DEFAULT_CEPHFS_SC})" || true
 
   if [[ ${pool_failures} -gt 0 ]]; then
     log_warn "${pool_failures} pool(s) failed to create — check logs above"

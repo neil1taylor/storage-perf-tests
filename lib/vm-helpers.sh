@@ -77,6 +77,8 @@ get_storage_class_for_pool() {
     echo "ocs-storagecluster-ceph-rbd-virtualization"
   elif [[ "${pool_name}" == "rep3-enc" ]]; then
     echo "ocs-storagecluster-ceph-rbd-encrypted"
+  elif [[ "${pool_name}" == "cephfs-rep3" ]]; then
+    echo "${ODF_DEFAULT_CEPHFS_SC}"
   elif [[ "${pool_name}" == *vpc-block* ]]; then
     # IBM Cloud Block — SC name is the pool name itself
     echo "${pool_name}"

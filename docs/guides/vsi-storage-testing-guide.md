@@ -386,6 +386,63 @@ resourceProfile: performance                            # Full Ceph resource all
 
 With these settings on a 3-worker cluster: 3 OSDs × 10,240 IOPS = 30,720 aggregate IOPS, 3 TiB raw capacity (1 TiB usable with rep3).
 
+## Enterprise Deployment Recommendations
+
+The sections above cover individual parameters and their tradeoffs. This section consolidates that into prescriptive configurations for enterprise clusters running ODF with OpenShift Virtualization on VSI.
+
+### Recommended Configurations
+
+| Tier | Workers | Profile | OSDs | OSD Size | Resource Profile | Aggregate IOPS | Storage BW | Pool Coverage |
+|------|---------|---------|------|----------|-----------------|----------------|------------|---------------|
+| **Standard** | 3 | `bx3d-32x160` | `numOfOsd=1` | 1 TiB | performance | 30,720 | 48 Gbps | rep2, rep3, ec-2-1, cephfs |
+| **Full pool coverage** | 6 | `bx3d-32x160` | `numOfOsd=1` | 1 TiB | performance | 61,440 | 96 Gbps | All pools including ec-4-2 |
+| **Maximum throughput** | 6 | `bx2-48x192` | `numOfOsd=2` | 2 TiB | performance | 245,760 | 120 Gbps | All pools, highest aggregate IOPS/BW |
+
+**Standard** is sufficient for most production workloads and the full test matrix at concurrency ≤ 5. **Full pool coverage** adds the 3 extra workers needed for ec-2-2 (4 hosts) and ec-4-2 (6 hosts) while doubling aggregate performance. **Maximum throughput** uses 48-vCPU workers with 2 OSDs each for the highest per-node IOPS ceiling — suited for high-concurrency testing or large VM fleets.
+
+### Worker Count and Pool Coverage
+
+EC pools require k+m unique failure domains (`failureDomain: host`). The table below shows which pool configurations are available at each cluster size:
+
+| Pool | Type | Min Workers | 3 Workers | 4 Workers | 6 Workers |
+|------|------|-------------|-----------|-----------|-----------|
+| rep2 | RBD replicated (2 replicas) | 2 | Yes | Yes | Yes |
+| rep3 | RBD replicated (3 replicas) | 3 | Yes | Yes | Yes |
+| ec-2-1 | RBD erasure-coded (k=2, m=1) | 3 | Yes | Yes | Yes |
+| cephfs-rep2 | CephFS (2-replica data) | 2 | Yes | Yes | Yes |
+| cephfs-rep3 | CephFS (3-replica data) | 3 | Yes | Yes | Yes |
+| ec-3-1 | RBD erasure-coded (k=3, m=1) | 4 | No | Yes | Yes |
+| ec-2-2 | RBD erasure-coded (k=2, m=2) | 4 | No | Yes | Yes |
+| ec-4-2 | RBD erasure-coded (k=4, m=2) | 6 | No | No | Yes |
+
+Pools that exceed the available failure domains are automatically skipped at runtime with a logged warning — no configuration changes are needed.
+
+### ODF Add-on Settings
+
+Recommended enterprise ODF configuration for the ROKS add-on:
+
+```
+osdStorageClassName: ibmc-vpc-block-metro-10iops-tier   # Highest tiered IOPS (10 IOPS/GiB)
+osdSize: 1Ti                                            # 10,240 IOPS per OSD; use 2Ti for throughput-heavy workloads
+numOfOsd: 1                                             # 1 OSD/node standard; 2 for higher IOPS (shared BW)
+resourceProfile: performance                            # Full Ceph resource allocation (~15 CPU, ~32 GiB/node)
+```
+
+With `numOfOsd=1` and 1 TiB OSDs: each node contributes 10,240 IOPS and 16 Gbps storage bandwidth. Scaling to `numOfOsd=2` doubles IOPS per node but the two OSDs share the same node bandwidth — beneficial for random I/O, no gain for sequential throughput. See [Scaling ODF on VSI](#scaling-odf-on-vsi-more-osds-per-node-vs-more-nodes) for the full tradeoff analysis.
+
+### Why bx3d over bx2
+
+At 32 vCPU, `bx3d-32x160` and `bx2-32x128` have the same 64 Gbps network bandwidth and identical storage performance. The difference is memory: 160 GiB vs 128 GiB — a 25% increase that translates to 32 GiB more headroom per node for VMs after ODF overhead. On a 3-node cluster this means ~96 GiB additional cluster-wide memory for workloads at a marginal cost increase. For storage benchmarking the extra memory allows higher VM concurrency without hitting memory limits before CPU or bandwidth limits.
+
+### Scaling Guidance
+
+- **Need more random IOPS?** Increase `numOfOsd` first — cheaper than adding nodes and each OSD has its own IOPS budget from the block tier.
+- **Need more sequential throughput?** Add worker nodes — each node brings independent bandwidth. More OSDs on the same node share the same pipe.
+- **Need EC pool coverage?** Add nodes to meet the k+m failure domain requirement (see table above).
+- **Need more VM capacity?** Add nodes for CPU/memory headroom, or move to 48-vCPU profiles for more resources per node.
+
+For the full decision framework, see [Scaling ODF on VSI: More OSDs per Node vs More Nodes](#scaling-odf-on-vsi-more-osds-per-node-vs-more-nodes).
+
 ## IBM Cloud Block CSI StorageClasses Reference
 
 ROKS clusters with the IBM Cloud Block CSI driver have approximately 33 StorageClasses. They follow a naming pattern with variants for binding mode, reclaim policy, and ODF usage:
