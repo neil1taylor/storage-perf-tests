@@ -92,13 +92,15 @@ See [Erasure Coding Explained](erasure-coding-explained.md) for a deep dive. In 
 
 ### Pools in This Project
 
-| Pool Name | Type | Config | Raw Overhead | Fault Tolerance | Min Hosts |
-|-----------|------|--------|-------------|-----------------|-----------|
-| **rep3** | Replicated | size=3 | 3.0x | Survives 2 OSD failures | 3 |
-| **rep2** | Replicated | size=2 | 2.0x | Survives 1 OSD failure | 2 |
-| **ec-2-1** | Erasure Coded | k=2, m=1 | 1.5x | Survives 1 OSD failure | 3 |
-| **ec-2-2** | Erasure Coded | k=2, m=2 | 2.0x | Survives 2 OSD failures | 4 |
-| **ec-4-2** | Erasure Coded | k=4, m=2 | 1.5x | Survives 2 OSD failures | 6 |
+| Pool Name | Type | Config | Raw Overhead | Fault Tolerance | I/O During 1 OSD Down | Min Hosts |
+|-----------|------|--------|-------------|-----------------|----------------------|-----------|
+| **rep3** | Replicated | size=3, min_size=2 | 3.0x | Survives 2 OSD failures | **Continues** (degraded) | 3 |
+| **rep2** | Replicated | size=2, min_size=2 | 2.0x | Survives 1 OSD failure | **Blocks** until recovery | 2 |
+| **ec-2-1** | Erasure Coded | k=2, m=1 | 1.5x | Survives 1 OSD failure | Continues (degraded) | 3 |
+| **ec-2-2** | Erasure Coded | k=2, m=2 | 2.0x | Survives 2 OSD failures | Continues (degraded) | 4 |
+| **ec-4-2** | Erasure Coded | k=4, m=2 | 1.5x | Survives 2 OSD failures | Continues (degraded) | 6 |
+
+**Note on rep2 availability:** With `requireSafeReplicaSize: true` (set on all our pools), rep2's `min_size` equals its `size` (both 2). This means I/O blocks when even one OSD is down — the data is still durable (one copy survives) but the PG cannot serve reads or writes until both copies are available. Rep3 tolerates one OSD down because 2 remaining copies still meet its `min_size=2`. See the [CephBlockPool Setup Guide — requireSafeReplicaSize](../guides/ceph-pool-setup.md#requiresafereplicasize-and-min_size--availability-vs-durability) for details.
 
 ### VMware vSAN Comparison
 

@@ -294,6 +294,34 @@ oc exec -n openshift-storage ${TOOLS_POD} -- rbd perf image iostat --pool=my-cus
 
 Negligible overhead. No reason to leave it off.
 
+### `requireSafeReplicaSize` and `min_size` — Availability vs Durability
+
+Ceph pools have two related settings:
+
+- **`size`** — The replication factor (how many copies are written)
+- **`min_size`** — The minimum number of copies that must be acknowledged before I/O succeeds
+
+When `requireSafeReplicaSize: true` is set (as in all our pools), Ceph enforces safe defaults for `min_size`:
+
+| Pool | `size` | `min_size` | Behaviour When 1 OSD Is Down |
+|------|--------|-----------|------------------------------|
+| **rep3** | 3 | 2 | **I/O continues** — 2 of 3 copies still available, PGs stay `active+degraded` |
+| **rep2** | 2 | 2 | **I/O blocks** — only 1 of 2 copies available, PGs go `peered` (inactive) until the OSD returns or recovery completes |
+
+This is a critical operational difference: **rep2 has worse availability than rep3**. A single OSD failure (or even a single OSD restart during maintenance) blocks all I/O to PGs hosted on that OSD. The data is still durable (one copy survives), but the PG cannot serve reads or writes until both copies are available again.
+
+With rep3, losing one OSD still leaves 2 copies — above `min_size=2` — so I/O continues in degraded mode while Ceph re-replicates the lost copy to another OSD.
+
+**Why not set `min_size=1` on rep2?** You could override this manually:
+
+```bash
+ceph osd pool set <pool-name> min_size 1
+```
+
+This would allow rep2 to continue serving I/O with a single copy, but at the risk of **data loss**: if the one remaining OSD also fails before recovery completes, the data is gone. With `min_size=1`, Ceph acknowledges writes after storing just one copy — a power failure at that moment loses the write entirely. This is why `requireSafeReplicaSize: true` exists and why our pools use it.
+
+**Impact on benchmarks:** During normal operation (all OSDs healthy), `min_size` has no effect on performance. It only matters during failures. However, the choice of `size` does affect write latency: rep2 waits for 2 OSD acknowledgements per write, rep3 waits for 3. This is why rep2 consistently shows better write IOPS than rep3 in benchmark results.
+
 ### `imageFeatures` and `mapOptions` (StorageClass)
 
 The StorageClass `imageFeatures` parameter controls which RBD capabilities are enabled on volumes created from this StorageClass. These are set once at volume creation time. For VM workloads, the critical features are:
@@ -524,6 +552,12 @@ The convergence check verifies `pg_num == new_pg_num` — that the autoscaler ha
 ### `requireSafeReplicaSize: true` with insufficient hosts
 
 With `requireSafeReplicaSize: true` (recommended), Ceph refuses to write if the pool cannot achieve the requested replication factor. A rep3 pool on a 2-node cluster will never reach `Ready`. Always check host count first (see [Step 1](#step-1-check-your-cluster)).
+
+### Rep2 I/O blocks on single OSD failure
+
+With `requireSafeReplicaSize: true`, a rep2 pool has `min_size=2` — meaning I/O blocks whenever one of the two OSDs hosting a PG is unavailable. This can happen during OSD restarts, node maintenance, or hardware failures. The PG goes `peered` (data is safe but not serving I/O) rather than `active+degraded` (still serving I/O).
+
+This is a key availability tradeoff: rep2 saves storage (2x vs 3x overhead) and has better write IOPS (2 acks vs 3), but any single OSD outage causes I/O stalls for affected PGs. Rep3 tolerates one OSD down because 2 remaining copies still meet `min_size=2`. See [requireSafeReplicaSize and min_size](#requiresafereplicasize-and-min_size--availability-vs-durability) for the full explanation.
 
 ### Pool created but StorageClass missing
 
