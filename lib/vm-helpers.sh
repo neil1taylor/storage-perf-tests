@@ -66,6 +66,17 @@ ensure_ssh_key() {
 }
 
 # ---------------------------------------------------------------------------
+# Check if a pool name is in the EXTRA_STORAGE_CLASSES array
+# ---------------------------------------------------------------------------
+_is_extra_sc() {
+  local name="$1"
+  for sc in "${EXTRA_STORAGE_CLASSES[@]}"; do
+    [[ "${sc}" == "${name}" ]] && return 0
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # Resolve StorageClass name from pool definition
 # ---------------------------------------------------------------------------
 get_storage_class_for_pool() {
@@ -84,6 +95,12 @@ get_storage_class_for_pool() {
     echo "${pool_name}"
   elif [[ "${pool_name}" == ibmc-* ]] || [[ "${pool_name}" == *vpc-file* ]]; then
     # IBM Cloud File — SC name is the pool name itself
+    echo "${pool_name}"
+  elif [[ "${pool_name}" == "${POOL_CSI_NAME}" ]]; then
+    # Pool CSI FileSharePool — SC name matches the pool name
+    echo "${pool_name}"
+  elif _is_extra_sc "${pool_name}"; then
+    # Extra SC — name IS the StorageClass (pre-existing, not ODF-managed)
     echo "${pool_name}"
   else
     echo "perf-test-sc-${pool_name}"
@@ -122,6 +139,11 @@ get_all_storage_pools() {
       [[ -n "${sc}" ]] && pools+=("${sc}")
     done < "${block_sc_list}"
   fi
+
+  # Extra StorageClasses (pre-existing, user-specified)
+  for sc in "${EXTRA_STORAGE_CLASSES[@]}"; do
+    [[ -n "${sc}" ]] && pools+=("${sc}")
+  done
 
   printf '%s\n' "${pools[@]}"
 }

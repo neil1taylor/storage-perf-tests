@@ -79,6 +79,145 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Pool CSI — detect CRD, topology, resource group, create FileSharePool
+# ---------------------------------------------------------------------------
+detect_pool_csi() {
+  oc get crd filesharepools.storage.ibmcloud.io &>/dev/null
+}
+
+detect_pool_csi_topology() {
+  local region zone
+  region=$(oc get nodes -l node-role.kubernetes.io/worker= \
+    -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/region}' 2>/dev/null || echo "")
+  zone=$(oc get nodes -l node-role.kubernetes.io/worker= \
+    -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null || echo "")
+
+  if [[ -z "${region}" || -z "${zone}" ]]; then
+    log_error "Could not detect region/zone from worker node topology labels"
+    return 1
+  fi
+
+  echo "${region}:${zone}"
+}
+
+detect_resource_group() {
+  local rg=""
+
+  # Strategy 1: ConfigMap cluster-info
+  rg=$(oc get configmap cluster-info -n kube-system \
+    -o jsonpath='{.data.resource-group-id}' 2>/dev/null || echo "")
+  if [[ -n "${rg}" ]]; then
+    echo "${rg}"
+    return 0
+  fi
+
+  # Strategy 2: ConfigMap ibm-cloud-provider-data
+  rg=$(oc get configmap ibm-cloud-provider-data -n kube-system \
+    -o jsonpath='{.data.resourceGroupID}' 2>/dev/null || echo "")
+  if [[ -n "${rg}" ]]; then
+    echo "${rg}"
+    return 0
+  fi
+
+  # Strategy 3: Secret storage-secret-store
+  rg=$(oc get secret storage-secret-store -n kube-system \
+    -o jsonpath='{.data.resource_group_id}' 2>/dev/null || echo "")
+  if [[ -n "${rg}" ]]; then
+    echo "${rg}" | base64 -d 2>/dev/null
+    return 0
+  fi
+
+  # Strategy 4: Env var fallback
+  if [[ -n "${POOL_RESOURCE_GROUP}" ]]; then
+    echo "${POOL_RESOURCE_GROUP}"
+    return 0
+  fi
+
+  log_error "Could not detect resource group from cluster ConfigMaps/Secrets"
+  log_error "Set POOL_RESOURCE_GROUP env var to provide it manually"
+  return 1
+}
+
+setup_pool_csi() {
+  log_info "Checking for IBM Cloud Pool CSI driver..."
+
+  if ! detect_pool_csi; then
+    log_info "Pool CSI driver not detected — skipping FileSharePool setup"
+    return 0
+  fi
+
+  log_info "Pool CSI driver detected (filesharepools.storage.ibmcloud.io CRD exists)"
+
+  # Skip if FileSharePool already exists
+  if oc get filesharepools.storage.ibmcloud.io "${POOL_CSI_NAME}" &>/dev/null; then
+    log_info "FileSharePool ${POOL_CSI_NAME} already exists — skipping creation"
+  else
+    # Detect topology
+    local topo
+    topo=$(detect_pool_csi_topology)
+    local region="${topo%%:*}"
+    local zone="${topo#*:}"
+    log_info "Detected topology: region=${region}, zone=${zone}"
+
+    # Detect resource group
+    local resource_group
+    resource_group=$(detect_resource_group)
+    log_info "Detected resource group: ${resource_group}"
+
+    log_info "Creating FileSharePool: ${POOL_CSI_NAME}"
+    cat <<EOF | oc apply -f -
+apiVersion: storage.ibmcloud.io/v1alpha1
+kind: FileSharePool
+metadata:
+  name: ${POOL_CSI_NAME}
+spec:
+  region: ${region}
+  zone: ${zone}
+  resourceGroup: ${resource_group}
+  profile: ${POOL_CSI_PROFILE}
+  iops: ${POOL_CSI_IOPS}
+  sizeGiB: ${POOL_CSI_SHARE_SIZE%Gi}
+  maxShares: ${POOL_CSI_MAX_SHARES}
+  allocationStrategy: ${POOL_CSI_ALLOCATION_STRATEGY}
+  defaultPermissions:
+    uid: ${POOL_CSI_DEFAULT_UID}
+    gid: ${POOL_CSI_DEFAULT_GID}
+    permissions: "${POOL_CSI_DEFAULT_PERMISSIONS}"
+EOF
+  fi
+
+  # Wait for the driver to auto-create the StorageClass
+  log_info "Waiting for StorageClass ${POOL_CSI_NAME} to be created by the driver..."
+  local elapsed=0
+  local timeout=300
+  while [[ ${elapsed} -lt ${timeout} ]]; do
+    if oc get sc "${POOL_CSI_NAME}" &>/dev/null; then
+      log_info "StorageClass ${POOL_CSI_NAME} is available"
+      break
+    fi
+    sleep 10
+    elapsed=$((elapsed + 10))
+  done
+
+  if [[ ${elapsed} -ge ${timeout} ]]; then
+    log_error "StorageClass ${POOL_CSI_NAME} was not created within ${timeout}s"
+    return 1
+  fi
+
+  # Append to file-storage-classes.txt (deduplicated)
+  local sc_file="${RESULTS_DIR}/file-storage-classes.txt"
+  mkdir -p "${RESULTS_DIR}"
+  if [[ ! -f "${sc_file}" ]] || ! grep -qx "${POOL_CSI_NAME}" "${sc_file}"; then
+    echo "${POOL_CSI_NAME}" >> "${sc_file}"
+    log_info "Added ${POOL_CSI_NAME} to ${sc_file}"
+  else
+    log_info "${POOL_CSI_NAME} already in ${sc_file}"
+  fi
+
+  log_info "Pool CSI FileSharePool setup complete"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -169,6 +308,9 @@ main() {
       log_info "Verified ${#file_scs[@]} File StorageClasses"
     fi
   fi
+
+  # Pool CSI FileSharePool (optional — skipped silently if driver not present)
+  setup_pool_csi || log_warn "Pool CSI setup failed — continuing without it"
 
   log_info "=== IBM Cloud File storage setup complete ==="
 }

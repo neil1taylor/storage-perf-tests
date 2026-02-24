@@ -157,6 +157,19 @@ main() {
         run_cmd oc delete cephblockpool "${pool_name}" -n "${ODF_NAMESPACE}" --wait=false 2>/dev/null || true
       fi
     done
+
+    # Pool CSI FileSharePool cleanup
+    if oc get crd filesharepools.storage.ibmcloud.io &>/dev/null; then
+      if oc get filesharepools.storage.ibmcloud.io "${POOL_CSI_NAME}" &>/dev/null; then
+        log_info "  Deleting FileSharePool: ${POOL_CSI_NAME}"
+        run_cmd oc delete filesharepools.storage.ibmcloud.io "${POOL_CSI_NAME}" --wait=false 2>/dev/null || true
+        # Fallback: delete SC if driver doesn't auto-remove it
+        if oc get sc "${POOL_CSI_NAME}" &>/dev/null; then
+          log_info "  Deleting StorageClass: ${POOL_CSI_NAME}"
+          run_cmd oc delete sc "${POOL_CSI_NAME}" --wait=false 2>/dev/null || true
+        fi
+      fi
+    fi
   fi
 
   # 4. Delete namespace

@@ -198,6 +198,30 @@ declare -a BLOCK_CSI_PROFILES=(
 export BLOCK_CSI_PROFILES
 
 # ---------------------------------------------------------------------------
+# IBM Cloud Pool CSI — FileSharePool-backed StorageClass
+# The Pool CSI driver pre-provisions a pool of NFS file shares for faster
+# PVC binding. When the CRD exists, 02-setup-file-storage.sh auto-creates
+# the FileSharePool and waits for the driver to create the StorageClass.
+# ---------------------------------------------------------------------------
+export POOL_CSI_NAME="${POOL_CSI_NAME:-bench-pool}"
+export POOL_CSI_PROFILE="${POOL_CSI_PROFILE:-dp2}"
+export POOL_CSI_IOPS="${POOL_CSI_IOPS:-40000}"
+export POOL_CSI_SHARE_SIZE="${POOL_CSI_SHARE_SIZE:-4000Gi}"
+export POOL_CSI_MAX_SHARES="${POOL_CSI_MAX_SHARES:-1}"
+export POOL_CSI_ALLOCATION_STRATEGY="${POOL_CSI_ALLOCATION_STRATEGY:-spread}"
+export POOL_CSI_DEFAULT_UID="${POOL_CSI_DEFAULT_UID:-107}"
+export POOL_CSI_DEFAULT_GID="${POOL_CSI_DEFAULT_GID:-107}"
+export POOL_CSI_DEFAULT_PERMISSIONS="${POOL_CSI_DEFAULT_PERMISSIONS:-0777}"
+export POOL_RESOURCE_GROUP="${POOL_RESOURCE_GROUP:-}"
+
+# ---------------------------------------------------------------------------
+# Extra StorageClasses to test (pre-existing SCs, not managed by setup scripts)
+# Can also be added at runtime via --extra-sc flag on 04-run-tests.sh / run-all.sh
+# ---------------------------------------------------------------------------
+declare -a EXTRA_STORAGE_CLASSES=()
+export EXTRA_STORAGE_CLASSES
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 export LOG_LEVEL="${LOG_LEVEL:-INFO}"  # DEBUG, INFO, WARN, ERROR
@@ -209,5 +233,9 @@ echo "[config] Namespace: ${TEST_NAMESPACE}"
 echo "[config] ODF pools: ${#ODF_POOLS[@]}"
 echo "[config] File CSI profiles: ${FILE_CSI_DISCOVERY}"
 echo "[config] Block CSI: ${BLOCK_CSI_ENABLED} (discovery=${BLOCK_CSI_DISCOVERY})"
+echo "[config] Pool CSI: auto-detect (name=${POOL_CSI_NAME})"
 echo "[config] VM sizes: ${#VM_SIZES[@]}, PVC sizes: ${#PVC_SIZES[@]}"
 echo "[config] Concurrency levels: ${CONCURRENCY_LEVELS[*]}"
+if [[ ${#EXTRA_STORAGE_CLASSES[@]} -gt 0 ]]; then
+  echo "[config] Extra StorageClasses: ${EXTRA_STORAGE_CLASSES[*]}"
+fi
