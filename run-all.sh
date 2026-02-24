@@ -50,6 +50,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --dry-run            Preview test matrix without running"
       echo "  --filter <pattern>   Only run tests matching pattern"
       echo "  --exclude <pattern>  Skip tests matching pattern"
+      echo "  --extra-sc <name>    Include a pre-existing StorageClass (repeatable)"
       echo ""
       echo "Pipeline options:"
       echo "  --skip-setup         Skip storage pool/file/block setup (steps 01-03)"

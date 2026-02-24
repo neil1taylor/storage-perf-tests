@@ -53,9 +53,11 @@ while [[ $# -gt 0 ]]; do
     --dry-run)  DRY_RUN=true; shift ;;
     --filter)   FILTER_PATTERN="$2"; shift 2 ;;
     --exclude)  EXCLUDE_PATTERN="$2"; shift 2 ;;
+    --extra-sc) EXTRA_STORAGE_CLASSES+=("$2"); shift 2 ;;
     --help)
       echo "Usage: $0 [--pool <name>] [--quick] [--overview] [--rank] [--parallel [N]]"
       echo "         [--resume <run-id>] [--dry-run] [--filter <pattern>] [--exclude <pattern>]"
+      echo "         [--extra-sc <name>]"
       echo "  --pool <name>    Test only a specific storage pool"
       echo "  --quick          Quick mode: small VM, 150Gi PVC, concurrency=1 only"
       echo "  --overview       Overview mode: 2 tests/pool (random 4k + sequential 1M) across all pools"
@@ -65,6 +67,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --dry-run        Preview test matrix without creating any resources"
       echo "  --filter <pat>   Only run tests matching pattern (pool:size:pvc:conc:profile:bs, * = wildcard)"
       echo "  --exclude <pat>  Skip tests matching pattern (same format as --filter)"
+      echo "  --extra-sc <sc>  Include a pre-existing StorageClass in the test matrix (repeatable)"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
