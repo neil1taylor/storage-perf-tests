@@ -253,6 +253,87 @@ VMs are created once per (pool × vm_size × pvc_size × concurrency) group and 
 
 This reuse model avoids redundant VM provisioning, boot, and package installation for each fio profile and block size combination.
 
+## VM Snapshots and Quiesce
+
+### VolumeSnapshot
+
+Kubernetes supports point-in-time snapshots of PVCs via the **VolumeSnapshot** CRD. For ODF-backed PVCs, the Ceph CSI driver creates an RBD snapshot — a copy-on-write reference to the image's state at that moment. Snapshots are fast (metadata-only initially) and space-efficient (only divergent blocks consume additional storage).
+
+```yaml
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: my-vm-snapshot
+spec:
+  volumeSnapshotClassName: ocs-storagecluster-rbdplugin-snapclass
+  source:
+    persistentVolumeClaimName: my-vm-data
+```
+
+### The Consistency Problem
+
+A snapshot captures the **storage layer's view** of the disk at that instant, but the VM's guest OS may have dirty data that hasn't been flushed yet:
+
+- **Filesystem buffers** — writes the guest kernel has accepted but not yet flushed to disk
+- **Application-level buffers** — databases with write-ahead logs or in-memory transaction state
+- **I/O in flight** — operations between the guest's block layer and the storage backend
+
+A snapshot taken without coordination captures a **crash-consistent** image — equivalent to pulling the power cord. The VM will boot from this snapshot, but applications may need to replay journals or recover from unclean shutdown. For databases, this can mean transaction loss or corruption.
+
+### Guest Quiesce with QEMU Guest Agent
+
+To get an **application-consistent** snapshot, the guest OS must be quiesced before the snapshot is taken. OpenShift Virtualization supports this via the **QEMU Guest Agent (qemu-ga)**:
+
+1. **Install the guest agent** inside the VM (included by default in Fedora/RHEL cloud images, or install via `qemu-guest-agent` package)
+2. **Verify it's running**: `systemctl status qemu-guest-agent` inside the guest, or check from the host:
+   ```bash
+   oc get vmi my-vm -o jsonpath='{.status.conditions[?(@.type=="AgentConnected")].status}'
+   ```
+3. **Freeze the filesystem** — when a snapshot is requested with quiesce enabled, the platform sends a `guest-fsfreeze-freeze` command via the guest agent. This:
+   - Flushes all dirty buffers to disk (`sync`)
+   - Freezes all mounted filesystems (no new writes accepted)
+   - Returns control to the snapshot workflow
+4. **Take the snapshot** — with filesystems frozen, the storage-layer snapshot captures a clean, consistent state
+5. **Thaw the filesystem** — after the snapshot completes, `guest-fsfreeze-thaw` unfreezes the filesystems and I/O resumes
+
+### VirtualMachineSnapshot
+
+OpenShift Virtualization provides a higher-level **VirtualMachineSnapshot** CRD that orchestrates the full workflow — quiesce, snapshot all disks, thaw — in a single operation:
+
+```yaml
+apiVersion: snapshot.kubevirt.io/v1beta1
+kind: VirtualMachineSnapshot
+metadata:
+  name: my-vm-snap
+spec:
+  source:
+    apiGroup: kubevirt.io
+    kind: VirtualMachine
+    name: my-vm
+```
+
+If the guest agent is running, `VirtualMachineSnapshot` automatically freezes the guest filesystems before snapshotting and thaws them afterward. If the agent is not available, it falls back to a crash-consistent snapshot and reports this in the status conditions.
+
+### Quiesce Hooks for Applications
+
+The guest agent handles filesystem-level consistency, but application-level consistency (e.g., flushing a database WAL, pausing replication) requires additional coordination. Common patterns:
+
+- **Pre-freeze/post-thaw hooks** — scripts that the guest agent runs before freezing and after thawing (`/etc/qemu-ga/fsfreeze-hook.d/`). For example, a hook that runs `pg_backup_start()` before freeze and `pg_backup_stop()` after thaw for PostgreSQL.
+- **Application-aware backup agents** — tools like Velero with application-specific plugins that coordinate quiesce at the application layer before triggering the volume snapshot.
+
+### Storage Backend Considerations
+
+Not all storage backends support snapshots equally:
+
+| Backend | Snapshot Support | Quiesce Support | Notes |
+|---------|-----------------|-----------------|-------|
+| ODF (Ceph RBD) | Native RBD snapshots (COW, fast) | Yes (via guest agent) | Best support; snapshots are metadata-only initially |
+| ODF (CephFS) | CephFS snapshots via CSI | Yes (via guest agent) | Snapshot granularity is at the subvolume level |
+| IBM Cloud Block CSI | VolumeSnapshot supported | Yes (via guest agent) | Backend snapshot implementation varies by tier |
+| IBM Cloud File CSI | No VolumeSnapshot support | N/A | NFS-based; use file-level backup tools instead |
+
+For encrypted volumes (LUKS), snapshots work at the RBD layer (below encryption), so the snapshot itself is encrypted. Restoring from a snapshot produces an encrypted volume that requires the same encryption key.
+
 ## Next Steps
 
 - [fio Benchmarking](fio-benchmarking.md) — What fio does inside the VM
