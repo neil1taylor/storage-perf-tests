@@ -127,13 +127,22 @@ detect_resource_group() {
     return 0
   fi
 
-  # Strategy 4: Env var fallback
+  # Strategy 4: ibmcloud CLI (if available and targeted)
+  if command -v ibmcloud &>/dev/null; then
+    rg=$(ibmcloud target --output json 2>/dev/null | jq -r '.resource_group.guid // empty' 2>/dev/null || echo "")
+    if [[ -n "${rg}" ]]; then
+      echo "${rg}"
+      return 0
+    fi
+  fi
+
+  # Strategy 5: Env var fallback
   if [[ -n "${POOL_RESOURCE_GROUP}" ]]; then
     echo "${POOL_RESOURCE_GROUP}"
     return 0
   fi
 
-  log_error "Could not detect resource group from cluster ConfigMaps/Secrets"
+  log_error "Could not detect resource group from cluster ConfigMaps/Secrets or ibmcloud CLI"
   log_error "Set POOL_RESOURCE_GROUP env var to provide it manually"
   return 1
 }
@@ -176,13 +185,12 @@ spec:
   resourceGroup: ${resource_group}
   profile: ${POOL_CSI_PROFILE}
   iops: ${POOL_CSI_IOPS}
-  sizeGiB: ${POOL_CSI_SHARE_SIZE%Gi}
+  shareSizeGB: ${POOL_CSI_SHARE_SIZE%Gi}
   maxShares: ${POOL_CSI_MAX_SHARES}
   allocationStrategy: ${POOL_CSI_ALLOCATION_STRATEGY}
-  defaultPermissions:
-    uid: ${POOL_CSI_DEFAULT_UID}
-    gid: ${POOL_CSI_DEFAULT_GID}
-    permissions: "${POOL_CSI_DEFAULT_PERMISSIONS}"
+  defaultUID: ${POOL_CSI_DEFAULT_UID}
+  defaultGID: ${POOL_CSI_DEFAULT_GID}
+  defaultPermissions: "${POOL_CSI_DEFAULT_PERMISSIONS}"
 EOF
   fi
 
@@ -248,6 +256,7 @@ main() {
   #   -metro- / -retain-  — same I/O perf as base SC (topology/reclaim only)
   #   -regional*           — use 'rfs' profile which requires IBM support allowlisting
   #   -eit                 — encryption-in-transit not supported on RHCOS (ROKS worker nodes)
+  #   -min-iops            — ~100 IOPS at 150Gi; too slow for fio (starves SSH during test file creation)
   if [[ "${FILE_CSI_DISCOVERY}" == "auto" && "${FILE_CSI_DEDUP:-true}" == "true" ]]; then
     local pre_filter=${#file_scs[@]}
     local -a deduped_scs=()
@@ -258,15 +267,17 @@ main() {
         log_info "  Skipping regional: ${sc} (rfs profile requires allowlisting)"
       elif [[ "${sc}" == *-eit* ]]; then
         log_info "  Skipping EIT: ${sc} (encryption-in-transit not supported on RHCOS)"
+      elif [[ "${sc}" == *-min-iops* ]]; then
+        log_info "  Skipping min-iops: ${sc} (too slow for fio benchmarks)"
       else
         deduped_scs+=("${sc}")
       fi
     done
     if [[ ${#deduped_scs[@]} -gt 0 ]]; then
       file_scs=("${deduped_scs[@]}")
-      log_info "Filtered ${pre_filter} → ${#file_scs[@]} StorageClasses (excluded metro/retain/regional variants)"
+      log_info "Filtered ${pre_filter} → ${#file_scs[@]} StorageClasses (excluded metro/retain/regional/min-iops variants)"
     else
-      log_warn "All SCs were metro/retain/regional variants — keeping original list"
+      log_warn "All SCs were filtered variants — keeping original list"
     fi
   fi
 
