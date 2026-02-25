@@ -496,11 +496,14 @@ generate_ranking_html_report() {
   log_info "Generating ranking report: ${output_html}"
 
   local ranking_json
-  ranking_json=$(RANKING_CSV_FILE="${csv_file}" POOL_CSI_NAME="${POOL_CSI_NAME}" python3 << 'PYEOF_RANK'
+  ranking_json=$(RANKING_CSV_FILE="${csv_file}" POOL_CSI_NAME="${POOL_CSI_NAME}" POOL_CSI_PROFILE="${POOL_CSI_PROFILE}" POOL_CSI_IOPS="${POOL_CSI_IOPS}" POOL_CSI_SHARE_SIZE="${POOL_CSI_SHARE_SIZE}" python3 << 'PYEOF_RANK'
 import csv, json, sys, os
 
 csv_file = os.environ['RANKING_CSV_FILE']
 pool_csi_name = os.environ.get('POOL_CSI_NAME', 'bench-pool')
+pool_csi_profile = os.environ.get('POOL_CSI_PROFILE', 'dp2')
+pool_csi_iops = os.environ.get('POOL_CSI_IOPS', '40000')
+pool_csi_share_size = os.environ.get('POOL_CSI_SHARE_SIZE', '4000Gi')
 
 # Read CSV and aggregate by (pool, profile, block_size)
 # Sum IOPS/BW across fio jobs per test, average latency
@@ -733,7 +736,7 @@ def classify_pool(name):
         tier_str = tier.group(1) + ' IOPS tier' if tier else 'auto-scaled IOPS'
         return ('IBM Cloud Block CSI', 'iSCSI-based block storage via VPC Block CSI driver. ' + tier_str + '.', 'N/A (managed service)', '1x (managed)')
     if name == pool_csi_name:
-        return ('IBM Cloud Pool CSI', 'Pre-provisioned NFS file share pool via Pool CSI driver. PVCs are carved from a large pre-provisioned file share with dedicated IOPS budget.', 'N/A (managed service)', '1x (managed)')
+        return ('IBM Cloud Pool CSI', 'Pre-provisioned NFS file share pool via Pool CSI driver (' + pool_csi_share_size + ' at ' + pool_csi_iops + ' IOPS, ' + pool_csi_profile + ' profile).', 'N/A (managed service)', '1x (managed)')
     return ('Unknown', name, 'Unknown', 'Unknown')
 
 pool_info = []
