@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ROKS vs VCF Storage Performance Comparison</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+    .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 2rem; }
+    .header h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+    .header .subtitle { font-size: 1rem; color: #ccc; margin-bottom: 0.5rem; }
+    .header .meta { color: #aaa; font-size: 0.85rem; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .section h2 { font-size: 1.3rem; color: #1a1a2e; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0; }
+    .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+    .card h3 { font-size: 1.05rem; color: #1a1a2e; margin-bottom: 0.8rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; font-weight: 600; position: sticky; top: 0; }
+    .num { text-align: right; }
+    .delta-pos { color: #2e7d32; font-weight: 600; }
+    .delta-neg { color: #c62828; font-weight: 600; }
+    .delta-neutral { color: #666; }
+    .winner-roks { background: #e8f5e9; }
+    .winner-vcf { background: #e3f2fd; }
+    .info-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 1rem 1.2rem; border-radius: 0 8px 8px 0; margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.5; }
+    .info-box strong { color: #2e7d32; }
+    .caveat { background: #fff3e0; border-left: 4px solid #ff9800; padding: 1rem 1.2rem; border-radius: 0 8px 8px 0; margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.5; }
+    .caveat strong { color: #e65100; }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(600px, 1fr)); gap: 1rem; }
+    .collapsible { cursor: pointer; user-select: none; }
+    .collapsible::after { content: ' [+]'; font-size: 0.8rem; color: #999; }
+    .collapsible.open::after { content: ' [-]'; }
+    .collapse-content { display: none; }
+    .collapse-content.open { display: block; }
+    .platform-badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 3px; font-weight: 600; vertical-align: middle; margin-left: 0.3rem; }
+    .badge-roks { background: #e8f5e9; color: #2e7d32; }
+    .badge-vcf { background: #e3f2fd; color: #1565c0; }
+    .takeaway { padding: 0.8rem 1rem; border-left: 3px solid #1a1a2e; margin-bottom: 0.6rem; font-size: 0.9rem; line-height: 1.5; }
+    .legend-row { display: flex; gap: 1.5rem; margin-bottom: 1rem; font-size: 0.85rem; }
+    .legend-item { display: flex; align-items: center; gap: 0.3rem; }
+    .legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+    .conditions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .condition-card { border: 1px solid #e0e0e0; border-radius: 6px; padding: 1rem; }
+    .condition-card h4 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+    .detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 1rem; font-size: 0.88rem; }
+    .detail-grid dt { color: #777; }
+    .detail-grid dd { font-weight: 500; margin: 0; }
+    .scorecard { margin-top: 1rem; }
+    .scorecard td { text-align: center; font-weight: 600; }
+    .scorecard td.cat { text-align: left; font-weight: 500; }
+    .sc-roks { color: #2e7d32; }
+    .sc-vcf { color: #1565c0; }
+    .sc-tie { color: #666; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>ROKS vs VCF Storage Performance Comparison</h1>
+    <div class="subtitle">IBM Cloud ROKS (OpenShift Virtualization + ODF) vs VMware VCF (vSAN ESA + NFS Endurance)</div>
+    <div class="meta">ROKS run: perf-20260225-102034 &mdash; VCF run: 20260225 (150 GiB results)</div>
+  </div>
+  <div class="container">
+
+    <!-- Test Conditions -->
+    <div class="section">
+      <div class="info-box">
+        <strong>Matched test conditions:</strong> Both platforms were tested with <strong>medium VMs (4 vCPU, 8 GiB RAM)</strong>, <strong>150 GiB disks</strong>, and <strong>60s fio runtime</strong>. Test conditions are matched across platforms &mdash; absolute values are directly comparable.
+      </div>
+    </div>
+
+    <!-- Test Conditions Detail -->
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggleCollapse(this)">Test Conditions</h2>
+      <div class="collapse-content open">
+        <div class="card">
+          <div class="conditions-grid">
+            <div class="condition-card">
+              <h4><span class="platform-badge badge-roks">ROKS</span> IBM Cloud ROKS</h4>
+              <dl class="detail-grid">
+                <dt>Platform</dt><dd>OpenShift Virtualization + ODF (Ceph)</dd>
+                <dt>Workers</dt><dd>3x bare metal (NVMe-backed ODF)</dd>
+                <dt>VM size</dt><dd>medium (4 vCPU, 8 GiB RAM)</dd>
+                <dt>Disk size</dt><dd>150 GiB</dd>
+                <dt>fio runtime</dt><dd>60s (10s ramp)</dd>
+                <dt>I/O depth</dt><dd>32</dd>
+                <dt>Threads</dt><dd>4 per job</dd>
+                <dt>Direct I/O</dt><dd>Yes (O_DIRECT)</dd>
+              </dl>
+            </div>
+            <div class="condition-card">
+              <h4><span class="platform-badge badge-vcf">VCF</span> VMware VCF</h4>
+              <dl class="detail-grid">
+                <dt>Platform</dt><dd>vSAN ESA 8.0.3 + NFS Endurance</dd>
+                <dt>Hosts</dt><dd>4x (vSAN cluster)</dd>
+                <dt>VM size</dt><dd>medium (4 vCPU, 8 GiB RAM)</dd>
+                <dt>Disk size</dt><dd>150 GiB</dd>
+                <dt>fio runtime</dt><dd>60s</dd>
+                <dt>I/O depth</dt><dd>32</dd>
+                <dt>Threads</dt><dd>4 per job</dd>
+                <dt>Direct I/O</dt><dd>Yes (O_DIRECT)</dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Storage Mapping -->
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggleCollapse(this)">Storage Mapping</h2>
+      <div class="collapse-content open">
+        <div class="card">
+          <table id="mappingTable"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Comparison -->
+    <div class="section">
+      <h2>Performance Comparison</h2>
+      <div class="legend-row">
+        <div class="legend-item"><div class="legend-swatch" style="background:#e8f5e9"></div> ROKS wins</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#e3f2fd"></div> VCF wins</div>
+      </div>
+      <div class="card" id="comparisonCards"></div>
+    </div>
+
+    <!-- Charts -->
+    <div class="section">
+      <h2>Visual Comparison</h2>
+      <div class="chart-grid" id="chartGrid"></div>
+    </div>
+
+    <!-- Scorecard -->
+    <div class="section">
+      <h2>Scorecard Summary</h2>
+      <div class="card">
+        <table class="scorecard" id="scorecardTable"></table>
+      </div>
+    </div>
+
+    <!-- Key Takeaways -->
+    <div class="section">
+      <h2>Key Takeaways</h2>
+      <div class="card" id="takeaways"></div>
+    </div>
+
+  </div>
+
+  <script>
+    // ── Data ──────────────────────────────────────────────────────────────
+    const CATEGORIES = [
+      {
+        id: 'best_replicated',
+        label: 'Best Replicated',
+        roks: { name: 'rep2', desc: '2-way RBD' },
+        vcf:  { name: 'raid1-ftt1-thick', desc: 'RAID-1 thick' },
+        rationale: 'Top replicated performer on each platform'
+      },
+      {
+        id: 'standard_replicated',
+        label: 'Standard Replicated',
+        roks: { name: 'rep3', desc: '3-way RBD' },
+        vcf:  { name: 'raid1-ftt1', desc: 'RAID-1 thin' },
+        rationale: 'Default replicated tier'
+      },
+      {
+        id: 'erasure_coded',
+        label: 'Erasure Coded',
+        roks: { name: 'ec-2-1', desc: '2+1 EC' },
+        vcf:  { name: 'raid5-ftt1', desc: 'RAID-5 (3+1)' },
+        rationale: 'Parity-based space-efficient storage'
+      },
+      {
+        id: 'nfs_high',
+        label: 'NFS High Tier',
+        roks: { name: 'bench-pool', desc: 'Pool CSI, 40k IOPS' },
+        vcf:  { name: 'workload-share-j7hfh', desc: '10 IOPS/GB Endurance' },
+        rationale: 'Highest NFS tier available'
+      },
+      {
+        id: 'nfs_mid',
+        label: 'NFS Mid Tier',
+        roks: { name: 'ibmc-vpc-file-1000-iops', desc: '1000 IOPS' },
+        vcf:  { name: 'workload-share-3hq5c', desc: '4 IOPS/GB Endurance' },
+        rationale: 'Mid-range NFS'
+      },
+      {
+        id: 'nfs_low',
+        label: 'NFS Low Tier',
+        roks: { name: 'ibmc-vpc-file-500-iops', desc: '500 IOPS' },
+        vcf:  { name: 'workload-share-x1ydq', desc: '2 IOPS/GB Endurance' },
+        rationale: 'Low-end NFS'
+      }
+    ];
+
+    // ROKS data (from ranking report perf-20260225-102034, medium VM, 150Gi)
+    const ROKS = {
+      'rep2':                     { rand_iops: 133789, seq_bw: 12015.3, mixed_iops: 103316, avg_p99_ms: 76.675 },
+      'rep3':                     { rand_iops: 126840, seq_bw: 11427.2, mixed_iops: 93705,  avg_p99_ms: 84.670 },
+      'ec-2-1':                   { rand_iops: 61210,  seq_bw: 1200.0,  mixed_iops: 4016,   avg_p99_ms: 231.930 },
+      'bench-pool':               { rand_iops: 95095,  seq_bw: 4099.7,  mixed_iops: 60053,  avg_p99_ms: 36.146 },
+      'ibmc-vpc-file-1000-iops':  { rand_iops: 3955,   seq_bw: 252.9,   mixed_iops: 1994,   avg_p99_ms: 79.951 },
+      'ibmc-vpc-file-500-iops':   { rand_iops: 1977,   seq_bw: 126.8,   mixed_iops: 992,    avg_p99_ms: 174.586 }
+    };
+
+    // VCF data (150 GiB results from ranking run 20260225, medium VM)
+    // Computed from raw fio results: total_iops = read + write, seq_bw in MiB/s, avg_p99 = avg(read_p99, write_p99)
+    const VCF = {
+      'raid1-ftt1-thick':     { rand_iops: 81578, seq_bw: 1229.6, mixed_iops: 22515, avg_p99_ms: 10.254 },
+      'raid1-ftt1':           { rand_iops: 80851, seq_bw: 1223.0, mixed_iops: 23397, avg_p99_ms: 10.250 },
+      'raid5-ftt1':           { rand_iops: 69361, seq_bw: 1688.3, mixed_iops: 23049, avg_p99_ms: 13.332 },
+      'workload-share-j7hfh': { rand_iops: 25668, seq_bw: 2063.3, mixed_iops: 10963, avg_p99_ms: 15.172 },
+      'workload-share-3hq5c': { rand_iops: 14745, seq_bw: 999.0,  mixed_iops: 8181,  avg_p99_ms: 18.448 },
+      'workload-share-x1ydq': { rand_iops: 7671,  seq_bw: 502.4,  mixed_iops: 4086,  avg_p99_ms: 20.873 }
+    };
+
+    const METRICS = [
+      { key: 'rand_iops',  label: 'Random 4k IOPS',        unit: 'IOPS',  higherBetter: true  },
+      { key: 'seq_bw',     label: 'Sequential 1M BW',      unit: 'MiB/s', higherBetter: true  },
+      { key: 'mixed_iops', label: 'Mixed 70/30 4k IOPS',   unit: 'IOPS',  higherBetter: true  },
+      { key: 'avg_p99_ms', label: 'Avg p99 Latency',       unit: 'ms',    higherBetter: false }
+    ];
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function fmt(v, decimals) {
+      if (decimals === undefined) decimals = v >= 1000 ? 0 : 1;
+      return v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+
+    function delta(roks, vcf) {
+      return ((roks - vcf) / vcf * 100);
+    }
+
+    function deltaStr(roks, vcf, higherBetter) {
+      const d = delta(roks, vcf);
+      const sign = d >= 0 ? '+' : '';
+      return sign + d.toFixed(1) + '%';
+    }
+
+    function deltaClass(roks, vcf, higherBetter) {
+      const d = delta(roks, vcf);
+      if (Math.abs(d) < 5) return 'delta-neutral';
+      if (higherBetter) return d > 0 ? 'delta-pos' : 'delta-neg';
+      return d < 0 ? 'delta-pos' : 'delta-neg';
+    }
+
+    function winnerClass(roks, vcf, higherBetter) {
+      const d = delta(roks, vcf);
+      if (Math.abs(d) < 5) return '';
+      if (higherBetter) return d > 0 ? 'winner-roks' : 'winner-vcf';
+      return d < 0 ? 'winner-roks' : 'winner-vcf';
+    }
+
+    function winnerLabel(roks, vcf, higherBetter) {
+      const d = delta(roks, vcf);
+      if (Math.abs(d) < 5) return { text: '~Tie', cls: 'sc-tie' };
+      if (higherBetter) return d > 0 ? { text: 'ROKS', cls: 'sc-roks' } : { text: 'VCF', cls: 'sc-vcf' };
+      return d < 0 ? { text: 'ROKS', cls: 'sc-roks' } : { text: 'VCF', cls: 'sc-vcf' };
+    }
+
+    function toggleCollapse(el) {
+      el.classList.toggle('open');
+      el.nextElementSibling.classList.toggle('open');
+    }
+
+    // ── Mapping Table ────────────────────────────────────────────────────
+    (function() {
+      let html = '<thead><tr><th>Category</th><th>ROKS StorageClass</th><th>VCF Storage Target</th><th>Rationale</th></tr></thead><tbody>';
+      CATEGORIES.forEach(c => {
+        html += '<tr>';
+        html += '<td><strong>' + c.label + '</strong></td>';
+        html += '<td><code>' + c.roks.name + '</code> <span style="color:#777">(' + c.roks.desc + ')</span></td>';
+        html += '<td><code>' + c.vcf.name + '</code> <span style="color:#777">(' + c.vcf.desc + ')</span></td>';
+        html += '<td>' + c.rationale + '</td>';
+        html += '</tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('mappingTable').innerHTML = html;
+    })();
+
+    // ── Main Comparison Tables ───────────────────────────────────────────
+    (function() {
+      const container = document.getElementById('comparisonCards');
+      let html = '';
+
+      METRICS.forEach(m => {
+        html += '<h3>' + m.label + ' (' + m.unit + ')';
+        if (!m.higherBetter) html += ' <span style="font-size:0.8rem;color:#777">&mdash; lower is better</span>';
+        html += '</h3>';
+        html += '<table><thead><tr>';
+        html += '<th>Category</th>';
+        html += '<th class="num">ROKS <span class="platform-badge badge-roks">ROKS</span></th>';
+        html += '<th class="num">VCF <span class="platform-badge badge-vcf">VCF</span></th>';
+        html += '<th class="num">Delta</th>';
+        html += '<th class="num">Winner</th>';
+        html += '</tr></thead><tbody>';
+
+        CATEGORIES.forEach(cat => {
+          const rv = ROKS[cat.roks.name][m.key];
+          const vv = VCF[cat.vcf.name][m.key];
+          const wc = winnerClass(rv, vv, m.higherBetter);
+          const dc = deltaClass(rv, vv, m.higherBetter);
+          const w = winnerLabel(rv, vv, m.higherBetter);
+
+          html += '<tr class="' + wc + '">';
+          html += '<td><strong>' + cat.label + '</strong></td>';
+          html += '<td class="num">' + fmt(rv) + '</td>';
+          html += '<td class="num">' + fmt(vv) + '</td>';
+          html += '<td class="num ' + dc + '">' + deltaStr(rv, vv, m.higherBetter) + '</td>';
+          html += '<td class="num"><span class="' + w.cls + '">' + w.text + '</span></td>';
+          html += '</tr>';
+        });
+
+        html += '</tbody></table><br>';
+      });
+
+      container.innerHTML = html;
+    })();
+
+    // ── Charts ───────────────────────────────────────────────────────────
+    (function() {
+      const grid = document.getElementById('chartGrid');
+      const roksColor = 'rgba(46, 125, 50, 0.7)';
+      const vcfColor = 'rgba(21, 101, 192, 0.7)';
+      const roksBorder = 'rgba(46, 125, 50, 1)';
+      const vcfBorder = 'rgba(21, 101, 192, 1)';
+
+      METRICS.forEach(m => {
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        const title = m.label + ' (' + m.unit + ')';
+        const labels = CATEGORIES.map(c => c.label);
+        const roksData = CATEGORIES.map(c => ROKS[c.roks.name][m.key]);
+        const vcfData = CATEGORIES.map(c => VCF[c.vcf.name][m.key]);
+
+        const canvasId = 'chart_' + m.key;
+        card.innerHTML = '<h3>' + title + (m.higherBetter ? '' : ' (lower is better)') + '</h3><canvas id="' + canvasId + '" height="90"></canvas>';
+        grid.appendChild(card);
+
+        new Chart(document.getElementById(canvasId), {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: 'ROKS',
+                data: roksData,
+                backgroundColor: roksColor,
+                borderColor: roksBorder,
+                borderWidth: 1
+              },
+              {
+                label: 'VCF',
+                data: vcfData,
+                backgroundColor: vcfColor,
+                borderColor: vcfBorder,
+                borderWidth: 1
+              }
+            ]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: {
+              legend: { position: 'top' },
+              tooltip: {
+                callbacks: {
+                  label: function(ctx) {
+                    return ctx.dataset.label + ': ' + fmt(ctx.raw) + ' ' + m.unit;
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                beginAtZero: true,
+                title: { display: true, text: m.unit }
+              }
+            }
+          }
+        });
+      });
+    })();
+
+    // ── Scorecard ─────────────────────────────────────────────────────────
+    (function() {
+      const iopsMetrics = [
+        { key: 'rand_iops', label: 'IOPS', higherBetter: true },
+        { key: 'seq_bw', label: 'Throughput', higherBetter: true },
+        { key: 'avg_p99_ms', label: 'Latency', higherBetter: false }
+      ];
+
+      let html = '<thead><tr><th>Category</th><th>IOPS Winner</th><th>Throughput Winner</th><th>Latency Winner</th></tr></thead><tbody>';
+      CATEGORIES.forEach(cat => {
+        html += '<tr>';
+        html += '<td class="cat"><strong>' + cat.label + '</strong></td>';
+        iopsMetrics.forEach(m => {
+          const rv = ROKS[cat.roks.name][m.key];
+          const vv = VCF[cat.vcf.name][m.key];
+          const w = winnerLabel(rv, vv, m.higherBetter);
+          html += '<td class="' + w.cls + '">' + w.text + '</td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('scorecardTable').innerHTML = html;
+    })();
+
+    // ── Key Takeaways ────────────────────────────────────────────────────
+    (function() {
+      const takeaways = [
+        '<strong>ROKS block storage dominates on IOPS and throughput.</strong> The top replicated tiers (rep2, rep3) delivered 1.6x the random IOPS, 4-5x the mixed IOPS, and 8-9x the sequential throughput of their vSAN equivalents. Ceph\'s distributed striping across NVMe OSDs gives massive bandwidth advantages over vSAN ESA\'s per-host architecture.',
+        '<strong>VCF wins decisively on latency &mdash; across every category.</strong> VCF delivered 7-17x lower p99 tail latency than ROKS on block storage, and 2-8x lower on NFS. vSAN ESA\'s local-SSD architecture means I/O never crosses the network for reads, while Ceph\'s distributed model adds network round-trips. For latency-sensitive workloads (databases, real-time apps), this is the defining metric.',
+        '<strong>VCF thick vs thin: negligible gap at 150 GiB.</strong> At 150 GiB, raid1-ftt1 (thin) achieved 80,851 random IOPS &mdash; within 1% of thick provisioning\'s 81,578. The dramatic 7.3x gap seen at 50 GiB was a first-write zeroing artifact on fresh thin disks. For production workloads with reasonably sized disks, thin provisioning is not a performance concern on vSAN ESA.',
+        '<strong>Erasure coding: VCF leads on mixed and throughput.</strong> VCF RAID-5 delivered 5.7x the mixed IOPS and 1.4x the sequential throughput of ROKS ec-2-1, while ROKS had a slight 11.8% edge on random IOPS. ROKS EC pools are constrained by single-primary PG funneling on small (3-node) clusters; VCF RAID-5 (3+1 across 4 hosts) distributes writes more evenly.',
+        '<strong>NFS high tier: ROKS Pool CSI dominates.</strong> The 40,000 IOPS provisioned Pool CSI delivered 3.7x the random IOPS and 2x the throughput of VCF\'s 10 IOPS/GB Endurance share, achieving near-block-storage performance levels.',
+        '<strong>NFS mid/low tiers: VCF Endurance wins across the board.</strong> IBM Cloud File CSI\'s 500-1000 IOPS tiers are provisioned-IOPS-limited. VCF\'s Endurance shares at 2-4 IOPS/GB scale with capacity, delivering 3-4x better IOPS and throughput at these tiers.'
+      ];
+
+      let html = '';
+      takeaways.forEach(t => {
+        html += '<div class="takeaway">' + t + '</div>';
+      });
+      document.getElementById('takeaways').innerHTML = html;
+    })();
+  </script>
+</body>
+</html>
