@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StorageClass Ranking</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+    .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 2rem; }
+    .header h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+    .header .meta { color: #aaa; font-size: 0.85rem; }
+    .methodology { background: white; border-radius: 8px; padding: 1.5rem 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1.5rem; line-height: 1.6; font-size: 0.92rem; color: #444; }
+    .methodology h2 { font-size: 1.15rem; color: #1a1a2e; margin: 0 0 0.8rem 0; padding: 0; border: none; }
+    .methodology p { margin: 0 0 0.7rem 0; }
+    .methodology p:last-child { margin-bottom: 0; }
+    .methodology .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 2rem; margin: 0.5rem 0; font-size: 0.88rem; }
+    .methodology .detail-grid dt { color: #777; }
+    .methodology .detail-grid dd { font-weight: 500; margin: 0; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .section h2 { font-size: 1.3rem; color: #1a1a2e; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0; }
+    .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; font-weight: 600; position: sticky; top: 0; }
+    .num { text-align: right; }
+    .rank-1 td { background: #fff9e6; }
+    .rank-2 td { background: #f5f5f5; }
+    .rank-3 td { background: #fdf0ed; }
+    .score-bar { display: inline-block; height: 20px; border-radius: 3px; vertical-align: middle; min-width: 2px; }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 1rem; }
+    .collapsible { cursor: pointer; user-select: none; }
+    .collapsible::after { content: ' [+]'; font-size: 0.8rem; color: #999; }
+    .collapsible.open::after { content: ' [-]'; }
+    .collapse-content { display: none; }
+    .collapse-content.open { display: block; }
+    .weight-badge { display: inline-block; background: #e0e0e0; color: #555; font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 3px; margin-left: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>StorageClass Performance Ranking</h1>
+    <div class="meta" id="meta"></div>
+  </div>
+  <div class="container">
+    <div class="methodology" id="methodology"></div>
+  </div>
+  <div class="container">
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggleCollapse(this)">About the StorageClasses</h2>
+      <div class="collapse-content open">
+        <div class="card"><table id="poolInfoTable"></table></div>
+      </div>
+    </div>
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggleCollapse(this)">About the Workloads</h2>
+      <div class="collapse-content open">
+        <div class="card"><table id="workloadInfoTable"></table></div>
+      </div>
+    </div>
+    <div class="section">
+      <h2>Overall Composite Ranking</h2>
+      <div class="card">
+        <table id="compositeTable"></table>
+      </div>
+      <div class="card"><canvas id="compositeChart" height="80"></canvas></div>
+    </div>
+    <div class="section">
+      <h2>Per-Workload Rankings</h2>
+      <div class="chart-grid" id="workloadCharts"></div>
+    </div>
+    <div class="section">
+      <h2>Latency Ranking (Random 4k)</h2>
+      <div class="card">
+        <table id="latencyTable"></table>
+      </div>
+    </div>
+    <div class="section">
+      <h2 class="collapsible" onclick="toggleCollapse(this)">Raw Data</h2>
+      <div class="collapse-content">
+        <div class="card"><table id="rawTable"></table></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    const DATA = {"pools": ["bench-pool", "cephfs-rep3", "ec-2-1", "ibmc-vpc-file-1000-iops", "ibmc-vpc-file-3000-iops", "ibmc-vpc-file-500-iops", "rep2", "rep3", "rep3-enc", "rep3-virt"], "workload_rankings": [{"id": "random_iops", "title": "Random 4k IOPS", "higher_better": true, "ranking": [{"pool": "rep2", "value": 53896.0, "total_iops": 53896, "read_iops": 52948, "write_iops": 948}, {"pool": "rep3", "value": 52053.0, "total_iops": 52053, "read_iops": 51324, "write_iops": 729}, {"pool": "rep3-virt", "value": 51487.0, "total_iops": 51487, "read_iops": 50783, "write_iops": 704}, {"pool": "cephfs-rep3", "value": 50039.0, "total_iops": 50039, "read_iops": 45443, "write_iops": 4596}, {"pool": "rep3-enc", "value": 49650.0, "total_iops": 49650, "read_iops": 48975, "write_iops": 675}, {"pool": "bench-pool", "value": 42412.0, "total_iops": 42412, "read_iops": 29965, "write_iops": 12447}, {"pool": "ec-2-1", "value": 7035.0, "total_iops": 7035, "read_iops": 6495, "write_iops": 540}, {"pool": "ibmc-vpc-file-1000-iops", "value": 1983.0, "total_iops": 1983, "read_iops": 997, "write_iops": 986}, {"pool": "ibmc-vpc-file-500-iops", "value": 990.0, "total_iops": 990, "read_iops": 497, "write_iops": 493}]}, {"id": "seq_bw", "title": "Sequential 1M Throughput", "higher_better": true, "ranking": [{"pool": "rep2", "value": 6237.34, "total_mib": 6237.3, "read_mib": 5993.1, "write_mib": 244.2}, {"pool": "rep3-virt", "value": 5740.87, "total_mib": 5740.9, "read_mib": 5528.0, "write_mib": 212.9}, {"pool": "rep3", "value": 5726.59, "total_mib": 5726.6, "read_mib": 5517.2, "write_mib": 209.4}, {"pool": "rep3-enc", "value": 5426.69, "total_mib": 5426.7, "read_mib": 5111.1, "write_mib": 315.6}, {"pool": "cephfs-rep3", "value": 5104.89, "total_mib": 5104.9, "read_mib": 4095.0, "write_mib": 1009.8}, {"pool": "bench-pool", "value": 2049.86, "total_mib": 2049.9, "read_mib": 1024.9, "write_mib": 1025.0}, {"pool": "ec-2-1", "value": 1200.01, "total_mib": 1200.0, "read_mib": 844.9, "write_mib": 355.1}, {"pool": "ibmc-vpc-file-3000-iops", "value": 375.2, "total_mib": 375.2, "read_mib": 187.7, "write_mib": 187.5}, {"pool": "ibmc-vpc-file-1000-iops", "value": 126.02, "total_mib": 126.0, "read_mib": 63.5, "write_mib": 62.5}, {"pool": "ibmc-vpc-file-500-iops", "value": 63.45, "total_mib": 63.5, "read_mib": 32.2, "write_mib": 31.2}]}, {"id": "mixed_iops", "title": "Mixed 70/30 4k IOPS", "higher_better": true, "ranking": [{"pool": "rep2", "value": 42530.0, "total_iops": 42530, "read_iops": 29750, "write_iops": 12780}, {"pool": "rep3", "value": 39440.0, "total_iops": 39440, "read_iops": 27585, "write_iops": 11855}, {"pool": "rep3-virt", "value": 38997.0, "total_iops": 38997, "read_iops": 27274, "write_iops": 11723}, {"pool": "rep3-enc", "value": 37798.0, "total_iops": 37798, "read_iops": 26432, "write_iops": 11366}, {"pool": "cephfs-rep3", "value": 36250.0, "total_iops": 36250, "read_iops": 25351, "write_iops": 10899}, {"pool": "bench-pool", "value": 25748.0, "total_iops": 25748, "read_iops": 18003, "write_iops": 7745}, {"pool": "ec-2-1", "value": 4016.0, "total_iops": 4016, "read_iops": 2811, "write_iops": 1205}, {"pool": "ibmc-vpc-file-3000-iops", "value": 2997.0, "total_iops": 2997, "read_iops": 2096, "write_iops": 901}, {"pool": "ibmc-vpc-file-1000-iops", "value": 997.0, "total_iops": 997, "read_iops": 697, "write_iops": 300}, {"pool": "ibmc-vpc-file-500-iops", "value": 496.0, "total_iops": 496, "read_iops": 345, "write_iops": 151}]}], "latency_ranking": [{"pool": "bench-pool", "read_lat_avg": 2.135, "write_lat_avg": 5.14, "read_p99": 13.825, "write_p99": 67.63, "avg_p99": 40.727}, {"pool": "rep2", "read_lat_avg": 1.205, "write_lat_avg": 67.39, "read_p99": 30.015, "write_p99": 108.525, "avg_p99": 69.27}, {"pool": "ibmc-vpc-file-1000-iops", "read_lat_avg": 64.09, "write_lat_avg": 64.795, "read_p99": 86.505, "write_p99": 74.97, "avg_p99": 80.737}, {"pool": "rep3", "read_lat_avg": 1.245, "write_lat_avg": 87.59, "read_p99": 29.49, "write_p99": 143.65, "avg_p99": 86.57}, {"pool": "rep3-virt", "read_lat_avg": 1.26, "write_lat_avg": 90.75, "read_p99": 29.49, "write_p99": 154.14, "avg_p99": 91.815}, {"pool": "rep3-enc", "read_lat_avg": 1.305, "write_lat_avg": 94.685, "read_p99": 30.275, "write_p99": 158.33, "avg_p99": 94.303}, {"pool": "ibmc-vpc-file-500-iops", "read_lat_avg": 128.385, "write_lat_avg": 129.295, "read_p99": 179.305, "write_p99": 173.015, "avg_p99": 176.16}, {"pool": "ec-2-1", "read_lat_avg": 9.85, "write_lat_avg": 118.72, "read_p99": 11.73, "write_p99": 367.0, "avg_p99": 189.365}, {"pool": "cephfs-rep3", "read_lat_avg": 1.405, "write_lat_avg": 13.93, "read_p99": 3.39, "write_p99": 408.94, "avg_p99": 206.165}], "composite": [{"pool": "rep2", "score": 95.9, "breakdown": {"random_iops": 100.0, "seq_bw": 100.0, "mixed_iops": 100.0, "p99_lat": 58.8}}, {"pool": "rep3", "score": 89.3, "breakdown": {"random_iops": 96.6, "seq_bw": 91.8, "mixed_iops": 92.7, "p99_lat": 45.4}}, {"pool": "rep3-virt", "score": 88.4, "breakdown": {"random_iops": 95.5, "seq_bw": 92.0, "mixed_iops": 91.7, "p99_lat": 42.4}}, {"pool": "rep3-enc", "score": 84.7, "breakdown": {"random_iops": 92.1, "seq_bw": 87.0, "mixed_iops": 88.9, "p99_lat": 39.8}}, {"pool": "cephfs-rep3", "score": 80.5, "breakdown": {"random_iops": 92.8, "seq_bw": 81.8, "mixed_iops": 85.2, "p99_lat": 18.4}}, {"pool": "bench-pool", "score": 61.3, "breakdown": {"random_iops": 78.7, "seq_bw": 32.9, "mixed_iops": 60.5, "p99_lat": 78.7}}, {"pool": "ec-2-1", "score": 13.2, "breakdown": {"random_iops": 13.1, "seq_bw": 19.2, "mixed_iops": 9.4, "p99_lat": 2.8}}, {"pool": "ibmc-vpc-file-3000-iops", "score": 6.4, "breakdown": {"seq_bw": 6.0, "mixed_iops": 7.0}}, {"pool": "ibmc-vpc-file-1000-iops", "score": 2.7, "breakdown": {"random_iops": 3.7, "seq_bw": 2.0, "mixed_iops": 2.3, "p99_lat": 1.9}}, {"pool": "ibmc-vpc-file-500-iops", "score": 1.3, "breakdown": {"random_iops": 1.8, "seq_bw": 1.0, "mixed_iops": 1.2, "p99_lat": 0.4}}], "weights": {"random_iops": 0.4, "seq_bw": 0.3, "mixed_iops": 0.2, "p99_lat": 0.1}, "pool_info": [{"name": "bench-pool", "type": "IBM Cloud Pool CSI", "description": "Pre-provisioned NFS file share pool via Pool CSI driver (4000Gi at 40000 IOPS, dp2 profile).", "vsan": "N/A (managed service)", "overhead": "1x (managed)"}, {"name": "cephfs-rep3", "type": "ODF CephFS Replicated 3-way", "description": "Ceph Filesystem with 3x replicated data pool. Uses file-on-filesystem indirection in KubeVirt.", "vsan": "vSAN File Service (RAID-1, FTT=2)", "overhead": "3x (data) + 3x (metadata)"}, {"name": "ec-2-1", "type": "ODF Erasure Coded 2+1", "description": "Ceph RBD with erasure coding (2 data + 1 coding chunks). Better space efficiency than replication.", "vsan": "RAID-5, FTT=1", "overhead": "1.5x"}, {"name": "ibmc-vpc-file-1000-iops", "type": "IBM Cloud File CSI", "description": "NFS-based file storage via VPC File CSI driver. 1000 IOPS tier.", "vsan": "N/A (managed service)", "overhead": "1x (managed)"}, {"name": "ibmc-vpc-file-3000-iops", "type": "IBM Cloud File CSI", "description": "NFS-based file storage via VPC File CSI driver. 3000 IOPS tier.", "vsan": "N/A (managed service)", "overhead": "1x (managed)"}, {"name": "ibmc-vpc-file-500-iops", "type": "IBM Cloud File CSI", "description": "NFS-based file storage via VPC File CSI driver. 500 IOPS tier.", "vsan": "N/A (managed service)", "overhead": "1x (managed)"}, {"name": "rep2", "type": "ODF Replicated 2-way", "description": "Ceph RBD block storage with 2x replication across failure domains.", "vsan": "RAID-1, FTT=1", "overhead": "2x"}, {"name": "rep3", "type": "ODF Replicated 3-way", "description": "Ceph RBD block storage with 3x replication across failure domains.", "vsan": "RAID-1, FTT=2", "overhead": "3x"}, {"name": "rep3-enc", "type": "ODF Replicated 3-way", "description": "Ceph RBD block storage with 3x replication across failure domains. (encrypted at-rest via LUKS)", "vsan": "RAID-1, FTT=2", "overhead": "3x"}, {"name": "rep3-virt", "type": "ODF Replicated 3-way", "description": "Ceph RBD block storage with 3x replication across failure domains. (VM-optimized SC with write-back caching features)", "vsan": "RAID-1, FTT=2", "overhead": "3x"}], "test_config": {"vm_size": "small", "pvc_size": "150Gi", "concurrency": "1"}};
+    const RUN_ID = "perf-20260224-202500";
+    const COLORS = ['#e63946','#457b9d','#2a9d8f','#e9c46a','#f4a261','#264653',
+                    '#a8dadc','#d62828','#023e8a','#780000','#6a4c93','#1982c4',
+                    '#8ac926','#ff595e','#ffca3a'];
+    // Header meta (run ID only)
+    document.getElementById('meta').innerHTML = 'Run: ' + RUN_ID;
+
+    // Methodology write-up
+    (function() {
+      const cfg = DATA.test_config || {};
+      const pools = (DATA.pool_info || []).length;
+      let html = '<h2>How This Report Works</h2>';
+      html += '<p>This report ranks <strong>' + pools + ' StorageClasses</strong> by running the same set of I/O benchmarks against each one under identical conditions, then combining the results into a single composite score. The goal is to answer: <em>which StorageClass gives the best overall performance for VM workloads on this cluster?</em></p>';
+      html += '<p><strong>What was tested:</strong> Each StorageClass was provisioned as a ' + (cfg.pvc_size || '150Gi') + ' data disk attached to a ' + (cfg.vm_size || 'small') + ' VM (2 vCPU, 4 GiB RAM). Three fio benchmarks were run on each disk:</p>';
+      html += '<ul style="margin:0.3rem 0 0.7rem 1.5rem">';
+      html += '<li><strong>Random 4k IOPS</strong> — measures how many small I/O operations per second the storage can handle (IOPS). This is what matters for databases and general VM activity.</li>';
+      html += '<li><strong>Sequential 1M Throughput</strong> — measures raw data transfer speed (throughput in MiB/s). This is what matters for backups, large file copies, and data pipelines.</li>';
+      html += '<li><strong>Mixed 70/30 4k IOPS</strong> — a realistic blend of 70% reads and 30% writes that simulates everyday application workloads like web servers and file shares.</li>';
+      html += '</ul>';
+      html += '<p><strong>How scoring works:</strong> Each StorageClass is scored 0-100 on each workload (100 = best performer). These are combined into a weighted composite score:</p>';
+      html += '<dl class="detail-grid">';
+      html += '<dt>Random 4k IOPS</dt><dd>40% weight — most impactful for general VM performance</dd>';
+      html += '<dt>Sequential 1M throughput</dt><dd>30% weight — important for data-heavy workloads</dd>';
+      html += '<dt>Mixed 70/30 IOPS</dt><dd>20% weight — reflects real-world application patterns</dd>';
+      html += '<dt>p99 latency (lower is better)</dt><dd>10% weight — tail latency from random 4k I/O, weighted by throughput so pools doing fewer IOPS don\'t get an unfair advantage</dd>';
+      html += '</dl>';
+      html += '<p style="margin-top:0.5rem"><strong>Test parameters:</strong> Each benchmark ran for 60 seconds with a 10-second warmup, using direct I/O (O_DIRECT, bypassing OS cache), I/O depth of 32, and 4 parallel worker threads per job. All tests used a single VM with concurrency of ' + (cfg.concurrency || '1') + '.</p>';
+      document.getElementById('methodology').innerHTML = html;
+    })();
+
+    // Pool info table
+    (function() {
+      const info = DATA.pool_info || [];
+      if (!info.length) return;
+      let html = '<thead><tr><th>StorageClass</th><th>Type</th><th>vSAN Equivalent</th><th>Storage Overhead</th><th>Description</th></tr></thead><tbody>';
+      info.forEach(p => {
+        html += '<tr><td><strong>' + p.name + '</strong></td><td>' + p.type + '</td><td>' + p.vsan + '</td><td>' + p.overhead + '</td><td>' + p.description + '</td></tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('poolInfoTable').innerHTML = html;
+    })();
+
+    // Workload info table
+    (function() {
+      const workloads = [
+        { name: 'Random 4k IOPS', bs: '4k', desc: 'Small-block random I/O — measures IOPS capacity. Typical of databases and VM disk activity.' },
+        { name: 'Sequential 1M Throughput', bs: '1M', desc: 'Large-block sequential I/O — measures bandwidth/throughput. Typical of backups and bulk data transfer.' },
+        { name: 'Mixed 70/30 4k IOPS', bs: '4k', desc: '70% reads / 30% writes — simulates typical application workloads like web apps and file servers.' },
+        { name: 'p99 Tail Latency', bs: '4k', desc: 'Derived from the Random 4k test. The 99th percentile I/O response time — 99% of operations complete faster than this. Lower is better. Measures worst-case storage responsiveness.' },
+      ];
+      let html = '<thead><tr><th>Workload</th><th>Block Size</th><th>What It Measures</th></tr></thead><tbody>';
+      workloads.forEach(w => {
+        html += '<tr><td><strong>' + w.name + '</strong></td><td>' + w.bs + '</td><td>' + w.desc + '</td></tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('workloadInfoTable').innerHTML = html;
+    })();
+
+    // Composite table
+    (function() {
+      const comp = DATA.composite;
+      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th class="num">Composite Score</th>';
+      html += '<th class="num">Random 4k IOPS<span class="weight-badge">40%</span></th>';
+      html += '<th class="num">Sequential 1M BW<span class="weight-badge">30%</span></th>';
+      html += '<th class="num">Mixed 70/30 IOPS<span class="weight-badge">20%</span></th>';
+      html += '<th class="num">p99 Latency<span class="weight-badge">10%</span></th>';
+      html += '</tr></thead><tbody>';
+      comp.forEach((c, i) => {
+        const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
+        html += '<tr' + cls + '><td>#' + (i+1) + '</td>';
+        html += '<td><strong>' + c.pool + '</strong></td>';
+        html += '<td class="num">' + c.score + '</td>';
+        const dims = ['random_iops', 'seq_bw', 'mixed_iops', 'p99_lat'];
+        dims.forEach(d => {
+          const v = c.breakdown[d] !== undefined ? c.breakdown[d] : '-';
+          html += '<td class="num">' + v + '</td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('compositeTable').innerHTML = html;
+    })();
+
+    // Composite bar chart
+    (function() {
+      const comp = DATA.composite;
+      new Chart(document.getElementById('compositeChart'), {
+        type: 'bar',
+        data: {
+          labels: comp.map(c => c.pool),
+          datasets: [{
+            label: 'Composite Score',
+            data: comp.map(c => c.score),
+            backgroundColor: comp.map((_, i) => COLORS[i % COLORS.length]),
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { beginAtZero: true, max: 105, title: { display: true, text: 'Score (best = 100)' } },
+          }
+        }
+      });
+    })();
+
+    // Per-workload charts and tables
+    (function() {
+      const container = document.getElementById('workloadCharts');
+      DATA.workload_rankings.forEach((wl, wi) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        const unit = wl.id === 'seq_bw' ? 'MiB/s' : 'IOPS';
+        const valKey = wl.id === 'seq_bw' ? 'total_mib' : 'total_iops';
+        const readKey = wl.id === 'seq_bw' ? 'read_mib' : 'read_iops';
+        const writeKey = wl.id === 'seq_bw' ? 'write_mib' : 'write_iops';
+
+        let html = '<h3 style="margin-bottom:0.5rem">' + wl.title + '</h3>';
+        html += '<table><thead><tr><th>Rank</th><th>StorageClass</th><th class="num">Total ' + unit + '</th>';
+        html += '<th class="num">Read</th><th class="num">Write</th></tr></thead><tbody>';
+        wl.ranking.forEach((r, i) => {
+          const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
+          html += '<tr' + cls + '><td>#' + (i+1) + '</td>';
+          html += '<td>' + r.pool + '</td>';
+          html += '<td class="num"><strong>' + (r[valKey] !== undefined ? r[valKey].toLocaleString() : r.value) + '</strong></td>';
+          html += '<td class="num">' + (r[readKey] !== undefined ? r[readKey].toLocaleString() : '-') + '</td>';
+          html += '<td class="num">' + (r[writeKey] !== undefined ? r[writeKey].toLocaleString() : '-') + '</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+
+        const canvasId = 'wlChart' + wi;
+        html += '<canvas id="' + canvasId + '" height="60" style="margin-top:0.5rem"></canvas>';
+        card.innerHTML = html;
+        container.appendChild(card);
+
+        new Chart(document.getElementById(canvasId), {
+          type: 'bar',
+          data: {
+            labels: wl.ranking.map(r => r.pool),
+            datasets: [
+              { label: 'Read', data: wl.ranking.map(r => r[readKey] || 0), backgroundColor: '#457b9d' },
+              { label: 'Write', data: wl.ranking.map(r => r[writeKey] || 0), backgroundColor: '#e63946' },
+            ]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: { legend: { position: 'top' } },
+            scales: { x: { beginAtZero: true, stacked: true, title: { display: true, text: unit } }, y: { stacked: true } }
+          }
+        });
+      });
+    })();
+
+    // Latency table
+    (function() {
+      const lat = DATA.latency_ranking;
+      let html = '<thead><tr><th>Rank</th><th>StorageClass</th><th class="num">Read Avg (ms)</th>';
+      html += '<th class="num">Write Avg (ms)</th><th class="num">Read p99 (ms)</th><th class="num">Write p99 (ms)</th>';
+      html += '<th class="num">Avg p99 (ms)</th></tr></thead><tbody>';
+      lat.forEach((r, i) => {
+        const cls = i < 3 ? ' class="rank-' + (i+1) + '"' : '';
+        html += '<tr' + cls + '><td>#' + (i+1) + '</td>';
+        html += '<td>' + r.pool + '</td>';
+        html += '<td class="num">' + r.read_lat_avg + '</td><td class="num">' + r.write_lat_avg + '</td>';
+        html += '<td class="num">' + r.read_p99 + '</td><td class="num">' + r.write_p99 + '</td>';
+        html += '<td class="num"><strong>' + r.avg_p99 + '</strong></td></tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('latencyTable').innerHTML = html;
+    })();
+
+    // Raw data table (from composite + workload data)
+    (function() {
+      const comp = DATA.composite;
+      const wls = DATA.workload_rankings;
+      let html = '<thead><tr><th>StorageClass</th><th class="num">Composite</th>';
+      wls.forEach(wl => { html += '<th class="num">' + wl.title + '</th>'; });
+      html += '<th class="num">Avg p99 (ms)</th></tr></thead><tbody>';
+      comp.forEach(c => {
+        html += '<tr><td>' + c.pool + '</td><td class="num">' + c.score + '</td>';
+        wls.forEach(wl => {
+          const entry = wl.ranking.find(r => r.pool === c.pool);
+          html += '<td class="num">' + (entry ? entry.value : '-') + '</td>';
+        });
+        const latEntry = DATA.latency_ranking.find(r => r.pool === c.pool);
+        html += '<td class="num">' + (latEntry ? latEntry.avg_p99 : '-') + '</td>';
+        html += '</tr>';
+      });
+      html += '</tbody>';
+      document.getElementById('rawTable').innerHTML = html;
+    })();
+
+    function toggleCollapse(el) {
+      el.classList.toggle('open');
+      el.nextElementSibling.classList.toggle('open');
+    }
+  </script>
+</body>
+</html>

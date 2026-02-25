@@ -1,6 +1,8 @@
 # VM Storage Performance Test Suite
 
-Performance benchmarking for VMs on IBM Cloud ROKS with OpenShift Virtualization, testing ODF (Ceph) storage pools, IBM Cloud File CSI, and IBM Cloud Block CSI.
+Performance benchmarking for VMs on IBM Cloud ROKS with OpenShift Virtualization, testing ODF (Ceph) storage pools, IBM Cloud File CSI, IBM Cloud Block CSI, and IBM Cloud Pool CSI (FileSharePool).
+
+> **[View example ranking report](docs/examples/ranking-report-example.html)** — interactive StorageClass comparison from a 3-node bare metal cluster (bx2d.metal.96x384, Frankfurt)
 
 ## Documentation
 
@@ -40,16 +42,23 @@ New to this stack? Start with the [suggested reading path](docs/index.md#suggest
 | ec-2-2 | Erasure Coded (2+2) | Dual-parity EC (needs 4 hosts) |
 | ec-4-2 | Erasure Coded (4+2) | Production-grade EC (needs 6 hosts) |
 
+### ODF CephFS Pools
+| Pool | Type | Description |
+|------|------|-------------|
+| cephfs-rep3 | CephFS (data replica=3) | Default ROKS OOB CephFS pool |
+| cephfs-rep2 | CephFS (data replica=2) | Reduced replication CephFS |
+
 ### IBM Cloud File CSI (dp2 profile)
-Auto-discovered at runtime. `-metro-`, `-retain-`, and `-regional*` variants are filtered by default.
+Auto-discovered at runtime. `-metro-`, `-retain-`, `-regional*`, and `-min-iops*` variants are filtered by default.
 
 | StorageClass | Fixed IOPS | Min PVC Size |
 |--------------|-----------|-------------|
-| `ibmc-vpc-file-min-iops` | auto | 10Gi |
 | `ibmc-vpc-file-500-iops` | 500 | 10Gi |
-| `ibmc-vpc-file-eit` | 1000 | 40Gi |
 | `ibmc-vpc-file-1000-iops` | 1000 | 40Gi |
 | `ibmc-vpc-file-3000-iops` | 3000 | 120Gi |
+
+### IBM Cloud Pool CSI (FileSharePool)
+Auto-detected when the `filesharepools.storage.ibmcloud.io` CRD is present. Creates a pre-provisioned NFS file share pool for faster PVC binding. Configurable in `00-config.sh` (`POOL_CSI_*` vars, default: 4000Gi at 40,000 IOPS, dp2 profile).
 
 ### IBM Cloud Block CSI (VSI clusters only)
 Auto-discovered at runtime. See [VSI Storage Testing Guide](docs/guides/vsi-storage-testing-guide.md).
