@@ -733,7 +733,7 @@ def classify_pool(name):
         tier_str = tier.group(1) + ' IOPS tier' if tier else 'auto-scaled IOPS'
         return ('IBM Cloud Block CSI', 'iSCSI-based block storage via VPC Block CSI driver. ' + tier_str + '.', 'N/A (managed service)', '1x (managed)')
     if name == pool_csi_name:
-        return ('IBM Cloud Pool CSI', 'Pre-provisioned NFS file share pool via Pool CSI driver. Aggregated IOPS from a shared pool of NFS file shares.', 'N/A (managed service)', '1x (managed)')
+        return ('IBM Cloud Pool CSI', 'Pre-provisioned NFS file share pool via Pool CSI driver. PVCs are carved from a large pre-provisioned file share with dedicated IOPS budget.', 'N/A (managed service)', '1x (managed)')
     return ('Unknown', name, 'Unknown', 'Unknown')
 
 pool_info = []
