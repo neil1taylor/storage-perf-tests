@@ -8,12 +8,13 @@ The patterns described here are based on random 4k I/O (the `random-rw` profile 
 
 ## The Big Picture
 
-Three distinct latency profiles emerge from the benchmarks:
+Four distinct latency profiles emerge from the benchmarks:
 
 | Backend Type | Read Latency | Write Latency | Pattern |
 |-------------|-------------|--------------|---------|
 | **Ceph RBD (replicated)** | Sub-2ms | 60-80ms | Extreme asymmetry |
-| **IBM Cloud File CSI (NFS)** | 20-130ms | 20-130ms | Symmetric, tier-dependent |
+| **Ceph CephFS** | Higher than RBD | Higher than RBD | RBD-like asymmetry + MDS/indirection overhead |
+| **IBM Cloud File/Pool CSI (NFS)** | 20-130ms | 20-130ms | Symmetric, tier-dependent |
 | **Ceph RBD (erasure coded)** | 5-10ms | 100-120ms | Asymmetric with EC overhead |
 
 Each pattern has a distinct cause rooted in the storage architecture.
@@ -97,6 +98,15 @@ For real VM workloads (databases with WAL, OS disk activity, application logging
 ### Practical Recommendation
 
 Use `rep3-virt` for production VMs. The benchmark numbers with `direct=1` show the raw storage floor, but real workloads will see better write performance through page cache coalescing and the exclusive-lock optimizations. The `rxbounce` map option is also a correctness requirement (prevents CRC errors) regardless of caching behavior.
+
+## CephFS Pools: RBD Overhead Plus Indirection
+
+CephFS pools (`cephfs-rep3`, `cephfs-rep2`) show higher latency than their RBD equivalents due to two compounding factors:
+
+1. **File-on-filesystem indirection:** CephFS PVCs use `volumeMode: Filesystem`. KubeVirt creates a `disk.img` on the CephFS mount — each guest I/O passes through QEMU's file I/O layer and the CephFS POSIX stack before reaching Ceph.
+2. **MDS overhead:** CephFS metadata operations (file open, stat, create) go through MDS daemons, adding latency that RBD doesn't have.
+
+CephFS pools exhibit the same read/write asymmetry as RBD (reads from a single OSD, writes to multiple replicas) but with higher baseline latency. For VM workloads, RBD is preferred unless POSIX shared filesystem semantics are required.
 
 ## IBM Cloud File CSI: Consistent but Tier-Limited
 
@@ -203,6 +213,12 @@ File CSI 3000-iops "wins" despite having **10x worse read latency** than Ceph be
 | Throughput pipeline | Sequential BW | Latency is less important for bulk I/O |
 
 For most VM workloads (general-purpose, databases, web applications), **read latency dominates** because applications issue far more reads than writes. In this case, Ceph RBD's sub-2ms reads make it the clear winner despite the ranking table suggesting otherwise.
+
+## IBM Cloud Pool CSI: Pre-Provisioned NFS
+
+Pool CSI (`bench-pool`) uses the same underlying IBM Cloud VPC NFS infrastructure as File CSI but with a pre-provisioned pool of file shares. The latency characteristics are similar to File CSI at the equivalent IOPS tier — symmetric read/write with tier-proportional latency.
+
+The key difference is **PVC bind time**: Pool CSI binds PVCs almost instantly from the pre-provisioned pool (no API call to create a new file share), making VM startup significantly faster. The steady-state I/O performance during fio benchmarks is determined by the pool's total provisioned IOPS.
 
 ## Summary of Key Findings
 

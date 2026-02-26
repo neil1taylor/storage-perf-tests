@@ -85,8 +85,11 @@ declare -a ODF_POOLS=(
   "rep3:replicated:3"
   "rep3-virt:replicated:3"
   "rep3-enc:replicated:3"
+  "cephfs-rep3:cephfs:3"
   "rep2:replicated:2"
+  "cephfs-rep2:cephfs:2"
   "ec-2-1:erasurecoded:2:1"
+  "ec-3-1:erasurecoded:3:1"
   "ec-2-2:erasurecoded:2:2"
   "ec-4-2:erasurecoded:4:2"
 )
@@ -95,14 +98,18 @@ declare -a ODF_POOLS=(
 Each entry is formatted as `name:type:params`:
 - **Replicated:** `name:replicated:replication_size`
 - **Erasure coded:** `name:erasurecoded:data_chunks:coding_chunks`
+- **CephFS:** `name:cephfs:data_replica_count` (metadata pool is always size=3)
 
 | Pool | Type | Config | Storage Overhead | Fault Tolerance | Min Hosts |
 |------|------|--------|-----------------|-----------------|-----------|
 | rep3 | Replicated | size=3 | 3.0x | 2 failures | 3 |
 | rep3-virt | Replicated | size=3 | 3.0x | 2 failures | 3 |
 | rep3-enc | Replicated | size=3 | 3.0x | 2 failures | 3 |
+| cephfs-rep3 | CephFS | data replica=3 | 3.0x | 2 failures | 3 |
 | rep2 | Replicated | size=2 | 2.0x | 1 failure | 2 |
+| cephfs-rep2 | CephFS | data replica=2 | 2.0x | 1 failure | 2 |
 | ec-2-1 | Erasure Coded | k=2, m=1 | 1.5x | 1 failure | 3 |
+| ec-3-1 | Erasure Coded | k=3, m=1 | 1.33x | 1 failure | 4 |
 | ec-2-2 | Erasure Coded | k=2, m=2 | 2.0x | 2 failures | 4 |
 | ec-4-2 | Erasure Coded | k=4, m=2 | 1.5x | 2 failures | 6 |
 
@@ -174,7 +181,7 @@ export FILE_CSI_DEDUP="${FILE_CSI_DEDUP:-true}"
 |----------|---------|-------------|
 | `FILE_CSI_PROFILES` | 5 common profiles | Fallback list of IBM Cloud VPC File StorageClasses. Used if auto-discovery fails. |
 | `FILE_CSI_DISCOVERY` | `auto` | Set to `auto` to discover all `vpc-file` StorageClasses at runtime. Set to `manual` to use only the fallback list. |
-| `FILE_CSI_DEDUP` | `true` | When auto-discovering, skip `-metro-`, `-retain-`, and `-regional*` StorageClass variants. Set to `false` for multi-zone clusters with `rfs` allowlisting. |
+| `FILE_CSI_DEDUP` | `true` | When auto-discovering, skip `-metro-`, `-retain-`, `-regional*`, `-eit*`, and `-min-iops*` StorageClass variants. Set to `false` for multi-zone clusters with `rfs` allowlisting. |
 
 The `02-setup-file-storage.sh` script handles discovery and writes the result to `results/file-storage-classes.txt`.
 
@@ -206,10 +213,75 @@ IBM Cloud VPC File CSI creates up to 4 variants of each IOPS tier (e.g., for the
 - **`-retain-` variants:** The only difference is the PV reclaim policy (`Retain` instead of `Delete`). This has zero impact on I/O performance.
 - **`-metro-` variants:** These add a volume topology constraint for multi-zone scheduling. On a single-zone cluster, the NFS share lands on the same infrastructure either way, so there is no measurable latency difference.
 - **`-regional*` variants:** These use the `rfs` profile which requires IBM support allowlisting. Without it, PVC provisioning fails immediately.
+- **`-eit*` variants:** Encryption in transit (IPsec) is not supported on RHCOS worker nodes used by ROKS. PVCs will fail to mount.
+- **`-min-iops*` variants:** Capacity-based IOPS (~1 IOPS/GB) yields ~100 IOPS at 150Gi. This is too slow for fio benchmarks — writing the 4G test file saturates all available IOPS and starves SSH, causing flaky test results.
 
-With `FILE_CSI_DEDUP=true`, auto-discovery filters these out, reducing the number of File CSI StorageClasses from ~17 to 5 and avoiding redundant test permutations.
+With `FILE_CSI_DEDUP=true`, auto-discovery filters these out, reducing the number of File CSI StorageClasses from ~20 to 3 and avoiding redundant or unreliable test permutations.
 
 Set `FILE_CSI_DEDUP=false` if you are running on a **multi-zone cluster** where the metro topology constraint may affect latency, or if `rfs` has been allowlisted on your account.
+
+## IBM Cloud Pool CSI
+
+```bash
+export POOL_CSI_NAME="${POOL_CSI_NAME:-bench-pool}"
+export POOL_CSI_PROFILE="${POOL_CSI_PROFILE:-dp2}"
+export POOL_CSI_IOPS="${POOL_CSI_IOPS:-40000}"
+export POOL_CSI_SHARE_SIZE="${POOL_CSI_SHARE_SIZE:-4000Gi}"
+export POOL_CSI_MAX_SHARES="${POOL_CSI_MAX_SHARES:-1}"
+export POOL_CSI_ALLOCATION_STRATEGY="${POOL_CSI_ALLOCATION_STRATEGY:-spread}"
+export POOL_CSI_DEFAULT_UID="${POOL_CSI_DEFAULT_UID:-107}"
+export POOL_CSI_DEFAULT_GID="${POOL_CSI_DEFAULT_GID:-107}"
+export POOL_CSI_DEFAULT_PERMISSIONS="${POOL_CSI_DEFAULT_PERMISSIONS:-0777}"
+export POOL_RESOURCE_GROUP="${POOL_RESOURCE_GROUP:-}"
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POOL_CSI_NAME` | `bench-pool` | Name of the FileSharePool CRD and the auto-created StorageClass. |
+| `POOL_CSI_PROFILE` | `dp2` | IBM Cloud VPC file share profile. |
+| `POOL_CSI_IOPS` | `40000` | Provisioned IOPS for the file share pool. |
+| `POOL_CSI_SHARE_SIZE` | `4000Gi` | Total size of the pre-provisioned NFS share pool. |
+| `POOL_CSI_MAX_SHARES` | `1` | Maximum number of file shares in the pool. |
+| `POOL_CSI_ALLOCATION_STRATEGY` | `spread` | How PVCs are distributed across shares (`spread` or `pack`). |
+| `POOL_CSI_DEFAULT_UID` | `107` | Default UID for NFS shares (107 = qemu user in KubeVirt). |
+| `POOL_CSI_DEFAULT_GID` | `107` | Default GID for NFS shares. |
+| `POOL_CSI_DEFAULT_PERMISSIONS` | `0777` | Default permissions for NFS shares. |
+| `POOL_RESOURCE_GROUP` | *(empty)* | Fallback resource group ID. Auto-detected from cluster ConfigMaps/Secrets if not set. |
+
+The Pool CSI driver provides a `FileSharePool` CRD (`storage.ibmcloud.io/v1alpha1`) that pre-provisions a pool of NFS file shares for faster PVC binding. When the CRD `filesharepools.storage.ibmcloud.io` exists on the cluster, `02-setup-file-storage.sh` auto-detects it, creates a FileSharePool using these settings, and waits for the driver to auto-create the StorageClass. If the driver is not installed, setup is silently skipped.
+
+Region and zone are auto-detected from worker node topology labels (`topology.kubernetes.io/region` and `topology.kubernetes.io/zone`). The resource group is resolved from cluster ConfigMaps/Secrets (with `POOL_RESOURCE_GROUP` env var as fallback).
+
+## IBM Cloud Block CSI
+
+```bash
+export BLOCK_CSI_ENABLED="${BLOCK_CSI_ENABLED:-true}"
+export BLOCK_CSI_DISCOVERY="auto"
+export BLOCK_CSI_DEDUP="${BLOCK_CSI_DEDUP:-true}"
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BLOCK_CSI_ENABLED` | `true` | Enable IBM Cloud Block CSI StorageClass discovery. Only relevant for VSI clusters — BM clusters exit cleanly. |
+| `BLOCK_CSI_DISCOVERY` | `auto` | Set to `auto` to discover all `vpc-block` StorageClasses at runtime. |
+| `BLOCK_CSI_DEDUP` | `true` | When auto-discovering, skip `-metro-` and `-retain-` variants (same I/O perf as base SC). |
+
+The `03-setup-block-storage.sh` script discovers IBM Cloud Block CSI StorageClasses on VSI clusters. On bare metal clusters (where IBM Cloud Block CSI is not available), it exits cleanly. See [VSI Storage Testing Guide](vsi-storage-testing-guide.md) for details.
+
+## Extra StorageClasses
+
+```bash
+declare -a EXTRA_STORAGE_CLASSES=()
+```
+
+Pre-existing StorageClasses to include in the test matrix without being managed by the setup scripts. Can be set in `00-config.sh` or added at runtime via the `--extra-sc` flag:
+
+```bash
+./04-run-tests.sh --extra-sc my-custom-sc
+./run-all.sh --quick --extra-sc sc-1 --extra-sc sc-2
+```
+
+Useful for testing custom or third-party StorageClasses alongside the auto-discovered ones.
 
 ## fio Settings
 

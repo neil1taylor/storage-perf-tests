@@ -81,13 +81,13 @@ Rather than using Helm, Kustomize, or other Kubernetes templating tools, this pr
 | Script | Purpose |
 |--------|---------|
 | `00-config.sh` | Defines all configuration variables. Validates cluster connectivity on load. Sourced by other scripts, never run directly. |
-| `01-setup-storage-pools.sh` | Creates CephBlockPools and StorageClasses for each ODF pool defined in config. |
-| `02-setup-file-storage.sh` | Discovers IBM Cloud File CSI StorageClasses on the cluster (or uses the fallback list). |
+| `01-setup-storage-pools.sh` | Creates CephBlockPools, CephFilesystems, and StorageClasses for each ODF pool defined in config. |
+| `02-setup-file-storage.sh` | Discovers IBM Cloud File CSI StorageClasses on the cluster (or uses the fallback list). Also creates Pool CSI FileSharePool if the driver is installed. |
 | `03-setup-block-storage.sh` | Discovers IBM Cloud Block CSI StorageClasses (VSI clusters only). |
-| `04-run-tests.sh` | Main orchestrator. Iterates the test matrix, creates VMs once per group, reuses across fio permutations via SSH. Supports `--resume`, `--dry-run`, `--filter`, and `--exclude`. |
+| `04-run-tests.sh` | Main orchestrator. Iterates the test matrix, creates VMs once per group, reuses across fio permutations via SSH. Supports `--resume`, `--dry-run`, `--filter`, `--exclude`, `--rank`, `--overview`, and `--extra-sc`. |
 | `05-collect-results.sh` | Walks the results directory tree, validates and parses fio JSON files, and produces aggregated CSV. |
-| `06-generate-report.sh` | Generates HTML dashboard (Chart.js), Markdown summary, and XLSX workbook from CSV. Supports `--compare` for multi-run comparison reports. |
-| `07-cleanup.sh` | Deletes test resources. Default: VMs/PVCs only. `--all`: also pools and namespace. |
+| `06-generate-report.sh` | Generates HTML dashboard (Chart.js), Markdown summary, XLSX workbook, and ranking reports from CSV. Supports `--compare` for multi-run comparison and `--rank` for ranking reports. |
+| `07-cleanup.sh` | Deletes test resources. Default: VMs/PVCs only. `--all`: also pools, FileSharePool, and namespace. |
 | `run-all.sh` | Full pipeline runner (01→07). Passes through test flags to `04-run-tests.sh`. Supports `--notify` for webhook completion notifications. |
 
 ## Shared Libraries
@@ -101,7 +101,7 @@ The largest library file, providing:
 | `log_debug/info/warn/error` | Logging with timestamps and log levels |
 | `ensure_ssh_key` | Generate ed25519 SSH key pair if not present |
 | `get_storage_class_for_pool` | Map pool name to StorageClass name |
-| `get_all_storage_pools` | Build list of all pools to test (ODF + File CSI) |
+| `get_all_storage_pools` | Build list of all pools to test (ODF + File CSI + Block CSI + Pool CSI + Extra SCs) |
 | `render_fio_profile` | Substitute `${VARIABLE}` placeholders in .fio files |
 | `render_cloud_init` | Substitute `__PLACEHOLDER__` patterns in cloud-init template |
 | `create_test_vm` | Render VM manifest and `oc apply`. Fails early if cloud-init Secret creation fails. |
@@ -137,6 +137,7 @@ Report generation:
 | `generate_markdown_report` | Create Markdown with config tables and summary metrics |
 | `generate_html_report` | Create HTML dashboard with Chart.js (CSV → JSON → interactive charts) |
 | `generate_comparison_report` | Create comparison HTML dashboard from two run CSVs, showing percentage deltas with direction-aware color coding |
+| `generate_ranking_html_report` | Create ranking HTML report from rank-mode CSV, with composite scores, per-workload tables, and pool classification |
 
 ## Resource Labeling Strategy
 

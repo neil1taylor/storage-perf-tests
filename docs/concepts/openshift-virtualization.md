@@ -114,6 +114,8 @@ Guest I/O → virtio-blk → QEMU (file I/O on disk.img)
 
 This is the extra abstraction layer with filesystem-mode PVCs. A file is pretending to be a disk: the guest thinks it's writing to a raw block device, but each write passes through QEMU's file I/O layer and the host's VFS/NFS stack before reaching the actual storage. Block-mode PVCs skip this layer entirely, which is one reason they tend to have lower latency.
 
+This applies to both NFS-backed PVCs (IBM Cloud File CSI, Pool CSI) and CephFS-backed PVCs (`cephfs-rep3`, `cephfs-rep2`). CephFS PVCs additionally incur MDS metadata overhead. See [Latency Patterns](../guides/latency-patterns.md) for measured performance impacts.
+
 See also [Volume Modes](storage-in-kubernetes.md#volume-modes) for how Kubernetes exposes these two modes.
 
 #### Raw vs qcow2 image format

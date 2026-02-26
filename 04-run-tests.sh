@@ -106,7 +106,7 @@ fi
 
 # Override for rank mode
 if [[ "${RANK_MODE}" == true ]]; then
-  VM_SIZES=("small:2:4Gi")
+  VM_SIZES=("medium:4:8Gi")
   PVC_SIZES=("150Gi")
   CONCURRENCY_LEVELS=(1)
   FIO_BLOCK_SIZES=("4k" "1M")

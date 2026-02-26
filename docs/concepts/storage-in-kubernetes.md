@@ -83,11 +83,18 @@ The test suite tests multiple StorageClasses to compare storage backends:
 | StorageClass | Backend | Created By |
 |-------------|---------|------------|
 | `ocs-storagecluster-ceph-rbd` | ODF rep3 (default ROKS) | Pre-installed with ODF |
+| `ocs-storagecluster-ceph-rbd-virtualization` | ODF rep3-virt (VM-optimized) | Pre-installed with ODF |
+| `ocs-storagecluster-ceph-rbd-encrypted` | ODF rep3-enc (encrypted) | Pre-installed with ODF |
+| `ocs-storagecluster-cephfs` | ODF CephFS rep3 | Pre-installed with ODF |
 | `perf-test-sc-rep2` | ODF rep2 | `01-setup-storage-pools.sh` |
+| `perf-test-sc-cephfs-rep2` | ODF CephFS rep2 | `01-setup-storage-pools.sh` |
 | `perf-test-sc-ec-2-1` | ODF EC 2+1 | `01-setup-storage-pools.sh` |
+| `perf-test-sc-ec-3-1` | ODF EC 3+1 | `01-setup-storage-pools.sh` |
 | `perf-test-sc-ec-2-2` | ODF EC 2+2 | `01-setup-storage-pools.sh` |
 | `perf-test-sc-ec-4-2` | ODF EC 4+2 | `01-setup-storage-pools.sh` |
-| `ibmc-vpc-file-*` | IBM Cloud File | Pre-installed with ROKS |
+| `ibmc-vpc-file-*` | IBM Cloud File (NFS) | Pre-installed with ROKS |
+| `ibmc-vpc-block-*` | IBM Cloud Block (VSI only) | Pre-installed with ROKS |
+| `bench-pool` | IBM Cloud Pool CSI (NFS pool) | `02-setup-file-storage.sh` |
 
 ### Dynamic Provisioning
 
@@ -122,8 +129,10 @@ Kubernetes ←→ CSI Driver ←→ Storage Backend
 
 | Driver | Backend | Used For |
 |--------|---------|----------|
-| `openshift-storage.rbd.csi.ceph.com` | ODF / Ceph RBD | All ODF-backed PVCs (rep2, rep3, EC pools) |
-| `vpc.file.csi.ibm.io` | IBM Cloud VPC File | IBM Cloud File CSI PVCs |
+| `openshift-storage.rbd.csi.ceph.com` | ODF / Ceph RBD | All RBD-backed PVCs (rep2, rep3, EC pools) |
+| `openshift-storage.cephfs.csi.ceph.com` | ODF / CephFS | CephFS-backed PVCs (cephfs-rep3, cephfs-rep2) |
+| `vpc.file.csi.ibm.io` | IBM Cloud VPC File | IBM Cloud File CSI PVCs and Pool CSI (FileSharePool) |
+| `vpc.block.csi.ibm.io` | IBM Cloud VPC Block | IBM Cloud Block CSI PVCs (VSI clusters only) |
 
 Each CSI driver registers itself with Kubernetes and becomes available as a provisioner in StorageClasses.
 

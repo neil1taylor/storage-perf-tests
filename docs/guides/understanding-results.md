@@ -158,7 +158,9 @@ Filter the dashboard to a specific profile and block size, then compare IOPS/lat
 Key questions:
 - How much IOPS do EC pools lose vs rep3?
 - Does EC throughput match replication for large sequential I/O?
-- How does IBM Cloud File compare to ODF?
+- How does IBM Cloud File CSI compare to ODF RBD?
+- How does CephFS compare to RBD for VM workloads? (Expect lower performance due to file-on-filesystem indirection and MDS overhead)
+- How does Pool CSI (pre-provisioned NFS) compare to individual File CSI shares?
 
 ### PVC Size Impact
 
@@ -250,6 +252,23 @@ This is useful for:
 - **Configuration tuning** — Testing fio parameter changes or Ceph tuning
 
 For the complete step-by-step workflow including prerequisites and tips for ensuring comparable runs, see [Comparing Runs](comparing-runs.md).
+
+## Ranking Reports
+
+When you run with `--rank` mode, a dedicated ranking report is generated:
+
+```bash
+./04-run-tests.sh --rank
+# → reports/ranking-perf-YYYYMMDD-HHMMSS.html
+```
+
+The ranking report provides a quick StorageClass comparison with:
+- **Composite score** — Weighted normalization (best=100): random IOPS 40%, sequential BW 30%, mixed IOPS 20%, p99 latency 10%
+- **Per-workload tables** — Random 4k IOPS, sequential 1M throughput, and mixed 70/30 IOPS with horizontal bar charts
+- **Latency table** — Average and p99 read/write latency from the random-rw/4k test
+- **Pool classification** — Each pool is labeled with its type (ODF Replicated, ODF EC, ODF CephFS, IBM Cloud File CSI, IBM Cloud Pool CSI) and storage overhead
+
+For an example, see the [example ranking report](../examples/ranking-report-example.html).
 
 ## Export and Further Analysis
 

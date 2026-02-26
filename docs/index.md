@@ -8,6 +8,7 @@ This documentation covers everything you need to understand, run, and interpret 
 
 - **New to Kubernetes/OpenShift?** Start with the [Concepts](#concepts) section.
 - **Want to create a custom Ceph pool?** See the [CephBlockPool Setup Guide](guides/ceph-pool-setup.md).
+- **Want to quickly rank all StorageClasses?** See `--rank` mode in [Running Tests](guides/running-tests.md#storageclass-ranking).
 - **Ready to run tests?** Jump to the [Guides](#guides) section.
 - **Want to understand the code?** See the [Architecture](#architecture) section.
 - **Looking up a term?** Check the [Glossary](glossary.md).
@@ -37,8 +38,8 @@ Foundational knowledge for understanding the technology stack.
 |----------|-------------------|
 | [Kubernetes Basics](concepts/kubernetes-basics.md) | Clusters, nodes, pods, namespaces, labels, YAML manifests |
 | [OpenShift Overview](concepts/openshift-overview.md) | OpenShift vs Kubernetes, operators, IBM Cloud ROKS, bare metal workers |
-| [Storage in Kubernetes](concepts/storage-in-kubernetes.md) | PersistentVolumes, PVCs, StorageClasses, CSI, dynamic provisioning |
-| [Ceph and ODF](concepts/ceph-and-odf.md) | Ceph architecture, ODF/Rook-Ceph, replicated and erasure-coded pools |
+| [Storage in Kubernetes](concepts/storage-in-kubernetes.md) | PersistentVolumes, PVCs, StorageClasses, CSI drivers (ODF, File, Block, Pool), dynamic provisioning |
+| [Ceph and ODF](concepts/ceph-and-odf.md) | Ceph architecture, ODF/Rook-Ceph, replicated pools, erasure-coded pools, CephFS |
 | [Erasure Coding Explained](concepts/erasure-coding-explained.md) | How EC works, storage efficiency, fault tolerance, performance trade-offs |
 | [Failure Domains and Topology](concepts/failure-domains-and-topology.md) | CRUSH hierarchy, ROKS rack assignment, node placement, failureDomain options |
 | [OpenShift Virtualization](concepts/openshift-virtualization.md) | KubeVirt, VMs on Kubernetes, DataVolumes, cloud-init, virtctl |

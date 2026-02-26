@@ -42,7 +42,7 @@ Ceph is the storage engine behind ODF and is one of the most widely deployed sof
 | **OSD (Object Storage Daemon)** | Stores data on a physical disk. Each NVMe drive on your bare metal workers runs one OSD. Handles replication, recovery, and rebalancing. |
 | **MON (Monitor)** | Maintains the cluster map (which OSDs are alive, where data is). Requires a quorum (majority) of MONs to be healthy. Typically 3 MONs. |
 | **MGR (Manager)** | Provides monitoring, dashboard, and metrics. Runs alongside MONs. |
-| **MDS (Metadata Server)** | Only needed for CephFS (file storage). Not used for block storage in this project. |
+| **MDS (Metadata Server)** | Manages CephFS directory hierarchy and file metadata. Required for CephFS pools (`cephfs-rep3`, `cephfs-rep2`). Not needed for RBD block storage. |
 
 ### How Data Is Stored
 
@@ -96,7 +96,10 @@ See [Erasure Coding Explained](erasure-coding-explained.md) for a deep dive. In 
 |-----------|------|--------|-------------|-----------------|----------------------|-----------|
 | **rep3** | Replicated | size=3, min_size=2 | 3.0x | Survives 2 OSD failures | **Continues** (degraded) | 3 |
 | **rep2** | Replicated | size=2, min_size=2 | 2.0x | Survives 1 OSD failure | **Blocks** until recovery | 2 |
+| **cephfs-rep3** | CephFS | data replica=3 | 3.0x | Survives 2 OSD failures | Continues (degraded) | 3 |
+| **cephfs-rep2** | CephFS | data replica=2 | 2.0x | Survives 1 OSD failure | Blocks until recovery | 2 |
 | **ec-2-1** | Erasure Coded | k=2, m=1 | 1.5x | Survives 1 OSD failure | Continues (degraded) | 3 |
+| **ec-3-1** | Erasure Coded | k=3, m=1 | 1.33x | Survives 1 OSD failure | Continues (degraded) | 4 |
 | **ec-2-2** | Erasure Coded | k=2, m=2 | 2.0x | Survives 2 OSD failures | Continues (degraded) | 4 |
 | **ec-4-2** | Erasure Coded | k=4, m=2 | 1.5x | Survives 2 OSD failures | Continues (degraded) | 6 |
 
@@ -190,6 +193,36 @@ When a VM writes to its data disk, the I/O path is:
 VM fio → virtio block device → virt-launcher pod → RBD CSI driver → Ceph OSD(s)
 ```
 
+## CephFS (Ceph Filesystem)
+
+**CephFS** is Ceph's POSIX-compatible shared filesystem, built on top of RADOS. It provides file-level storage with metadata managed by MDS (Metadata Server) daemons.
+
+### How CephFS Differs from RBD
+
+| Aspect | RBD (Block) | CephFS (File) |
+|--------|------------|---------------|
+| Access | Single-writer block device | Multi-client POSIX filesystem |
+| Volume mode | `Block` (raw device to QEMU) | `Filesystem` (mounted directory) |
+| VM disk path | Direct block device pass-through | `disk.img` file on CephFS mount (file-on-filesystem indirection) |
+| CSI driver | `openshift-storage.rbd.csi.ceph.com` | `openshift-storage.cephfs.csi.ceph.com` |
+| Secrets | `rook-csi-rbd-provisioner`/`rook-csi-rbd-node` | `rook-csi-cephfs-provisioner`/`rook-csi-cephfs-node` |
+| MDS required | No | Yes |
+
+### CephFS Performance for VMs
+
+CephFS PVCs use `volumeMode: Filesystem`. In KubeVirt, this means file-on-filesystem indirection — KubeVirt creates a `disk.img` on the CephFS mount, adding MDS overhead and an extra abstraction layer. CephFS performance is expected to be lower than RBD for VM workloads.
+
+### CephFS Pools in This Project
+
+| Pool | Data Replication | StorageClass | Created By |
+|------|-----------------|--------------|------------|
+| **cephfs-rep3** | 3 replicas | `ocs-storagecluster-cephfs` (OOB) | Pre-installed with ODF |
+| **cephfs-rep2** | 2 replicas | `perf-test-sc-cephfs-rep2` | `01-setup-storage-pools.sh` |
+
+Both pools use a 3-replica metadata pool (required for MDS safety). The metadata pool is always 3-replica regardless of the data pool's replication count.
+
+**Note:** Some ODF versions limit to one CephFilesystem per cluster. If `cephfs-rep2` creation fails, it's caught and logged; `cephfs-rep3` OOB still works.
+
 ## ODF (OpenShift Data Foundation)
 
 **ODF** is Red Hat's distribution of Ceph for OpenShift. It uses the **Rook** operator to automate Ceph deployment and management.
@@ -208,10 +241,11 @@ When ODF is installed on a ROKS cluster with bare metal workers:
 
 1. Rook discovers local NVMe drives and creates OSDs on each
 2. A default CephBlockPool with replication factor 3 is created
-3. A default StorageClass (`ocs-storagecluster-ceph-rbd`) is created
-4. MONs and MGRs are deployed across multiple worker nodes
+3. A default CephFilesystem with replication factor 3 is created
+4. Default StorageClasses are created: `ocs-storagecluster-ceph-rbd` (block), `ocs-storagecluster-ceph-rbd-virtualization` (VM-optimized), `ocs-storagecluster-cephfs` (file)
+5. MONs, MGRs, and MDS daemons are deployed across multiple worker nodes
 
-This default rep3 StorageClass is what most workloads use. Our test suite creates additional pools and StorageClasses to compare performance across different data protection strategies.
+These default StorageClasses are what most workloads use. Our test suite creates additional pools and StorageClasses to compare performance across different data protection strategies.
 
 ### Performance Profiles
 

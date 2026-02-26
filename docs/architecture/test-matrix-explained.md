@@ -26,7 +26,7 @@ The first (profile × block_size) permutation in each group runs via cloud-init 
 
 | # | Dimension | Default Values | Count | Purpose |
 |---|-----------|---------------|-------|---------|
-| 1 | **Storage Pool** | rep3, rep3-virt, rep3-enc, rep2, ec-2-1, ec-2-2, ec-4-2, + File CSI profiles | ~12 | Compare storage backends |
+| 1 | **Storage Pool** | rep3, rep3-virt, rep3-enc, cephfs-rep3, rep2, cephfs-rep2, ec-2-1, ec-3-1, ec-2-2, ec-4-2, + File CSI + Block CSI + Pool CSI | ~14 | Compare storage backends |
 | 2 | **VM Size** | small (2/4Gi), medium (4/8Gi), large (8/16Gi) | 3 | Measure CPU/memory impact on I/O |
 | 3 | **PVC Size** | 150Gi, 500Gi, 1000Gi | 3 | Measure volume size impact on I/O |
 | 4 | **Concurrency** | 1, 5, 10 VMs | 3 | Measure contention and scalability |
@@ -54,21 +54,21 @@ Total = pools × vm_sizes × pvc_sizes × concurrency × (
 )
 ```
 
-With default values (7 ODF + 5 File CSI = 12 pools):
+With default values (10 ODF + 3 File CSI + Pool CSI = ~14 pools on BM; VSI adds Block CSI):
 
 ```
 Variable-BS: 3 profiles × 3 block sizes = 9
 Fixed-BS:    3 profiles × 1              = 3
 Per combo:   9 + 3 = 12
 
-Total = 12 pools × 3 vm_sizes × 3 pvc_sizes × 3 concurrency × 12
-      = 12 × 3 × 3 × 3 × 12
-      = 3,888 test permutations
+Total = 14 pools × 3 vm_sizes × 3 pvc_sizes × 3 concurrency × 12
+      = 14 × 3 × 3 × 3 × 12
+      = 4,536 test permutations
 ```
 
-With 8 ODF pools only: 8 × 3 × 3 × 3 × 12 = 2,592 permutations.
+With 10 ODF pools only: 10 × 3 × 3 × 3 × 12 = 3,240 permutations.
 
-**Note:** ec-3-1 and ec-2-2 (need 4 hosts) and ec-4-2 (needs 6 hosts) are included in the config but automatically skipped on clusters with fewer OSD hosts. The actual pool count depends on your cluster topology.
+**Note:** ec-3-1 and ec-2-2 (need 4 hosts) and ec-4-2 (needs 6 hosts) are included in the config but automatically skipped on clusters with fewer OSD hosts. CephFS pools (`cephfs-rep2`) may also be skipped if the ODF version limits to one CephFilesystem per cluster. The actual pool count depends on your cluster topology.
 
 ## Quick Mode
 
@@ -93,6 +93,28 @@ Total = 12 × 1 × 1 × 1 × 4 = 48 permutations
 ```
 
 This reduces runtime from days to hours while still testing the key dimensions (pool comparison, IOPS vs throughput).
+
+## Rank Mode
+
+The `--rank` flag runs a purpose-built fast matrix for StorageClass ranking:
+
+| Dimension | Values |
+|-----------|--------|
+| VM Sizes | medium only |
+| PVC Sizes | 150Gi only |
+| Concurrency | 1 only |
+| fio Profiles | random-rw, sequential-rw, mixed-70-30 |
+| Block Sizes | 4k (random-rw, mixed), 1M (sequential-rw) |
+| fio Runtime | 60s (reduced from default 120s) |
+
+Rank mode with 14 pools:
+
+```
+3 tests per pool × 14 pools = 42 permutations
+~8.5 minutes per pool → ~1-1.5 hours total
+```
+
+The ranking report is generated automatically and includes composite scores, per-workload rankings, and latency analysis. `--rank` is mutually exclusive with `--quick` and `--overview`.
 
 ## Single-Pool Mode
 

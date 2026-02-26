@@ -16,7 +16,9 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Checkpoint** — A file (`results/<run-id>.checkpoint`) that records completed tests during a run. Each line contains a test key (`pool:vm_size:pvc_size:concurrency:profile:block_size`). Used by `--resume` to skip previously completed tests. See [Test Matrix Explained](architecture/test-matrix-explained.md#checkpoint--resume).
 
-**CephBlockPool** — A Ceph storage pool definition in ODF. Each pool has a replication or erasure coding policy. The test suite creates custom pools with the `perf-test-` prefix. See [Ceph and ODF](concepts/ceph-and-odf.md).
+**CephBlockPool** — A Ceph storage pool definition in ODF for RBD block storage. Each pool has a replication or erasure coding policy. The test suite creates custom pools with the `perf-test-` prefix. See [Ceph and ODF](concepts/ceph-and-odf.md).
+
+**CephFilesystem** — A Ceph filesystem definition in ODF, providing POSIX-compatible shared storage via CephFS. Each CephFilesystem has a metadata pool (always 3-replica for safety) and one or more data pools. The test suite tests `cephfs-rep3` (OOB) and optionally `cephfs-rep2` (custom, 2-replica data pool). See [Ceph and ODF](concepts/ceph-and-odf.md).
 
 **Cloud-init** — An industry-standard tool for VM instance initialization. This project uses cloud-init to install fio, write a benchmark script, and create a systemd service that runs the test automatically on boot. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 
@@ -26,7 +28,7 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **CRUSH (Controlled Replication Under Scalable Hashing)** — Ceph's algorithm for determining which OSDs store which data. CRUSH uses a hierarchy (root → rack → host → osd) to ensure replicas or EC chunks are placed on separate failure domains. See [Failure Domains and Topology](concepts/failure-domains-and-topology.md).
 
-**CSI (Container Storage Interface)** — A standard API that allows storage vendors to provide plugins for Kubernetes. ODF uses a CSI driver for Ceph RBD; IBM Cloud provides a CSI driver for VPC file storage. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
+**CSI (Container Storage Interface)** — A standard API that allows storage vendors to provide plugins for Kubernetes. ODF uses CSI drivers for Ceph RBD and CephFS; IBM Cloud provides CSI drivers for VPC file storage, VPC block storage, and Pool CSI (FileSharePool). See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
 **DataVolume** — A KubeVirt/CDI custom resource that combines a PVC with a source reference (e.g., a DataSource pointing to a pre-cached golden image). Used for VM root disks. This project uses the CDI `storage:` API (rather than `pvc:`) so CDI can determine the optimal access mode and volume mode from the StorageProfile, enabling fast CSI cloning on Ceph RBD. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 
@@ -44,9 +46,13 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Erasure Coding (EC)** — A data protection method that splits data into k data chunks and m parity chunks. More storage-efficient than replication but has higher CPU overhead. See [Erasure Coding Explained](concepts/erasure-coding-explained.md).
 
+**Extra StorageClasses (`--extra-sc`)** — A CLI flag on `04-run-tests.sh` and `run-all.sh` that includes pre-existing StorageClasses in the test matrix without requiring them to be managed by the setup scripts. Useful for testing custom or third-party StorageClasses. Can also be set via the `EXTRA_STORAGE_CLASSES` array in `00-config.sh`.
+
 **Failure Domain** — A group of components that can fail together. Ceph uses failure domains (`osd`, `host`, `rack`, `zone`) to ensure data replicas are placed on separate physical boundaries. This project uses `failureDomain: host` for all pools. See [Failure Domains and Topology](concepts/failure-domains-and-topology.md).
 
 **fio (Flexible I/O Tester)** — An open-source tool for benchmarking and stress-testing I/O subsystems. The core measurement tool in this project. See [fio Benchmarking](concepts/fio-benchmarking.md).
+
+**FileSharePool** — An IBM Cloud Pool CSI custom resource (`storage.ibmcloud.io/v1alpha1`) that pre-provisions a pool of NFS file shares for faster PVC binding. When present, `02-setup-file-storage.sh` auto-detects the CRD and creates a FileSharePool using settings from `00-config.sh`. The driver auto-creates a StorageClass with the same name. See [Configuration Reference](guides/configuration-reference.md#ibm-cloud-pool-csi).
 
 **File-on-filesystem indirection** — The extra abstraction layer when using filesystem-mode PVCs for VM disks. The guest VM thinks it's writing to a raw block device, but each I/O passes through QEMU's file I/O layer (operating on `disk.img`) and the host's filesystem or NFS stack before reaching the actual storage. Block-mode PVCs skip this layer entirely. See [How Storage Reaches the VM](concepts/openshift-virtualization.md#how-storage-reaches-the-vm).
 
@@ -76,13 +82,15 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **ODF (OpenShift Data Foundation)** — Red Hat's storage solution for OpenShift, built on Ceph (via Rook). Provides block, file, and object storage. See [Ceph and ODF](concepts/ceph-and-odf.md).
 
-**OOB (Out-of-Box)** — Resources created automatically by the ODF operator during installation. The OOB pools are `ocs-storagecluster-cephblockpool` (RBD) and `ocs-storagecluster-cephfilesystem-data0` (CephFS), each with `targetSizeRatio: 0.49`. OOB StorageClasses include `ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-ceph-rbd-virtualization`, and `ocs-storagecluster-ceph-rbd-encrypted`. See [CephBlockPool Setup](guides/ceph-pool-setup.md).
+**OOB (Out-of-Box)** — Resources created automatically by the ODF operator during installation. The OOB pools are `ocs-storagecluster-cephblockpool` (RBD) and `ocs-storagecluster-cephfilesystem-data0` (CephFS), each with `targetSizeRatio: 0.49`. OOB StorageClasses include `ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-ceph-rbd-virtualization`, `ocs-storagecluster-ceph-rbd-encrypted`, and `ocs-storagecluster-cephfs`. See [CephBlockPool Setup](guides/ceph-pool-setup.md).
 
 **Operator** — A Kubernetes pattern for automating application lifecycle management. ODF and OpenShift Virtualization are both installed as operators. See [OpenShift Overview](concepts/openshift-overview.md).
 
 **OSD (Object Storage Daemon)** — The Ceph daemon responsible for storing data on a physical disk. Each NVMe drive in the cluster typically runs one OSD. See [Ceph and ODF](concepts/ceph-and-odf.md).
 
 **p99 Latency** — The 99th percentile latency: 99% of operations complete within this time. Captures tail latency spikes that averages hide. Critical for SLA evaluation.
+
+**Pool CSI** — See **FileSharePool**.
 
 **PV (PersistentVolume)** — A piece of storage in a Kubernetes cluster, provisioned by an administrator or dynamically via a StorageClass. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
@@ -91,6 +99,8 @@ Quick-reference for terms used throughout this project and its documentation.
 **Rack (ROKS)** — A logical grouping in the CRUSH hierarchy. ROKS assigns worker nodes to 3 racks (`rack0`, `rack1`, `rack2`) in round-robin order. On a 3-node cluster, each rack has one node. Add nodes in multiples of 3 to maintain balanced rack distribution. See [Failure Domains and Topology](concepts/failure-domains-and-topology.md#roks-topology-how-racks-work).
 
 **RADOS (Reliable Autonomic Distributed Object Store)** — The foundational layer of Ceph that provides distributed object storage. All higher-level Ceph interfaces (RBD, CephFS, RGW) are built on top of RADOS. See [Ceph and ODF](concepts/ceph-and-odf.md).
+
+**Ranking Report** — An HTML report generated by `--rank` mode that compares all StorageClasses using 3 standardized tests per pool (random-rw/4k, sequential-rw/1M, mixed-70-30/4k). Includes a composite score (weighted: random IOPS 40%, sequential BW 30%, mixed IOPS 20%, p99 latency 10%), per-workload ranking tables with bar charts, and gold/silver/bronze highlighting. See [Running Tests — Ranking](guides/running-tests.md#storageclass-ranking).
 
 **Ramp Time** — A warmup period before fio starts recording metrics. Allows caches and I/O queues to reach steady state. Default: 10 seconds.
 

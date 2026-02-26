@@ -22,6 +22,7 @@ declare -a ODF_POOLS=(
 Format: `name:type:params`
 - Replicated: `name:replicated:replication_size`
 - Erasure coded: `name:erasurecoded:data_chunks:coding_chunks`
+- CephFS: `name:cephfs:data_replica_count` (metadata pool is always size=3)
 
 **Important:** Before adding an EC pool, verify your cluster has enough worker nodes. EC pools require k+m hosts when using `failureDomain: host`. For example, ec-8-3 needs 11 hosts. Check with `oc get nodes -l node-role.kubernetes.io/worker`.
 
@@ -36,6 +37,21 @@ oc get sc perf-test-sc-ec-8-3
 ```
 
 **Requirements:** EC pools require at least k+m OSDs on separate failure domains (hosts). An ec-8-3 pool needs 11 hosts with OSDs.
+
+### Adding a CephFS Pool
+
+Add a CephFS entry to the `ODF_POOLS` array:
+
+```bash
+declare -a ODF_POOLS=(
+  "rep3:replicated:3"
+  "cephfs-rep3:cephfs:3"
+  "cephfs-rep2:cephfs:2"
+  "cephfs-custom:cephfs:3"      # ← New CephFS pool
+)
+```
+
+CephFS pools create a `CephFilesystem` CRD with a dedicated data pool. The metadata pool is always 3-replica for MDS safety. Note that some ODF versions limit to one CephFilesystem per cluster — if creation fails, the error is caught and logged.
 
 ### Adding a File CSI Profile
 

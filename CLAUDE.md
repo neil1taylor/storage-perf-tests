@@ -145,7 +145,7 @@ A purpose-built fast mode for ranking StorageClasses by performance. Runs 3 test
 | Sequential throughput | sequential-rw | 1M |
 | Mixed workload | mixed-70-30 | 4k |
 
-Settings: small VM (2 vCPU, 4Gi), 150Gi PVC, concurrency=1, 60s runtime. ~8.5 min/pool, ~1h for BM (9 pools), ~1.5h for VSI (14 pools).
+Settings: medium VM (4 vCPU, 8Gi), 150Gi PVC, concurrency=1, 60s runtime. ~8.5 min/pool, ~1h for BM (9 pools), ~1.5h for VSI (14 pools).
 
 The ranking report (`reports/ranking-{RUN_ID}.html`) includes:
 - **Composite score** with weighted normalization (best=100): random IOPS 40%, sequential BW 30%, mixed IOPS 20%, p99 latency 10%

@@ -17,9 +17,10 @@ This page walks through running the test suite step by step, explaining what eac
 ```
 
 **What it does:**
-- Creates CephBlockPools in the `openshift-storage` namespace for each pool defined in `ODF_POOLS` (except rep3, which uses the default ROKS pool)
-- Creates corresponding StorageClasses with the `perf-test-sc-` prefix, configured with VM-optimized RBD image features (`exclusive-lock`, `object-map`, `fast-diff`) and `mapOptions: krbd:rxbounce`
-- Waits for each pool to reach `Ready` state
+- Creates CephBlockPools in the `openshift-storage` namespace for each RBD pool defined in `ODF_POOLS` (except rep3/rep3-virt/rep3-enc, which use the default ROKS pools)
+- Creates CephFilesystems for CephFS pools (except cephfs-rep3, which uses the OOB CephFilesystem)
+- Creates corresponding StorageClasses with the `perf-test-sc-` prefix, configured with VM-optimized RBD image features (`exclusive-lock`, `object-map`, `fast-diff`) and `mapOptions: krbd:rxbounce` for RBD pools, or CephFS-specific parameters for CephFS pools
+- Waits for each pool to reach `Ready` state (including MDS pod initialization for CephFS pools)
 - If `rep3-enc` is in the pool list, creates the `ceph-csi-kms-token` secret in the test namespace (required for encrypted PVC provisioning). See [Encrypted Storage Setup](encrypted-storage-setup.md) for details.
 
 **Expected output:**
@@ -48,7 +49,8 @@ oc get sc | grep perf-test
 
 **What it does:**
 - If `FILE_CSI_DISCOVERY=auto`, discovers all `vpc-file` StorageClasses on the cluster
-- If `FILE_CSI_DEDUP=true` (the default), filters out `-metro-`, `-retain-`, and `-regional*` StorageClass variants (metro/retain produce identical I/O on single-zone clusters; regional SCs use the `rfs` profile which requires IBM support allowlisting)
+- If `FILE_CSI_DEDUP=true` (the default), filters out `-metro-`, `-retain-`, `-regional*`, `-eit*`, and `-min-iops*` StorageClass variants (metro/retain produce identical I/O on single-zone clusters; regional SCs require IBM support allowlisting; EIT is unsupported on RHCOS; min-iops is too slow for fio benchmarks)
+- If the Pool CSI driver is installed (CRD `filesharepools.storage.ibmcloud.io` exists), creates a FileSharePool and waits for the auto-created StorageClass
 - Writes the filtered list to `results/file-storage-classes.txt`
 - Falls back to the `FILE_CSI_PROFILES` list if discovery finds nothing
 
@@ -63,9 +65,25 @@ oc get sc | grep perf-test
 ...
 ```
 
-Set `FILE_CSI_DEDUP=false` to include all variants (useful for multi-zone clusters). See [Configuration Reference](configuration-reference.md#why-filter--metro--and--retain--variants) for the rationale.
+Set `FILE_CSI_DEDUP=false` to include all variants (useful for multi-zone clusters). See [Configuration Reference](configuration-reference.md#why-filter-variants) for the rationale.
+
+**Duration:** A few seconds (up to 5 minutes if Pool CSI FileSharePool is created)
+
+## Step 2b: Discover Block Storage (VSI Clusters)
+
+```bash
+./03-setup-block-storage.sh
+```
+
+**What it does:**
+- Discovers IBM Cloud Block CSI StorageClasses on VSI clusters
+- Filters out `-metro-` and `-retain-` variants when `BLOCK_CSI_DEDUP=true`
+- Writes the list to `results/block-storage-classes.txt`
+- On bare metal clusters (no Block CSI available), exits cleanly with a log message
 
 **Duration:** A few seconds
+
+**Note:** This step is only needed on VSI clusters. On bare metal clusters, skip it or let it exit cleanly.
 
 ## Step 3: Run Tests
 
@@ -105,6 +123,51 @@ Runs the full matrix but only for one storage pool. Useful for:
 - Testing a newly added pool
 
 **Duration:** ~3-5 hours per pool
+
+### StorageClass Ranking
+
+```bash
+./04-run-tests.sh --rank
+```
+
+A purpose-built fast mode for ranking all StorageClasses by performance. Runs 3 standardized tests per pool:
+
+| Test | Profile | Block Size |
+|------|---------|------------|
+| Random I/O | random-rw | 4k |
+| Sequential throughput | sequential-rw | 1M |
+| Mixed workload | mixed-70-30 | 4k |
+
+Settings: medium VM (4 vCPU, 8Gi), 150Gi PVC, concurrency=1, 60s runtime. Approximately 8.5 minutes per pool.
+
+**Duration:** ~1 hour for BM clusters (9 pools), ~1.5 hours for VSI clusters (14 pools)
+
+The ranking report (`reports/ranking-{RUN_ID}.html`) includes:
+- **Composite score** with weighted normalization (best=100): random IOPS 40%, sequential BW 30%, mixed IOPS 20%, p99 latency 10%
+- Per-workload ranking tables with horizontal bar charts
+- Latency ranking table
+- Gold/silver/bronze highlighting for top 3
+
+`--rank` is mutually exclusive with `--quick` and `--overview`.
+
+### Overview Mode
+
+```bash
+./04-run-tests.sh --overview
+```
+
+Tests all pools with a broader profile set than `--rank` but smaller matrix than the full run. Useful for an all-pool comparison without committing to the full matrix.
+
+**Duration:** ~2 hours
+
+### Extra StorageClasses
+
+```bash
+./04-run-tests.sh --extra-sc my-custom-sc
+./04-run-tests.sh --rank --extra-sc sc-1 --extra-sc sc-2
+```
+
+Include pre-existing StorageClasses in the test matrix without requiring them to be managed by the setup scripts. Useful for testing custom or third-party StorageClasses alongside auto-discovered ones.
 
 ### Dry-Run Preview
 
@@ -337,6 +400,14 @@ Shows what would be deleted without actually deleting anything. Always run this 
 ./run-all.sh --quick --skip-setup    # Run ID: perf-20260215-080000
 # Compare
 ./06-generate-report.sh --compare perf-20260214-103000 perf-20260215-080000
+```
+
+### StorageClass Ranking
+
+```bash
+./run-all.sh --rank                      # Rank all pools (~1-1.5h)
+./run-all.sh --rank --skip-setup         # Re-rank (pools already exist)
+# Open reports/ranking-perf-*.html in browser
 ```
 
 ### Filtered Targeted Test

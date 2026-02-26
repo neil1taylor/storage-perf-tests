@@ -40,6 +40,44 @@ oc get sc | grep vpc-file
 - Run `./02-setup-file-storage.sh` to discover File CSI StorageClasses
 - Verify the StorageClass provisioner pods are running
 
+### CephFilesystem Not Ready
+
+**Symptom:** `01-setup-storage-pools.sh` creates the CephFilesystem but MDS pods don't start, or the pool is skipped.
+
+**Check:**
+```bash
+oc get cephfilesystem -n openshift-storage
+oc get pods -n openshift-storage | grep mds
+```
+
+**Common causes:**
+- **ODF limits to one CephFilesystem:** Some ODF versions restrict to a single CephFilesystem per cluster. If `cephfs-rep3` (OOB) already exists, creating `cephfs-rep2` may fail. The error is caught and logged; `cephfs-rep3` still works.
+- **MDS pod timeout:** Custom CephFilesystem creation requires MDS pod initialization (up to `MDS_READY_TIMEOUT=300s`). If MDS pods take longer, increase the timeout.
+- **Insufficient resources:** MDS pods need CPU/memory. Check node resource availability.
+
+### Pool CSI FileSharePool Issues
+
+**Symptom:** `02-setup-file-storage.sh` fails during Pool CSI setup, or `bench-pool` StorageClass not created.
+
+**Check:**
+```bash
+oc get filesharepools.storage.ibmcloud.io
+oc get sc bench-pool
+```
+
+**Common causes:**
+- **CRD not installed:** The Pool CSI driver is not installed on this cluster. This is expected — setup is silently skipped.
+- **Resource group not detected:** The script tries multiple sources (cluster ConfigMaps, Secrets, ibmcloud CLI). Set `POOL_RESOURCE_GROUP` env var as a fallback.
+- **StorageClass not auto-created:** The driver should create the SC within 300s. If it doesn't, check the Pool CSI controller logs:
+  ```bash
+  oc logs -n kube-system -l app=ibm-vpc-file-csi-controller --tail=50
+  ```
+- **FileSharePool already exists but with wrong config:** Delete it and re-run:
+  ```bash
+  oc delete filesharepools.storage.ibmcloud.io bench-pool
+  ./02-setup-file-storage.sh
+  ```
+
 ## VM Boot Failures
 
 ### VM Stuck in Scheduling
