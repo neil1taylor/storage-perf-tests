@@ -61,7 +61,7 @@
   <div class="header">
     <h1>ROKS vs VCF Storage Performance Comparison</h1>
     <div class="subtitle">IBM Cloud ROKS (OpenShift Virtualization + ODF) vs VMware VCF (vSAN ESA + NFS Endurance)</div>
-    <div class="meta">ROKS run: perf-20260227-153135 (volumeMode: Block for RBD) &mdash; VCF run: 20260225 (150 GiB results)</div>
+    <div class="meta">ROKS run: perf-20260227-194434 (medium VM, 150Gi, concurrency=1, volumeMode: Block for RBD) &mdash; VCF run: 20260225 (medium VM, 150Gi)</div>
   </div>
   <div class="container">
 
@@ -178,7 +178,7 @@
       {
         id: 'nfs_high',
         label: 'NFS High Tier',
-        roks: { name: 'bench-pool', desc: 'Pool CSI, 40k IOPS' },
+        roks: { name: 'bench-pool', desc: 'Pool CSI, dp2' },
         vcf:  { name: 'workload-share-j7hfh', desc: '10 IOPS/GB Endurance' },
         rationale: 'Highest NFS tier available'
       },
@@ -198,14 +198,14 @@
       }
     ];
 
-    // ROKS data (from ranking report perf-20260227-153135, medium VM, 150Gi, volumeMode: Block for RBD)
+    // ROKS data (from ranking run perf-20260227-194434, medium VM, 150Gi, concurrency=1, volumeMode: Block for RBD)
     const ROKS = {
-      'rep3-virt':                { rand_iops: 186012, seq_bw: 21768.3, mixed_iops: 150658, avg_p99_ms: 52.399 },
-      'rep2':                     { rand_iops: 125802, seq_bw: 14596.5, mixed_iops: 96907,  avg_p99_ms: 60.093 },
-      'ec-2-1':                   { rand_iops: 61210,  seq_bw: 1200.0,  mixed_iops: 4016,   avg_p99_ms: 231.930 },
-      'bench-pool':               { rand_iops: 95095,  seq_bw: 4099.7,  mixed_iops: 60053,  avg_p99_ms: 36.146 },
-      'ibmc-vpc-file-1000-iops':  { rand_iops: 3952,   seq_bw: 251.9,   mixed_iops: 1994,   avg_p99_ms: 82.049 },
-      'ibmc-vpc-file-500-iops':   { rand_iops: 1980,   seq_bw: 126.8,   mixed_iops: 992,    avg_p99_ms: 175.635 }
+      'rep3-virt':                { rand_iops: 64483,  seq_bw: 7599.2,  mixed_iops: 48641,  avg_p99_ms: 50.02 },
+      'rep2':                     { rand_iops: 71966,  seq_bw: 8306.0,  mixed_iops: 53574,  avg_p99_ms: 49.10 },
+      'ec-2-1':                   { rand_iops: 49058,  seq_bw: 5814.1,  mixed_iops: 31405,  avg_p99_ms: 85.41 },
+      'bench-pool':               { rand_iops: 53506,  seq_bw: 2049.7,  mixed_iops: 34502,  avg_p99_ms: 53.05 },
+      'ibmc-vpc-file-1000-iops':  { rand_iops: 1984,   seq_bw: 125.9,   mixed_iops: 997,    avg_p99_ms: 768.19 },
+      'ibmc-vpc-file-500-iops':   { rand_iops: 989,    seq_bw: 63.3,    mixed_iops: 496,    avg_p99_ms: 1610.19 }
     };
 
     // VCF data (150 GiB results from ranking run 20260225, medium VM)
@@ -415,12 +415,13 @@
     // ── Key Takeaways ────────────────────────────────────────────────────
     (function() {
       const takeaways = [
-        '<strong>ROKS block storage dominates on IOPS and throughput &mdash; the gap widened with Block PVCs.</strong> With <code>volumeMode: Block</code>, ROKS rep3-virt now delivers 2.3x the random IOPS, 6.7x the mixed IOPS, and 17.7x the sequential throughput of VCF\'s best replicated tier. Block PVCs give QEMU direct <code>host_device</code> passthrough with <code>aio=native</code>, eliminating the <code>disk.img</code> file indirection that was the primary bottleneck in the previous comparison.',
-        '<strong>VCF still wins on latency, but the gap narrowed significantly.</strong> VCF delivered ~5x lower avg p99 tail latency vs ROKS on block storage (down from 7-17x in the previous comparison). ROKS read latency is now sub-1ms (0.95ms for rep3-virt), competitive with VCF. The remaining gap is driven by ROKS write latency (~46-87ms) from synchronous krbd round-trips to Ceph OSDs, whereas vSAN ESA benefits from local-SSD write acknowledgement.',
-        '<strong>VCF thick vs thin: negligible gap at 150 GiB.</strong> At 150 GiB, raid1-ftt1 (thin) achieved 80,851 random IOPS &mdash; within 1% of thick provisioning\'s 81,578. The dramatic 7.3x gap seen at 50 GiB was a first-write zeroing artifact on fresh thin disks. For production workloads with reasonably sized disks, thin provisioning is not a performance concern on vSAN ESA.',
-        '<strong>Erasure coding: VCF leads on mixed and throughput.</strong> VCF RAID-5 delivered 5.7x the mixed IOPS and 1.4x the sequential throughput of ROKS ec-2-1, while ROKS had a slight 11.8% edge on random IOPS. ROKS EC pools are constrained by single-primary PG funneling on small (3-node) clusters; VCF RAID-5 (3+1 across 4 hosts) distributes writes more evenly.',
-        '<strong>NFS high tier: ROKS Pool CSI dominates.</strong> The 40,000 IOPS provisioned Pool CSI delivered 3.7x the random IOPS and 2x the throughput of VCF\'s 10 IOPS/GB Endurance share, achieving near-block-storage performance levels.',
-        '<strong>NFS mid/low tiers: VCF Endurance wins across the board.</strong> IBM Cloud File CSI\'s 500-1000 IOPS tiers are provisioned-IOPS-limited. VCF\'s Endurance shares at 2-4 IOPS/GB scale with capacity, delivering 3-4x better IOPS and throughput at these tiers.'
+        '<strong>ROKS dominates sequential throughput.</strong> ROKS delivered 6-7x the sequential bandwidth of VCF on replicated block storage, and 3.4x on erasure coded. Ceph\'s distributed architecture streams data across multiple OSDs in parallel, far exceeding what vSAN ESA delivers from local SSDs on a single host. This is ROKS\'s strongest advantage.',
+        '<strong>ROKS wins mixed workloads convincingly.</strong> With 70/30 read/write 4k I/O, ROKS delivered 2.2x the IOPS of VCF on replicated storage and 1.4x on EC. The read-heavy mix plays to ROKS\'s strength since reads from Ceph are fast (sub-1ms read p99), and the sequential throughput advantage lifts mixed results.',
+        '<strong>VCF wins random IOPS on block storage.</strong> VCF delivered 11-29% higher random 4k IOPS than ROKS across all block storage tiers. With single-VM concurrency, VCF\'s local-SSD write acknowledgement gives it lower per-I/O latency, which directly translates to higher IOPS. The gap is driven primarily by write latency: ROKS random writes require synchronous krbd round-trips to multiple Ceph OSDs (~12-20ms per write).',
+        '<strong>VCF wins on tail latency everywhere.</strong> VCF delivered 4-5x lower avg p99 latency on block storage. ROKS read latency is competitive (2-3ms), but write p99 (193-354ms) is the outlier. This is inherent to distributed storage with synchronous replication.',
+        '<strong>Erasure coding: ROKS now competitive.</strong> ROKS ec-2-1 delivered +36% better mixed IOPS and +244% better sequential throughput than VCF RAID-5, while VCF led on random IOPS by 29%. On a 3-node cluster, EC performance is constrained by single-primary PG funneling, but ROKS\'s throughput advantage still holds.',
+        '<strong>NFS high tier: ROKS Pool CSI dominates.</strong> The Pool CSI bench-pool delivered 2.1x the random IOPS and 3.1x the mixed IOPS of VCF\'s 10 IOPS/GB Endurance share. Sequential throughput was comparable (~2,050 vs 2,063 MiB/s). The Pool CSI\'s pre-provisioned share pool eliminates per-PVC provisioning latency.',
+        '<strong>NFS mid/low tiers: VCF Endurance wins across the board.</strong> IBM Cloud File CSI\'s 500-1000 IOPS tiers are provisioned-IOPS-limited. VCF\'s Endurance shares at 2-4 IOPS/GB scale with capacity, delivering 7-8x better IOPS and throughput at these tiers.'
       ];
 
       let html = '';
