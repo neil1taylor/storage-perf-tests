@@ -18,14 +18,16 @@ Both platforms were tested with matched parameters for a fair comparison:
 
 **Absolute values across platforms are directly comparable.**
 
+**ROKS note:** RBD pools use `volumeMode: Block` PVCs, giving QEMU direct block device passthrough (`host_device` + `aio=native`). This eliminates the `disk.img` file indirection that previously caused a 48x write penalty with `volumeMode: Filesystem`. See the [ODF Write Latency Investigation](../../reports/odf-write-latency-investigation.md) for details.
+
 ## Storage Mapping
 
 Equivalent storage types were paired across platforms based on architecture and intended use:
 
 | Category | ROKS | VCF | Rationale |
 |----------|------|-----|-----------|
-| Best replicated | `rep2` (2-way RBD) | `raid1-ftt1-thick` (RAID-1 thick) | Top replicated performer on each platform |
-| Standard replicated | `rep3` (3-way RBD) | `raid1-ftt1` (RAID-1 thin) | Default replicated tier |
+| Best replicated | `rep3-virt` (3-way RBD, VM-optimized + Block) | `raid1-ftt1-thick` (RAID-1 thick) | Top replicated performer on each platform |
+| Standard replicated | `rep2` (2-way RBD, Block) | `raid1-ftt1` (RAID-1 thin) | Default replicated tier |
 | Erasure coded | `ec-2-1` (2+1 EC) | `raid5-ftt1` (RAID-5 3+1) | Parity-based space-efficient storage |
 | NFS high tier | `bench-pool` (Pool CSI, 40k IOPS) | `workload-share-j7hfh` (10 IOPS/GB) | Highest NFS tier available |
 | NFS mid tier | `ibmc-vpc-file-1000-iops` | `workload-share-3hq5c` (4 IOPS/GB) | Mid-range NFS |
@@ -35,30 +37,30 @@ Equivalent storage types were paired across platforms based on architecture and 
 
 | Category | ROKS | VCF | Delta |
 |----------|-----:|----:|------:|
-| Best replicated | 133,789 | 81,578 | +64.0% |
-| Standard replicated | 126,840 | 80,851 | +56.9% |
+| Best replicated | 186,012 | 81,578 | +128.0% |
+| Standard replicated | 125,802 | 80,851 | +55.6% |
 | Erasure coded | 61,210 | 69,361 | -11.8% |
 | NFS high tier | 95,095 | 25,668 | +270.5% |
-| NFS mid tier | 3,955 | 14,745 | -73.2% |
-| NFS low tier | 1,977 | 7,671 | -74.2% |
+| NFS mid tier | 3,952 | 14,745 | -73.2% |
+| NFS low tier | 1,980 | 7,671 | -74.2% |
 
 ## Sequential 1M Throughput (MiB/s)
 
 | Category | ROKS | VCF | Delta |
 |----------|-----:|----:|------:|
-| Best replicated | 12,015.3 | 1,229.6 | +877.2% |
-| Standard replicated | 11,427.2 | 1,223.0 | +834.4% |
+| Best replicated | 21,768.3 | 1,229.6 | +1,670.1% |
+| Standard replicated | 14,596.5 | 1,223.0 | +1,093.5% |
 | Erasure coded | 1,200.0 | 1,688.3 | -28.9% |
 | NFS high tier | 4,099.7 | 2,063.3 | +98.7% |
-| NFS mid tier | 252.9 | 999.0 | -74.7% |
-| NFS low tier | 126.8 | 502.4 | -74.8% |
+| NFS mid tier | 251.9 | 999.0 | -74.8% |
+| NFS low tier | 126.8 | 502.4 | -74.7% |
 
 ## Mixed 70/30 4k IOPS
 
 | Category | ROKS | VCF | Delta |
 |----------|-----:|----:|------:|
-| Best replicated | 103,316 | 22,515 | +358.9% |
-| Standard replicated | 93,705 | 23,397 | +300.5% |
+| Best replicated | 150,658 | 22,515 | +569.1% |
+| Standard replicated | 96,907 | 23,397 | +314.2% |
 | Erasure coded | 4,016 | 23,049 | -82.6% |
 | NFS high tier | 60,053 | 10,963 | +447.8% |
 | NFS mid tier | 1,994 | 8,181 | -75.6% |
@@ -68,18 +70,18 @@ Equivalent storage types were paired across platforms based on architecture and 
 
 | Category | ROKS | VCF | Delta |
 |----------|-----:|----:|------:|
-| Best replicated | 76.68 | 10.25 | +647.8% (ROKS worse) |
-| Standard replicated | 84.67 | 10.25 | +726.0% (ROKS worse) |
+| Best replicated | 52.40 | 10.25 | +411.1% (ROKS worse) |
+| Standard replicated | 60.09 | 10.25 | +486.3% (ROKS worse) |
 | Erasure coded | 231.93 | 13.33 | +1,639.6% (ROKS worse) |
 | NFS high tier | 36.15 | 15.17 | +138.2% (ROKS worse) |
-| NFS mid tier | 79.95 | 18.45 | +333.4% (ROKS worse) |
-| NFS low tier | 174.59 | 20.87 | +736.4% (ROKS worse) |
+| NFS mid tier | 82.05 | 18.45 | +344.7% (ROKS worse) |
+| NFS low tier | 175.64 | 20.87 | +741.5% (ROKS worse) |
 
 ## Key Takeaways
 
-1. **ROKS block storage dominates on IOPS and throughput.** The top replicated tiers (`rep2`, `rep3`) delivered 1.6x the random IOPS, 4-5x the mixed IOPS, and 8-9x the sequential throughput of their vSAN equivalents. Ceph's distributed striping across NVMe OSDs gives massive bandwidth advantages over vSAN ESA's per-host architecture.
+1. **ROKS block storage dominates on IOPS and throughput -- the gap widened with Block PVCs.** With `volumeMode: Block`, ROKS rep3-virt now delivers 2.3x the random IOPS, 6.7x the mixed IOPS, and 17.7x the sequential throughput of VCF's best replicated tier. The improvement over the previous comparison (which used `volumeMode: Filesystem`) is dramatic -- Block PVCs give QEMU direct `host_device` passthrough with `aio=native`, eliminating the `disk.img` file indirection that was the primary bottleneck.
 
-2. **VCF wins decisively on latency -- across every category.** VCF delivered 7-17x lower p99 tail latency than ROKS on block storage, and 2-8x lower on NFS. vSAN ESA's local-SSD architecture means I/O never crosses the network for reads, while Ceph's distributed model adds network round-trips even on cache hits. For latency-sensitive workloads (databases, real-time apps), this is the defining metric.
+2. **VCF still wins on latency, but the gap narrowed significantly.** VCF delivered 5x lower avg p99 tail latency vs ROKS on block storage (down from 7-17x in the previous comparison). ROKS read latency is now sub-1ms (0.95ms for rep3-virt), competitive with VCF. The remaining gap is driven by ROKS write latency (~46-87ms) which still requires synchronous krbd round-trips to Ceph OSDs, whereas vSAN ESA benefits from local-SSD write acknowledgement.
 
 3. **VCF thick vs thin provisioning: negligible gap at 150 GiB.** At 150 GiB, `raid1-ftt1` (thin) achieved 80,851 random IOPS -- within 1% of thick provisioning's 81,578. The dramatic 7.3x gap seen at 50 GiB was a first-write zeroing artifact on fresh thin disks. For production workloads with reasonably sized disks, thin provisioning is not a performance concern on vSAN ESA.
 
@@ -100,8 +102,8 @@ Equivalent storage types were paired across platforms based on architecture and 
 | NFS mid tier | VCF | VCF | VCF |
 | NFS low tier | VCF | VCF | VCF |
 
-**ROKS** wins on raw IOPS and throughput for block storage and high-tier NFS. **VCF** wins on tail latency everywhere and on NFS mid/low tiers. The right choice depends on workload profile: throughput-heavy workloads (backups, ETL, bulk data) favor ROKS; latency-sensitive workloads (databases, real-time) favor VCF.
+**ROKS** wins on raw IOPS and throughput for block storage and high-tier NFS -- and the margin increased substantially with Block PVCs. **VCF** wins on tail latency everywhere and on NFS mid/low tiers. The right choice depends on workload profile: throughput-heavy workloads (backups, ETL, bulk data) favor ROKS; latency-sensitive workloads (databases, real-time) favor VCF.
 
 ---
 
-*Data sources: ROKS ranking run `perf-20260225-102034` (medium VM, 150Gi), VCF 150 GiB results from ranking run `20260225` (medium VM, 150Gi).*
+*Data sources: ROKS ranking run `perf-20260227-153135` (medium VM, 150Gi, volumeMode: Block for RBD), VCF 150 GiB results from ranking run `20260225` (medium VM, 150Gi).*

@@ -61,14 +61,14 @@
   <div class="header">
     <h1>ROKS vs VCF Storage Performance Comparison</h1>
     <div class="subtitle">IBM Cloud ROKS (OpenShift Virtualization + ODF) vs VMware VCF (vSAN ESA + NFS Endurance)</div>
-    <div class="meta">ROKS run: perf-20260225-102034 &mdash; VCF run: 20260225 (150 GiB results)</div>
+    <div class="meta">ROKS run: perf-20260227-153135 (volumeMode: Block for RBD) &mdash; VCF run: 20260225 (150 GiB results)</div>
   </div>
   <div class="container">
 
     <!-- Test Conditions -->
     <div class="section">
       <div class="info-box">
-        <strong>Matched test conditions:</strong> Both platforms were tested with <strong>medium VMs (4 vCPU, 8 GiB RAM)</strong>, <strong>150 GiB disks</strong>, and <strong>60s fio runtime</strong>. Test conditions are matched across platforms &mdash; absolute values are directly comparable.
+        <strong>Matched test conditions:</strong> Both platforms were tested with <strong>medium VMs (4 vCPU, 8 GiB RAM)</strong>, <strong>150 GiB disks</strong>, and <strong>60s fio runtime</strong>. Test conditions are matched across platforms &mdash; absolute values are directly comparable. <strong>ROKS update:</strong> RBD pools now use <code>volumeMode: Block</code> PVCs, giving QEMU direct block device passthrough (<code>host_device</code> + <code>aio=native</code>), eliminating the <code>disk.img</code> file indirection bottleneck.
       </div>
     </div>
 
@@ -157,14 +157,14 @@
       {
         id: 'best_replicated',
         label: 'Best Replicated',
-        roks: { name: 'rep2', desc: '2-way RBD' },
+        roks: { name: 'rep3-virt', desc: '3-way RBD, VM-optimized + Block' },
         vcf:  { name: 'raid1-ftt1-thick', desc: 'RAID-1 thick' },
         rationale: 'Top replicated performer on each platform'
       },
       {
         id: 'standard_replicated',
         label: 'Standard Replicated',
-        roks: { name: 'rep3', desc: '3-way RBD' },
+        roks: { name: 'rep2', desc: '2-way RBD, Block' },
         vcf:  { name: 'raid1-ftt1', desc: 'RAID-1 thin' },
         rationale: 'Default replicated tier'
       },
@@ -198,14 +198,14 @@
       }
     ];
 
-    // ROKS data (from ranking report perf-20260225-102034, medium VM, 150Gi)
+    // ROKS data (from ranking report perf-20260227-153135, medium VM, 150Gi, volumeMode: Block for RBD)
     const ROKS = {
-      'rep2':                     { rand_iops: 133789, seq_bw: 12015.3, mixed_iops: 103316, avg_p99_ms: 76.675 },
-      'rep3':                     { rand_iops: 126840, seq_bw: 11427.2, mixed_iops: 93705,  avg_p99_ms: 84.670 },
+      'rep3-virt':                { rand_iops: 186012, seq_bw: 21768.3, mixed_iops: 150658, avg_p99_ms: 52.399 },
+      'rep2':                     { rand_iops: 125802, seq_bw: 14596.5, mixed_iops: 96907,  avg_p99_ms: 60.093 },
       'ec-2-1':                   { rand_iops: 61210,  seq_bw: 1200.0,  mixed_iops: 4016,   avg_p99_ms: 231.930 },
       'bench-pool':               { rand_iops: 95095,  seq_bw: 4099.7,  mixed_iops: 60053,  avg_p99_ms: 36.146 },
-      'ibmc-vpc-file-1000-iops':  { rand_iops: 3955,   seq_bw: 252.9,   mixed_iops: 1994,   avg_p99_ms: 79.951 },
-      'ibmc-vpc-file-500-iops':   { rand_iops: 1977,   seq_bw: 126.8,   mixed_iops: 992,    avg_p99_ms: 174.586 }
+      'ibmc-vpc-file-1000-iops':  { rand_iops: 3952,   seq_bw: 251.9,   mixed_iops: 1994,   avg_p99_ms: 82.049 },
+      'ibmc-vpc-file-500-iops':   { rand_iops: 1980,   seq_bw: 126.8,   mixed_iops: 992,    avg_p99_ms: 175.635 }
     };
 
     // VCF data (150 GiB results from ranking run 20260225, medium VM)
@@ -415,8 +415,8 @@
     // ── Key Takeaways ────────────────────────────────────────────────────
     (function() {
       const takeaways = [
-        '<strong>ROKS block storage dominates on IOPS and throughput.</strong> The top replicated tiers (rep2, rep3) delivered 1.6x the random IOPS, 4-5x the mixed IOPS, and 8-9x the sequential throughput of their vSAN equivalents. Ceph\'s distributed striping across NVMe OSDs gives massive bandwidth advantages over vSAN ESA\'s per-host architecture.',
-        '<strong>VCF wins decisively on latency &mdash; across every category.</strong> VCF delivered 7-17x lower p99 tail latency than ROKS on block storage, and 2-8x lower on NFS. vSAN ESA\'s local-SSD architecture means I/O never crosses the network for reads, while Ceph\'s distributed model adds network round-trips. For latency-sensitive workloads (databases, real-time apps), this is the defining metric.',
+        '<strong>ROKS block storage dominates on IOPS and throughput &mdash; the gap widened with Block PVCs.</strong> With <code>volumeMode: Block</code>, ROKS rep3-virt now delivers 2.3x the random IOPS, 6.7x the mixed IOPS, and 17.7x the sequential throughput of VCF\'s best replicated tier. Block PVCs give QEMU direct <code>host_device</code> passthrough with <code>aio=native</code>, eliminating the <code>disk.img</code> file indirection that was the primary bottleneck in the previous comparison.',
+        '<strong>VCF still wins on latency, but the gap narrowed significantly.</strong> VCF delivered ~5x lower avg p99 tail latency vs ROKS on block storage (down from 7-17x in the previous comparison). ROKS read latency is now sub-1ms (0.95ms for rep3-virt), competitive with VCF. The remaining gap is driven by ROKS write latency (~46-87ms) from synchronous krbd round-trips to Ceph OSDs, whereas vSAN ESA benefits from local-SSD write acknowledgement.',
         '<strong>VCF thick vs thin: negligible gap at 150 GiB.</strong> At 150 GiB, raid1-ftt1 (thin) achieved 80,851 random IOPS &mdash; within 1% of thick provisioning\'s 81,578. The dramatic 7.3x gap seen at 50 GiB was a first-write zeroing artifact on fresh thin disks. For production workloads with reasonably sized disks, thin provisioning is not a performance concern on vSAN ESA.',
         '<strong>Erasure coding: VCF leads on mixed and throughput.</strong> VCF RAID-5 delivered 5.7x the mixed IOPS and 1.4x the sequential throughput of ROKS ec-2-1, while ROKS had a slight 11.8% edge on random IOPS. ROKS EC pools are constrained by single-primary PG funneling on small (3-node) clusters; VCF RAID-5 (3+1 across 4 hosts) distributes writes more evenly.',
         '<strong>NFS high tier: ROKS Pool CSI dominates.</strong> The 40,000 IOPS provisioned Pool CSI delivered 3.7x the random IOPS and 2x the throughput of VCF\'s 10 IOPS/GB Endurance share, achieving near-block-storage performance levels.',

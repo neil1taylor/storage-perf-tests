@@ -2,9 +2,9 @@
 
 Performance benchmarking for VMs on IBM Cloud ROKS with OpenShift Virtualization, testing ODF (Ceph) storage pools, IBM Cloud File CSI, IBM Cloud Block CSI, and IBM Cloud Pool CSI (FileSharePool).
 
-> **[View example ranking report](docs/examples/ranking-report-example.html)** — interactive StorageClass comparison from a 3-node bare metal cluster (bx2d.metal.96x384, Frankfurt)
+> **[View example ranking report](docs/examples/ranking-report-example.html)** — interactive StorageClass comparison from a 3-node bare metal cluster (bx2d.metal.96x384, Frankfurt). Includes ODF (Ceph RBD, CephFS, EC), IBM Cloud File CSI, and Pool CSI. RBD pools use `volumeMode: Block` for direct QEMU block device passthrough.
 
-There is also an example comparison of ODF running on a ROKS cluster and vSAN on a VCF on Classic Cluster [ROKS vs VCF](roks-vs-vcf-comparison.html). The specifications of the hosts/nodes were as follows:
+There is also an example comparison of ODF running on a ROKS cluster and vSAN on a VCF on Classic Cluster [ROKS vs VCF](docs/examples/roks-vs-vcf-comparison.html). The specifications of the hosts/nodes were as follows:
 
 - VCF on Classic: 4 x Dual Intel Xeon Gold 6248, 384 GB RAM, vSAN disks: 960 GB SSD * 4, vSAN cache disks: 960 GB SSD * 2. vSAN OSA (Enable vSAN deduplication and compression: Yes)
 - ROKS Profile/Flavor: 3 x bx2d.metal.96x384 with 8 x 3200 nvme drive

@@ -48,6 +48,9 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 ./07-cleanup.sh                    # Remove VMs and PVCs only
 ./07-cleanup.sh --all              # Full cleanup including pools/namespace
 ./07-cleanup.sh --all --dry-run    # Preview cleanup
+
+# Pod-level fio test (no QEMU, krbd baseline):
+./08-run-pod-test.sh --pool rep3-virt  # Run fio directly in a pod
 ```
 
 ## Architecture
@@ -63,7 +66,7 @@ Scripts are numbered `00-07` and run sequentially. Each script sources `00-confi
 ### Template Rendering
 
 VM creation uses string substitution (`__PLACEHOLDER__` patterns) rather than Helm/Kustomize:
-- `vm-templates/vm-template.yaml` — KubeVirt VM manifest with DataVolume for root disk + PVC for data disk
+- `vm-templates/vm-template.yaml` — KubeVirt VM manifest with DataVolume for root disk + PVC for data disk. Data PVC uses `__VOLUME_MODE__` placeholder resolved by `get_volume_mode_for_pool()` (Block for RBD, Filesystem for CephFS/NFS)
 - `cloud-init/fio-runner.yaml` — cloud-init that installs fio, writes a systemd oneshot service, and runs the benchmark on boot
 - `fio-profiles/*.fio` — fio job files using `${VARIABLE}` placeholders (rendered by `render_fio_profile()` in `lib/vm-helpers.sh`)
 
@@ -167,7 +170,7 @@ The payload includes run ID, status, duration, and cluster description. Compatib
 
 ### Shared Libraries (`lib/`)
 
-- `vm-helpers.sh` — Logging functions (`log_info`, `log_warn`, etc.), SSH key management, StorageClass resolution, template rendering (`render_cloud_init`, `render_fio_profile`), VM CRUD (`create_test_vm`, `delete_test_vm`, `collect_vm_results`), VM reuse helpers (`replace_fio_job`, `restart_fio_service`), VM wait with DataVolume clone monitoring (`wait_for_vm_running`). All `virtctl ssh` calls are wrapped with `timeout 30` (or `timeout 60` for data transfers like result collection) to prevent indefinite hangs on unresponsive VMs. Secret creation failure during `create_test_vm` is caught immediately with `return 1` rather than falling through to a long boot timeout.
+- `vm-helpers.sh` — Logging functions (`log_info`, `log_warn`, etc.), SSH key management, StorageClass resolution, template rendering (`render_cloud_init`, `render_fio_profile`), VM CRUD (`create_test_vm`, `delete_test_vm`, `collect_vm_results`), VM reuse helpers (`replace_fio_job`, `restart_fio_service`), VM wait with DataVolume clone monitoring (`wait_for_vm_running`), and `get_volume_mode_for_pool()` which returns `Block` for RBD/Block CSI pools and `Filesystem` for CephFS/File CSI/Pool CSI. All `virtctl ssh` calls are wrapped with `timeout 30` (or `timeout 60` for data transfers like result collection) to prevent indefinite hangs on unresponsive VMs. Secret creation failure during `create_test_vm` is caught immediately with `return 1` rather than falling through to a long boot timeout.
 - `wait-helpers.sh` — Polling loops with timeouts: `wait_for_all_vms_running`, `wait_for_all_fio_complete` (handles `active`/`failed` states for oneshot services with `RemainAfterExit=yes`), `wait_for_pvc_bound`, `retry_with_backoff`. SSH polling calls use `timeout 30` to prevent hangs.
 - `report-helpers.sh` — fio JSON parsing with `jq`, CSV aggregation, Markdown report generation, HTML dashboard with Chart.js, and StorageClass ranking report (`generate_ranking_html_report()`). Validates fio JSON structure before parsing (checks `.jobs | length > 0` and presence of `read`/`write` fields). Uses process substitution (`< <(find ...)`) instead of pipe to avoid subshell variable scoping issues.
 

@@ -95,6 +95,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  volumeMode: __VOLUME_MODE__
   storageClassName: __SC_NAME__
   resources:
     requests:

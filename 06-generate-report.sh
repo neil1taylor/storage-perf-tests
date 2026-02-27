@@ -48,8 +48,8 @@ generate_comparison_report() {
   log_info "Generating comparison report: ${output_html}"
 
   local compare_json
-  compare_json=$(python3 << 'PYEOF2'
-import csv, json, sys
+  compare_json=$(CSV1="${csv1}" CSV2="${csv2}" RUN1="${run1}" RUN2="${run2}" python3 << 'PYEOF2'
+import csv, json, os
 
 def load_csv(path):
     data = {}
@@ -77,10 +77,10 @@ def load_csv(path):
                         pass
     return data
 
-csv1 = sys.argv[1]
-csv2 = sys.argv[2]
-run1 = sys.argv[3]
-run2 = sys.argv[4]
+csv1 = os.environ['CSV1']
+csv2 = os.environ['CSV2']
+run1 = os.environ['RUN1']
+run2 = os.environ['RUN2']
 
 data1 = load_csv(csv1)
 data2 = load_csv(csv2)
@@ -124,7 +124,7 @@ print(json.dumps({
     'metrics': [{'key': m, 'label': l, 'higher_better': h} for m, l, h in metrics]
 }))
 PYEOF2
-  "${csv1}" "${csv2}" "${run1}" "${run2}")
+  )
 
   cat > "${output_html}" <<HTMLEOF
 <!DOCTYPE html>

@@ -12,101 +12,90 @@ Four distinct latency profiles emerge from the benchmarks:
 
 | Backend Type | Read Latency | Write Latency | Pattern |
 |-------------|-------------|--------------|---------|
-| **Ceph RBD (replicated)** | Sub-2ms | 60-80ms | Extreme asymmetry |
-| **Ceph CephFS** | Higher than RBD | Higher than RBD | RBD-like asymmetry + MDS/indirection overhead |
-| **IBM Cloud File/Pool CSI (NFS)** | 20-130ms | 20-130ms | Symmetric, tier-dependent |
-| **Ceph RBD (erasure coded)** | 5-10ms | 100-120ms | Asymmetric with EC overhead |
+| **Ceph RBD (replicated, Block PVC)** | Sub-1ms | 36-87ms | Asymmetric (krbd synchronous writes) |
+| **Ceph CephFS** | Sub-2ms | 13-377ms p99 | RBD-like asymmetry + MDS/indirection overhead |
+| **IBM Cloud File/Pool CSI (NFS)** | 2-128ms | 5-130ms | Symmetric, tier-dependent |
+| **Ceph RBD (erasure coded)** | 5-10ms | 100-170ms | Asymmetric with EC overhead |
 
 Each pattern has a distinct cause rooted in the storage architecture.
 
+## The volumeMode: Block Discovery
+
+The single most impactful finding from the write latency investigation was the role of PVC `volumeMode`. With the default `volumeMode: Filesystem`, KubeVirt creates a `disk.img` file on the PVC mount and QEMU opens it as `driver: file` without `aio: native`. This causes a **48x write penalty** compared to `volumeMode: Block`, where QEMU gets direct block device passthrough (`driver: host_device`, `aio: native`).
+
+All RBD pool benchmarks now use `volumeMode: Block`. CephFS and NFS pools use `volumeMode: Filesystem` (required by their storage backends). The latency numbers in this guide reflect the Block PVC configuration for RBD.
+
+For the full layer-by-layer analysis, see the [ODF Write Latency Investigation Report](../../reports/odf-write-latency-investigation.md).
+
 ## Ceph RBD Replicated: Fast Reads, Expensive Writes
 
-Replicated Ceph pools (rep2, rep3, rep3-virt) show the most striking pattern — **reads are ~55x faster than writes**.
+Replicated Ceph pools (rep2, rep3-virt, rep3-enc) show the most striking pattern — reads are fast but writes still carry overhead from synchronous krbd replication.
 
-Typical numbers:
+Typical numbers (with `volumeMode: Block`):
 
 | Pool | Read Avg | Write Avg | Read p99 | Write p99 |
 |------|----------|-----------|----------|-----------|
-| rep2 | ~1.2ms | ~67ms | ~30ms | ~109ms |
-| rep3 | ~1.3ms | ~73ms | ~30ms | ~112ms |
-| rep3-virt | ~1.3ms | ~75ms | ~29ms | ~118ms |
+| rep3-virt | ~0.95ms | ~46ms | ~15ms | ~90ms |
+| rep2 | ~1.1ms | ~37ms | ~16ms | ~104ms |
+| rep3-enc | ~1.3ms | ~50ms | ~16ms | ~127ms |
 
 ### Why Reads Are Fast
 
 A read only needs one OSD. The primary OSD for a placement group serves the read directly, often from its NVMe page cache. The path is:
 
 ```
-VM → krbd → primary OSD (NVMe cache hit) → response
+VM → QEMU (host_device, aio=native) → krbd → primary OSD (NVMe cache hit) → response
 ```
 
-One network hop, one disk access (often cached). Sub-millisecond latency is expected for cached 4k reads on NVMe-backed OSDs.
+One network hop, one disk access (often cached). Sub-millisecond latency is expected for cached 4k reads on NVMe-backed OSDs. With `volumeMode: Block`, QEMU uses direct block device passthrough, adding negligible overhead to the storage path.
 
-### Why Writes Are Slow
+### Why Writes Are Still Slower
 
-A write must be acknowledged by **all replicas** before returning to the client. For rep3, that means:
+Write latency is dominated by **synchronous krbd replication** — every 4k write must travel from the guest to the primary OSD, be replicated to all secondary OSDs, and receive acknowledgement before the guest sees completion:
 
 ```
-VM → krbd → primary OSD → [parallel] replica OSD 1 + replica OSD 2 → all ack → response
+VM → QEMU (host_device, aio=native) → krbd → primary OSD → replicate to N-1 secondaries → ack
 ```
 
-Each replica involves a network round-trip and an NVMe flush. The write latency is dominated by the slowest replica's response time. With 3 workers and NVMe, each replica flush takes ~20-25ms, and the serial overhead of coordinating acknowledgments adds up.
+Key factors:
+1. **krbd has no write-back cache** — unlike librbd (which delivers 48K IOPS through its write-back cache), the kernel RBD module submits every 4k write as an individual synchronous RADOS operation.
+2. **Ceph replication overhead** — each write must be acknowledged by all replicas (2 for rep2, 3 for rep3), with network round-trips to each OSD.
+3. **Write merges help significantly** — with Block PVCs, QEMU enables 108K+ write merges per test (vs 5 with Filesystem PVCs), which partially compensates for the per-I/O krbd overhead.
+
+Note: With `volumeMode: Filesystem` (the old default), these numbers were dramatically worse (~700 write IOPS, ~180ms latency) due to QEMU's `file` driver + no `aio=native` on the `disk.img` indirection layer. The Block PVC fix recovered ~48x write performance.
 
 ### rep2 vs rep3: Fewer Replicas = Lower Write Latency
 
 rep2 writes to 2 OSDs instead of 3. Fewer replicas means fewer acks to wait for:
 
-- **rep2 write avg:** ~67ms (2 replica acks)
-- **rep3 write avg:** ~73ms (3 replica acks)
+- **rep2 write avg:** ~37ms (2 replica acks)
+- **rep3-virt write avg:** ~46ms (3 replica acks)
 
-The ~8% difference is smaller than you might expect (2/3 = 33% fewer replicas) because the primary OSD's local write and network overhead are fixed costs that don't scale with replica count.
+The ~24% difference is consistent with the additional replica round-trip. For reads, rep2 and rep3 perform identically — both serve from a single primary OSD.
 
-For reads, rep2 and rep3 perform identically — both serve from a single primary OSD.
+## The rep3-virt Advantage: VM-Optimized StorageClass
 
-## The rep3-virt Paradox: VM-Optimized but Not Faster with O_DIRECT
+The `rep3-virt` StorageClass uses the ODF virtualization SC with `exclusive-lock`, `object-map`, and `fast-diff` image features plus `rxbounce` map option. In the benchmarks, **rep3-virt is clearly the top performer**:
 
-The `rep3-virt` StorageClass uses the ODF virtualization SC with `exclusive-lock`, which enables write-back caching. Elsewhere in the docs (and in Ceph documentation generally), this is cited as providing up to 7x write IOPS improvement. Yet in the benchmarks, **rep3-virt is marginally slower than rep3**:
+- **rep3-virt random IOPS:** 186,012
+- **rep2 random IOPS:** 125,802
 
-- **rep3 write avg:** ~73ms
-- **rep3-virt write avg:** ~75ms
+### Why rep3-virt Outperforms
 
-This is not a bug — it's a direct consequence of how the benchmarks run.
-
-### The O_DIRECT Factor
-
-All fio profiles use `direct=1`, which issues I/O with the `O_DIRECT` flag. This bypasses the kernel page cache entirely and submits I/O directly to the block device.
-
-The `exclusive-lock` feature enables a write-back cache in the **librbd user-space library**, but KubeVirt VMs use the **krbd kernel client** (`/dev/rbd*` block devices). The krbd driver does not implement a write-back cache — it relies on the kernel's page cache for caching, which `O_DIRECT` bypasses.
-
-So the path with rep3-virt is:
-
-```
-fio (O_DIRECT) → krbd → Ceph (exclusive-lock state maintained but cache unused) → response
-```
-
-The small extra overhead (~2ms) likely comes from maintaining the exclusive-lock state (lock heartbeats, object-map updates) without any caching benefit.
-
-### When Does rep3-virt Actually Help?
-
-The `exclusive-lock` feature provides its full benefit when:
-
-1. **The application uses buffered I/O** (no O_DIRECT) — the kernel page cache can batch and coalesce writes before flushing to the block device
-2. **Single-writer guarantees** are needed — exclusive-lock prevents split-brain scenarios with concurrent writers
-3. **Clone and snapshot operations** — `object-map` + `fast-diff` (which depend on `exclusive-lock`) dramatically speed up DataVolume cloning and snapshot creation
-
-For real VM workloads (databases with WAL, OS disk activity, application logging), most I/O goes through the page cache and benefits from exclusive-lock. The fio benchmarks with `direct=1` specifically measure the *storage backend* performance and intentionally bypass caching — this is the correct methodology for comparing storage backends, but it doesn't reflect typical application behavior.
+With `volumeMode: Block`, the `exclusive-lock` feature enables write optimizations at the OSD level — single-writer guarantees allow the OSD to skip coordination overhead. The `object-map` feature speeds up sparse image operations. Combined with `rxbounce` (correctness fix for guest OS CRC errors), these features deliver measurable benefits even with O_DIRECT fio workloads.
 
 ### Practical Recommendation
 
-Use `rep3-virt` for production VMs. The benchmark numbers with `direct=1` show the raw storage floor, but real workloads will see better write performance through page cache coalescing and the exclusive-lock optimizations. The `rxbounce` map option is also a correctness requirement (prevents CRC errors) regardless of caching behavior.
+Use `rep3-virt` with `volumeMode: Block` for production VMs. This combination delivers the best overall performance — 186K random IOPS and 21.7 GiB/s sequential throughput — while maintaining 3-way replication for data safety.
 
-## CephFS Pools: RBD Overhead Plus Indirection
+## CephFS Pools: Filesystem Indirection Is Unavoidable
 
-CephFS pools (`cephfs-rep3`, `cephfs-rep2`) show higher latency than their RBD equivalents due to two compounding factors:
+CephFS pools (`cephfs-rep3`, `cephfs-rep2`) cannot use `volumeMode: Block` because CephFS provides a POSIX filesystem, not a block device. KubeVirt creates a `disk.img` on the CephFS mount, so CephFS VMs always use the slower file indirection path:
 
-1. **File-on-filesystem indirection:** CephFS PVCs use `volumeMode: Filesystem`. KubeVirt creates a `disk.img` on the CephFS mount — each guest I/O passes through QEMU's file I/O layer and the CephFS POSIX stack before reaching Ceph.
+1. **File-on-filesystem indirection:** Each guest I/O passes through QEMU's file I/O layer and the CephFS POSIX stack before reaching Ceph.
 2. **MDS overhead:** CephFS metadata operations (file open, stat, create) go through MDS daemons, adding latency that RBD doesn't have.
 
-CephFS pools exhibit the same read/write asymmetry as RBD (reads from a single OSD, writes to multiple replicas) but with higher baseline latency. For VM workloads, RBD is preferred unless POSIX shared filesystem semantics are required.
+CephFS pools exhibit the same read/write asymmetry as RBD (reads from a single OSD, writes to multiple replicas) but with higher baseline latency and extreme write p99 tail latency. For VM workloads, RBD with Block PVCs is strongly preferred unless POSIX shared filesystem semantics are required.
 
 ## IBM Cloud File CSI: Consistent but Tier-Limited
 
@@ -114,9 +103,9 @@ NFS-based file storage shows a completely different pattern — **symmetric read
 
 | Pool | Read Avg | Write Avg | Read p99 | Write p99 |
 |------|----------|-----------|----------|-----------|
-| ibmc-vpc-file-3000-iops | ~21ms | ~23ms | ~31ms | ~51ms |
-| ibmc-vpc-file-1000-iops | ~64ms | ~65ms | ~85ms | ~76ms |
-| ibmc-vpc-file-500-iops | ~128ms | ~130ms | ~173ms | ~171ms |
+| ibmc-vpc-file-3000-iops | ~21ms | ~23ms | ~27ms | ~47ms |
+| ibmc-vpc-file-1000-iops | ~64ms | ~65ms | ~87ms | ~78ms |
+| ibmc-vpc-file-500-iops | ~128ms | ~129ms | ~179ms | ~172ms |
 
 ### Why Symmetric
 
@@ -140,7 +129,7 @@ With `iodepth=32` and `numjobs=4`, there are 128 concurrent I/Os in flight. The 
 
 ### Low Jitter
 
-The p99/average ratio for file CSI is typically 1.5-2x, compared to 25-50x for Ceph RBD (where p99 is dominated by write tail latency). This means file CSI delivers **more predictable latency** — there are fewer extreme outliers. For workloads where worst-case latency matters more than average latency (e.g., real-time applications, SLA-bound services), this predictability can be valuable despite the higher baseline.
+The p99/average ratio for file CSI is typically 1.5-2x, compared to larger ratios for Ceph RBD (where p99 is dominated by write tail latency). This means file CSI delivers **more predictable latency** — there are fewer extreme outliers. For workloads where worst-case latency matters more than average latency (e.g., real-time applications, SLA-bound services), this predictability can be valuable despite the higher baseline.
 
 ## Erasure Coded Pools: The Write Amplification Penalty
 
@@ -148,7 +137,7 @@ EC pools combine the worst of both worlds for latency:
 
 | Pool | Read Avg | Write Avg | Read p99 | Write p99 |
 |------|----------|-----------|----------|-----------|
-| ec-2-1 | ~10ms | ~119ms | ~12ms | ~367ms |
+| ec-2-1 | ~5.5ms | ~172ms | ~13ms | ~451ms |
 
 ### Why Reads Are Slower Than Replicated
 
@@ -158,7 +147,7 @@ EC reads must decode data from k chunks. For ec-2-1 (k=2, m=1), a read involves:
 VM → krbd → replicated metadata pool (lookup) → EC data pool (read 2 chunks) → decode → response
 ```
 
-The extra metadata pool lookup and multi-chunk read add ~8-9ms over a replicated read.
+The extra metadata pool lookup and multi-chunk read add ~4-5ms over a replicated read.
 
 ### Why Writes Are Much Slower
 
@@ -171,9 +160,9 @@ EC writes must:
 
 For ec-2-1, that's 3 OSDs to ack (vs 2 for rep2 or 3 for rep3), but with the added overhead of parity calculation and the metadata pool round-trip.
 
-### The 367ms Write p99
+### The 451ms Write p99
 
-The EC write p99 (367ms) is **3x worse than any replicated pool** and the single worst metric in the entire ranking. This happens because:
+The EC write p99 is the **single worst metric in the entire ranking**. This happens because:
 
 - Parity computation adds CPU time in the critical path
 - Writing to both a metadata pool and a data pool serializes some operations
@@ -184,7 +173,7 @@ The EC write p99 (367ms) is **3x worse than any replicated pool** and the single
 
 EC trades latency for **storage efficiency**. ec-2-1 uses 1.5x raw capacity (vs 2x for rep2 or 3x for rep3). For workloads that are:
 
-- **Read-heavy** — EC read latency (~10ms) is acceptable for many applications
+- **Read-heavy** — EC read latency (~5.5ms) is acceptable for many applications
 - **Throughput-oriented** — Sequential 1M reads/writes are less latency-sensitive, and EC's bandwidth can be competitive
 - **Capacity-constrained** — When you need to store more data than replication allows
 
@@ -196,11 +185,11 @@ The ranking report sorts by **avg p99 = (read_p99 + write_p99) / 2**. This singl
 
 | Rank | Pool | Read p99 | Write p99 | Avg p99 |
 |------|------|----------|-----------|---------|
-| #1 | ibmc-vpc-file-3000-iops | 31ms | 51ms | 41ms |
-| #2 | rep2 | 30ms | 109ms | 69ms |
-| #3 | rep3 | 30ms | 112ms | 71ms |
+| #1 | bench-pool | 8ms | 64ms | 36ms |
+| #2 | ibmc-vpc-file-3000-iops | 27ms | 47ms | 37ms |
+| #3 | rep3-virt | 15ms | 90ms | 52ms |
 
-File CSI 3000-iops "wins" despite having **10x worse read latency** than Ceph because its consistent writes don't drag the average up. Ceph pools deliver sub-1.3ms reads but their 100ms+ write p99 dominates the averaged metric.
+Bench-pool and File CSI "win" despite having worse read latency than Ceph because their consistent writes don't drag the average up as much. Ceph RBD delivers sub-1ms average reads but write p99 of 90-127ms dominates the averaged metric.
 
 ### Choosing the Right Metric for Your Workload
 
@@ -212,7 +201,7 @@ File CSI 3000-iops "wins" despite having **10x worse read latency** than Ceph be
 | Latency-SLA service | Max of (read p99, write p99) | SLA doesn't distinguish R vs W |
 | Throughput pipeline | Sequential BW | Latency is less important for bulk I/O |
 
-For most VM workloads (general-purpose, databases, web applications), **read latency dominates** because applications issue far more reads than writes. In this case, Ceph RBD's sub-2ms reads make it the clear winner despite the ranking table suggesting otherwise.
+For most VM workloads (general-purpose, databases, web applications), **read latency dominates** because applications issue far more reads than writes. In this case, Ceph RBD's sub-1ms reads make it the clear winner despite the ranking table suggesting otherwise.
 
 ## IBM Cloud Pool CSI: Pre-Provisioned NFS
 
@@ -222,20 +211,23 @@ The key difference is **PVC bind time**: Pool CSI binds PVCs almost instantly fr
 
 ## Summary of Key Findings
 
-1. **Ceph RBD reads are ~55x faster than writes** due to single-OSD reads vs multi-replica write acks. This asymmetry is fundamental to Ceph's replication architecture.
+1. **`volumeMode: Block` is critical for RBD performance.** The default `volumeMode: Filesystem` causes KubeVirt to create a `disk.img` file, which QEMU opens as `driver: file` without `aio=native`. Switching to Block gives QEMU `host_device` + `aio=native` — a 48x write IOPS improvement (from ~700 to ~34,000 IOPS).
 
-2. **rep2 has ~8% lower write latency than rep3** — consistent with fewer replicas but less of a gap than the 2-vs-3 replica count suggests, because primary OSD overhead is fixed.
+2. **Ceph RBD reads are sub-1ms with Block PVCs.** With direct block device passthrough, the QEMU overhead is negligible. Read latency is dominated by the krbd-to-OSD network hop.
 
-3. **rep3-virt's exclusive-lock caching doesn't help with O_DIRECT** — the krbd kernel driver doesn't implement write-back caching, so direct I/O benchmarks bypass the feature. Real (buffered) workloads will see better write performance.
+3. **Write latency (36-87ms) is driven by synchronous krbd replication.** Every 4k write must round-trip to all replica OSDs. krbd has no write-back cache (unlike librbd). This is a fundamental architectural constraint, not a configuration issue.
 
-4. **File CSI has symmetric, tier-proportional latency** — no read/write asymmetry, IOPS scales with tier, and low jitter (p99 ~1.5-2x average). Good for predictability-sensitive workloads.
+4. **rep3-virt is the clear winner** with 186K random IOPS, 21.7 GiB/s sequential throughput, and sub-1ms read latency. The VM-optimized StorageClass features (`exclusive-lock`, `object-map`, `fast-diff`) provide measurable benefits with Block PVCs.
 
-5. **EC pools have the worst write tail latency** (367ms p99) due to parity computation + metadata pool round-trip + multi-chunk writes. Use only for read-heavy or throughput-oriented workloads.
+5. **File CSI has symmetric, tier-proportional latency** — no read/write asymmetry, IOPS scales with tier, and low jitter (p99 ~1.5-2x average). Good for predictability-sensitive workloads.
 
-6. **The avg p99 ranking metric favors consistency over raw speed** — it can rank a 21ms-read NFS backend above a 1.2ms-read Ceph backend. Always consider your workload's read/write ratio.
+6. **EC pools have the worst write tail latency** (451ms p99) due to parity computation + metadata pool round-trip + multi-chunk writes. Use only for read-heavy or throughput-oriented workloads.
+
+7. **CephFS cannot benefit from Block PVCs** and retains the file indirection overhead. Use RBD for VM workloads unless POSIX shared filesystem semantics are required.
 
 ## Next Steps
 
+- [ODF Write Latency Investigation](../../reports/odf-write-latency-investigation.md) — Layer-by-layer analysis proving `disk.img` file indirection as the primary write latency bottleneck, and `volumeMode: Block` as the fix
 - [Understanding Results](understanding-results.md) — How to read all report formats and analysis tips
 - [fio Profiles Reference](../architecture/fio-profiles-reference.md) — What each benchmark profile measures
 - [CephBlockPool Setup](ceph-pool-setup.md) — Image features, VM-optimized settings, and performance impact

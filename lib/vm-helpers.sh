@@ -77,6 +77,23 @@ _is_extra_sc() {
 }
 
 # ---------------------------------------------------------------------------
+# Resolve PVC volumeMode for a pool (Block for RBD/Block CSI, Filesystem for CephFS/File CSI/Pool CSI)
+# ---------------------------------------------------------------------------
+get_volume_mode_for_pool() {
+  local pool_name="$1"
+
+  if [[ "${pool_name}" == cephfs-* ]]; then
+    echo "Filesystem"
+  elif [[ "${pool_name}" == ibmc-* ]] || [[ "${pool_name}" == *vpc-file* ]]; then
+    echo "Filesystem"
+  elif [[ "${pool_name}" == "${POOL_CSI_NAME}" ]] || [[ "${pool_name}" == *file-pool* ]]; then
+    echo "Filesystem"
+  else
+    echo "Block"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Resolve StorageClass name from pool definition
 # ---------------------------------------------------------------------------
 get_storage_class_for_pool() {
@@ -238,6 +255,12 @@ create_test_vm() {
   manifest="${manifest//__RUN_ID__/${RUN_ID}}"
   manifest="${manifest//__DATASOURCE_NAME__/${DATASOURCE_NAME}}"
   manifest="${manifest//__DATASOURCE_NAMESPACE__/${DATASOURCE_NAMESPACE}}"
+
+  # Resolve volume mode based on pool type (Block for RBD, Filesystem for CephFS/File/Pool CSI)
+  local volume_mode
+  volume_mode=$(get_volume_mode_for_pool "${pool_name}")
+  manifest="${manifest//__VOLUME_MODE__/${volume_mode}}"
+  log_debug "Volume mode for ${pool_name}: ${volume_mode}"
 
   # Create a Secret for cloud-init userdata (avoids KubeVirt's 2KiB inline limit)
   local ci_secret_name="${vm_name}-cloudinit"
