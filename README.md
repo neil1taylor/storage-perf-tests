@@ -6,7 +6,7 @@ Tested on a 3-node bare metal ROKS cluster (3x `bx2d.metal.96x384` with 8x 3200 
 
 ## Latest Ranking Results
 
-Results from run `perf-20260227-194434` on a 3-node bare metal cluster (3x `bx2d.metal.96x384`, Frankfurt). Medium VM (4 vCPU, 8 GiB), 150 GiB PVC, concurrency=1, fio runtime 60s. RBD pools use `volumeMode: Block` for direct QEMU block device passthrough.
+Results from run `perf-20260227-203655` on a 3-node bare metal cluster (3x `bx2d.metal.96x384`, Frankfurt). Medium VM (4 vCPU, 8 GiB), 150 GiB PVC, concurrency=1, fio runtime 60s. RBD pools use `volumeMode: Block` for direct QEMU block device passthrough.
 
 | Pool | Random 4k IOPS | Seq 1M (MiB/s) | Mixed 70/30 IOPS |
 |------|---------------:|----------------:|-----------------:|
@@ -14,6 +14,7 @@ Results from run `perf-20260227-194434` on a 3-node bare metal cluster (3x `bx2d
 | rep3 | 64,504 | 7,616 | 49,203 |
 | rep3-virt | 64,483 | 7,599 | 48,641 |
 | rep3-enc | 62,702 | 6,673 | 56,283 |
+| cephfs-rep2 | 59,956 | 5,378 | 45,126 |
 | bench-pool (Pool CSI) | 53,506 | 2,050 | 34,502 |
 | ec-2-1 | 49,058 | 5,814 | 31,405 |
 | cephfs-rep3 | 45,557 | 4,809 | 37,762 |
@@ -24,7 +25,8 @@ Results from run `perf-20260227-194434` on a 3-node bare metal cluster (3x `bx2d
 Key findings:
 - **rep2 leads random IOPS** — 2-replica writes ack faster than 3-replica, giving 12% more random IOPS than rep3-virt
 - **rep3-enc negligible encryption overhead** — encrypted SC within 3% of unencrypted rep3 across all workloads
-- **ODF block storage dominates throughput** — RBD pools deliver 6,600-8,300 MiB/s sequential, 30-60x faster than IBM Cloud File CSI
+- **cephfs-rep2 outperforms cephfs-rep3** — 32% more random IOPS and 12% more sequential throughput from 2-replica vs 3-replica data pool
+- **ODF block storage dominates throughput** — RBD pools deliver 5,400-8,300 MiB/s sequential, 14-130x faster than IBM Cloud File CSI
 - **Pool CSI near block-storage IOPS** — bench-pool delivers 53k random IOPS, comparable to RBD pools and 9x faster than ibmc-vpc-file-3000-iops
 - **IBM Cloud File CSI is IOPS-bound** — performance scales linearly with provisioned IOPS tier (500/1000/3000)
 

@@ -118,6 +118,84 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Update CephFS CSI provisioner/node auth caps to include a new filesystem.
+# Rook only authorizes the OOB CephFilesystem; custom ones need caps added.
+# ---------------------------------------------------------------------------
+update_cephfs_csi_caps() {
+  local fs_name="$1"
+
+  # Find the Rook tools pod
+  local tools_pod
+  tools_pod=$(oc get pod -n "${ODF_NAMESPACE}" -l app=rook-ceph-tools \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  if [[ -z "${tools_pod}" ]]; then
+    log_warn "Rook tools pod not found — cannot update CephFS CSI auth caps"
+    log_warn "PVC provisioning for ${fs_name} may fail with 'Operation not permitted'"
+    return 0
+  fi
+
+  # Get provisioner and node user IDs from the K8s secrets
+  local prov_user node_user
+  prov_user=$(oc get secret rook-csi-cephfs-provisioner -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.data.adminID}' 2>/dev/null | base64 -d)
+  node_user=$(oc get secret rook-csi-cephfs-node -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.data.adminID}' 2>/dev/null | base64 -d)
+
+  if [[ -z "${prov_user}" || -z "${node_user}" ]]; then
+    log_warn "CephFS CSI secrets not found — cannot update auth caps"
+    return 0
+  fi
+
+  # Check if the provisioner already has caps for this filesystem
+  local current_prov_caps
+  current_prov_caps=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
+    ceph auth get "client.${prov_user}" 2>/dev/null | grep "caps osd" || echo "")
+
+  if echo "${current_prov_caps}" | grep -q "${fs_name}"; then
+    log_info "CephFS CSI caps already include ${fs_name} — skipping"
+    return 0
+  fi
+
+  log_info "Updating CephFS CSI auth caps to include ${fs_name}..."
+
+  # Extract existing OSD caps to preserve them, then append the new filesystem
+  local prov_osd_caps node_osd_caps
+  prov_osd_caps=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
+    ceph auth get "client.${prov_user}" 2>/dev/null | \
+    sed -n 's/.*caps osd = "\(.*\)"/\1/p')
+  node_osd_caps=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
+    ceph auth get "client.${node_user}" 2>/dev/null | \
+    sed -n 's/.*caps osd = "\(.*\)"/\1/p')
+
+  # Append caps for the new filesystem
+  local new_prov_osd="${prov_osd_caps}, allow rw tag cephfs metadata=${fs_name}"
+  local new_node_osd="${node_osd_caps}, allow rw tag cephfs *=${fs_name}"
+
+  oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
+    ceph auth caps "client.${prov_user}" \
+      mds "allow rw path=/volumes/csi" \
+      mgr "allow rw" \
+      mon "allow r, allow command 'osd blocklist'" \
+      osd "${new_prov_osd}" 2>&1 | head -1
+
+  oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
+    ceph auth caps "client.${node_user}" \
+      mds "allow rw path=/volumes/csi" \
+      mgr "allow rw" \
+      mon "allow r" \
+      osd "${new_node_osd}" 2>&1 | head -1
+
+  log_info "CephFS CSI auth caps updated for ${fs_name}"
+
+  # Restart CephFS CSI controller pods to pick up new auth
+  log_info "Restarting CephFS CSI controller pods..."
+  oc delete pod -n "${ODF_NAMESPACE}" \
+    -l app=openshift-storage.cephfs.csi.ceph.com-ctrlplugin --wait=false 2>/dev/null || true
+  oc rollout status deployment/openshift-storage.cephfs.csi.ceph.com-ctrlplugin \
+    -n "${ODF_NAMESPACE}" --timeout=120s 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
 # Create a CephFilesystem + StorageClass for a CephFS pool configuration
 # ---------------------------------------------------------------------------
 create_ceph_filesystem() {
@@ -180,6 +258,9 @@ EOF
     fi
     sleep 10
   done
+
+  # Update CephFS CSI auth caps to include the new filesystem
+  update_cephfs_csi_caps "${fs_name}"
 
   # Create matching CephFS StorageClass
   ensure_cephfs_storage_class "${pool_name}"
