@@ -113,6 +113,7 @@ generate_markdown_report() {
 **Run ID:** ${run_id}
 **Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
 **Cluster:** ${CLUSTER_DESCRIPTION}
+**Zones:** ${CLUSTER_ZONES} (multi-AZ=${CLUSTER_MULTI_AZ})
 **ODF Version:** $(oc get csv -n ${ODF_NAMESPACE} -o jsonpath='{.items[0].spec.version}' 2>/dev/null || echo "N/A")
 
 ## Test Configuration
@@ -330,7 +331,7 @@ print(json.dumps(data))
   <div class="header">
     <h1>VM Storage Performance Report</h1>
     <div class="meta">
-      Run: ${RUN_ID} | ${CLUSTER_DESCRIPTION} | ODF + IBM Cloud File/Block
+      Run: ${RUN_ID} | ${CLUSTER_DESCRIPTION} | Zones: ${CLUSTER_ZONES} (multi-AZ=${CLUSTER_MULTI_AZ}) | ODF + IBM Cloud File/Block
     </div>
   </div>
 
@@ -856,13 +857,15 @@ RANK_HTML_EOF
   # Inject the JSON data and run_id into the HTML
   printf '    const DATA = %s;\n' "${ranking_json}" >> "${output_html}"
   printf '    const RUN_ID = "%s";\n' "${run_id}" >> "${output_html}"
+  printf '    const CLUSTER_DESC = "%s";\n' "${CLUSTER_DESCRIPTION}" >> "${output_html}"
+  printf '    const CLUSTER_ZONES_STR = "%s (multi-AZ=%s)";\n' "${CLUSTER_ZONES}" "${CLUSTER_MULTI_AZ}" >> "${output_html}"
 
   cat >> "${output_html}" << 'RANK_HTML_EOF2'
     const COLORS = ['#e63946','#457b9d','#2a9d8f','#e9c46a','#f4a261','#264653',
                     '#a8dadc','#d62828','#023e8a','#780000','#6a4c93','#1982c4',
                     '#8ac926','#ff595e','#ffca3a'];
     // Header meta (run ID only)
-    document.getElementById('meta').innerHTML = 'Run: ' + RUN_ID;
+    document.getElementById('meta').textContent = 'Run: ' + RUN_ID + ' | ' + CLUSTER_DESC + ' | Zones: ' + CLUSTER_ZONES_STR;
 
     // Methodology write-up
     (function() {

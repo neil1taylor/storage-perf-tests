@@ -51,6 +51,9 @@ export WORKER_COUNT="${WORKER_COUNT:-$(oc get nodes -l node-role.kubernetes.io/w
 
 export CLUSTER_ZONE_COUNT="${CLUSTER_ZONE_COUNT:-$(detect_cluster_zones)}"
 export CLUSTER_REGION="${CLUSTER_REGION:-$(detect_cluster_region)}"
+export CLUSTER_ZONES="${CLUSTER_ZONES:-$(oc get nodes -l node-role.kubernetes.io/worker= \
+  -o jsonpath='{.items[*].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null | \
+  tr ' ' '\n' | sort -u | paste -sd ',' - || echo "unknown")}"
 export CLUSTER_MULTI_AZ="false"
 if [[ "${CLUSTER_ZONE_COUNT}" -gt 1 ]]; then
   export CLUSTER_MULTI_AZ="true"
