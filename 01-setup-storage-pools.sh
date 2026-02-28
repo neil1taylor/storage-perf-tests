@@ -9,16 +9,26 @@ source "${SCRIPT_DIR}/lib/vm-helpers.sh"
 source "${SCRIPT_DIR}/lib/wait-helpers.sh"
 
 # ---------------------------------------------------------------------------
-# Detect the failure domain used by the OOB CephBlockPool.
-# ROKS uses "rack" (not "host"). Rather than hardcoding, read the actual
-# value from the existing pool to stay correct across environments.
+# Detect the failure domain from the ODF StorageCluster status.
+# The ocs-operator auto-computes this from node topology labels and
+# propagates it to OOB CephBlockPools. Custom pools must match.
+# Fallback chain: StorageCluster status → OOB CephBlockPool spec → "rack"
 # ---------------------------------------------------------------------------
 detect_failure_domain() {
   local fd
-  fd=$(oc get cephblockpool -n "${ODF_NAMESPACE}" ocs-storagecluster-cephblockpool \
-    -o jsonpath='{.spec.failureDomain}' 2>/dev/null || echo "")
+
+  # Primary: StorageCluster status (authoritative source)
+  fd=$(oc get storagecluster -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.items[0].status.failureDomain}' 2>/dev/null || echo "")
+
+  # Fallback: OOB CephBlockPool spec (set by ocs-operator from StorageCluster)
   if [[ -z "${fd}" ]]; then
-    log_warn "Could not detect OOB pool failure domain — defaulting to 'rack'"
+    fd=$(oc get cephblockpool -n "${ODF_NAMESPACE}" ocs-storagecluster-cephblockpool \
+      -o jsonpath='{.spec.failureDomain}' 2>/dev/null || echo "")
+  fi
+
+  if [[ -z "${fd}" ]]; then
+    log_warn "Could not detect failure domain from StorageCluster or OOB pool — defaulting to 'rack'"
     fd="rack"
   fi
   echo "${fd}"
