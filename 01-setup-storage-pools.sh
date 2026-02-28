@@ -9,6 +9,22 @@ source "${SCRIPT_DIR}/lib/vm-helpers.sh"
 source "${SCRIPT_DIR}/lib/wait-helpers.sh"
 
 # ---------------------------------------------------------------------------
+# Detect the failure domain used by the OOB CephBlockPool.
+# ROKS uses "rack" (not "host"). Rather than hardcoding, read the actual
+# value from the existing pool to stay correct across environments.
+# ---------------------------------------------------------------------------
+detect_failure_domain() {
+  local fd
+  fd=$(oc get cephblockpool -n "${ODF_NAMESPACE}" ocs-storagecluster-cephblockpool \
+    -o jsonpath='{.spec.failureDomain}' 2>/dev/null || echo "")
+  if [[ -z "${fd}" ]]; then
+    log_warn "Could not detect OOB pool failure domain — defaulting to 'rack'"
+    fd="rack"
+  fi
+  echo "${fd}"
+}
+
+# ---------------------------------------------------------------------------
 # Create (or verify) a StorageClass for a given ODF pool
 # Idempotent: skips if the SC already exists (SC parameters are immutable).
 # ---------------------------------------------------------------------------
@@ -201,9 +217,10 @@ update_cephfs_csi_caps() {
 create_ceph_filesystem() {
   local pool_name="$1"
   local data_replica_size="$2"
+  local failure_domain="$3"
   local fs_name="perf-test-${pool_name}"
 
-  log_info "Creating CephFilesystem: ${fs_name} (data replicas=${data_replica_size}, metadata replicas=3)"
+  log_info "Creating CephFilesystem: ${fs_name} (data replicas=${data_replica_size}, metadata replicas=3, failureDomain=${failure_domain})"
 
   cat <<EOF | oc apply -f -
 apiVersion: ceph.rook.io/v1
@@ -219,7 +236,7 @@ spec:
     deviceClass: ssd
   dataPools:
     - name: data0
-      failureDomain: host
+      failureDomain: ${failure_domain}
       deviceClass: ssd
       replicated:
         size: ${data_replica_size}
@@ -272,10 +289,11 @@ EOF
 create_ceph_block_pool() {
   local pool_name="$1"
   local pool_type="$2"
-  shift 2
+  local failure_domain="$3"
+  shift 3
   local full_pool_name="perf-test-${pool_name}"
 
-  log_info "Creating CephBlockPool: ${full_pool_name} (type=${pool_type})"
+  log_info "Creating CephBlockPool: ${full_pool_name} (type=${pool_type}, failureDomain=${failure_domain})"
 
   if [[ "${pool_type}" == "replicated" ]]; then
     local rep_size="$1"
@@ -286,7 +304,7 @@ metadata:
   name: ${full_pool_name}
   namespace: ${ODF_NAMESPACE}
 spec:
-  failureDomain: host
+  failureDomain: ${failure_domain}
   deviceClass: ssd
   enableCrushUpdates: true
   enableRBDStats: true
@@ -306,7 +324,7 @@ metadata:
   name: ${full_pool_name}
   namespace: ${ODF_NAMESPACE}
 spec:
-  failureDomain: host
+  failureDomain: ${failure_domain}
   deviceClass: ssd
   enableCrushUpdates: true
   enableRBDStats: true
@@ -402,15 +420,25 @@ main() {
     log_warn "ODF health is ${odf_health} — proceeding with caution"
   fi
 
-  # Discover OSD topology
-  log_info "Discovering OSD host topology..."
-  local osd_hosts
-  osd_hosts=$(oc get pods -n "${ODF_NAMESPACE}" -l app=rook-ceph-osd \
-    -o jsonpath='{.items[*].spec.nodeName}' 2>/dev/null | tr ' ' '\n' | sort -u | grep -c . || echo "0")
-  log_info "OSD hosts detected: ${osd_hosts}"
+  # Discover OSD topology — count unique failure domains (racks on ROKS)
+  local failure_domain
+  failure_domain=$(detect_failure_domain)
+  log_info "Using failureDomain: ${failure_domain} (from OOB CephBlockPool)"
 
-  if [[ "${osd_hosts}" -eq 0 ]]; then
-    log_error "No OSD pods found in ${ODF_NAMESPACE} — cannot create pools"
+  local failure_domain_count
+  if [[ "${failure_domain}" == "host" ]]; then
+    failure_domain_count=$(oc get pods -n "${ODF_NAMESPACE}" -l app=rook-ceph-osd \
+      -o jsonpath='{.items[*].spec.nodeName}' 2>/dev/null | tr ' ' '\n' | sort -u | grep -c . || echo "0")
+  else
+    # For rack/zone, query the CRUSH tree
+    failure_domain_count=$(oc -n "${ODF_NAMESPACE}" exec deploy/rook-ceph-tools -- \
+      ceph osd crush tree --format json 2>/dev/null | \
+      jq --arg fd "${failure_domain}" '[.. | objects | select(.type == $fd)] | length' 2>/dev/null || echo "0")
+  fi
+  log_info "Failure domains (${failure_domain}): ${failure_domain_count}"
+
+  if [[ "${failure_domain_count}" -eq 0 ]]; then
+    log_error "No failure domains found in ${ODF_NAMESPACE} — cannot create pools"
     return 1
   fi
 
@@ -455,26 +483,26 @@ main() {
     fi
 
     # Calculate minimum failure domains required
-    local required_hosts=0
+    local required_domains=0
     if [[ "${type}" == "replicated" ]]; then
-      required_hosts="${param1}"
+      required_domains="${param1}"
     elif [[ "${type}" == "erasurecoded" ]]; then
-      required_hosts=$(( param1 + param2 ))
+      required_domains=$(( param1 + param2 ))
     elif [[ "${type}" == "cephfs" ]]; then
-      required_hosts="${param1}"
+      required_domains="${param1}"
     fi
 
-    if [[ "${required_hosts}" -gt "${osd_hosts}" ]]; then
-      log_warn "Pool ${name} requires ${required_hosts} hosts (failureDomain=host) but only ${osd_hosts} available — skipping"
+    if [[ "${required_domains}" -gt "${failure_domain_count}" ]]; then
+      log_warn "Pool ${name} requires ${required_domains} ${failure_domain}s but only ${failure_domain_count} available — skipping"
       continue
     fi
 
     if [[ "${type}" == "replicated" ]]; then
-      create_ceph_block_pool "${name}" "${type}" "${param1}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
+      create_ceph_block_pool "${name}" "${type}" "${failure_domain}" "${param1}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
     elif [[ "${type}" == "erasurecoded" ]]; then
-      create_ceph_block_pool "${name}" "${type}" "${param1}" "${param2}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
+      create_ceph_block_pool "${name}" "${type}" "${failure_domain}" "${param1}" "${param2}" || { log_warn "Pool ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
     elif [[ "${type}" == "cephfs" ]]; then
-      create_ceph_filesystem "${name}" "${param1}" || { log_warn "CephFilesystem ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
+      create_ceph_filesystem "${name}" "${param1}" "${failure_domain}" || { log_warn "CephFilesystem ${name} failed — continuing"; pool_failures=$((pool_failures + 1)); continue; }
     fi
   done
 

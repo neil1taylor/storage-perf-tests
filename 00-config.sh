@@ -27,16 +27,47 @@ detect_cluster_type() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Cluster zone topology detection
+# ---------------------------------------------------------------------------
+detect_cluster_zones() {
+  local zones
+  zones=$(oc get nodes -l node-role.kubernetes.io/worker= \
+    -o jsonpath='{.items[*].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null | \
+    tr ' ' '\n' | sort -u | grep -c . || echo "0")
+  echo "${zones}"
+}
+
+detect_cluster_region() {
+  oc get nodes -l node-role.kubernetes.io/worker= \
+    -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/region}' 2>/dev/null || echo "unknown"
+}
+
 export CLUSTER_TYPE="${CLUSTER_TYPE:-$(detect_cluster_type)}"
 export WORKER_FLAVOR="${WORKER_FLAVOR:-$(oc get nodes -l node-role.kubernetes.io/worker= \
   -o jsonpath='{.items[0].metadata.labels.node\.kubernetes\.io/instance-type}' 2>/dev/null || echo "unknown")}"
 export WORKER_COUNT="${WORKER_COUNT:-$(oc get nodes -l node-role.kubernetes.io/worker= \
   --no-headers 2>/dev/null | wc -l | tr -d ' ')}"
 
+export CLUSTER_ZONE_COUNT="${CLUSTER_ZONE_COUNT:-$(detect_cluster_zones)}"
+export CLUSTER_REGION="${CLUSTER_REGION:-$(detect_cluster_region)}"
+export CLUSTER_MULTI_AZ="false"
+if [[ "${CLUSTER_ZONE_COUNT}" -gt 1 ]]; then
+  export CLUSTER_MULTI_AZ="true"
+fi
+
 if [[ "${CLUSTER_TYPE}" == "bm" ]]; then
-  export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} bare metal, NVMe, ${WORKER_COUNT} workers)}"
+  if [[ "${CLUSTER_MULTI_AZ}" == "true" ]]; then
+    export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} bare metal, NVMe, ${WORKER_COUNT} workers, ${CLUSTER_ZONE_COUNT} AZs in ${CLUSTER_REGION})}"
+  else
+    export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} bare metal, NVMe, ${WORKER_COUNT} workers)}"
+  fi
 else
-  export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} VSI, IBM Cloud Block-backed ODF, ${WORKER_COUNT} workers)}"
+  if [[ "${CLUSTER_MULTI_AZ}" == "true" ]]; then
+    export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} VSI, IBM Cloud Block-backed ODF, ${WORKER_COUNT} workers, ${CLUSTER_ZONE_COUNT} AZs in ${CLUSTER_REGION})}"
+  else
+    export CLUSTER_DESCRIPTION="${CLUSTER_DESCRIPTION:-IBM Cloud ROKS (${WORKER_FLAVOR} VSI, IBM Cloud Block-backed ODF, ${WORKER_COUNT} workers)}"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
