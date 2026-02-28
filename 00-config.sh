@@ -112,8 +112,10 @@ export CONCURRENCY_LEVELS
 
 # ---------------------------------------------------------------------------
 # ODF storage pools — name:type:params
-#   replicated    → failureDomain=auto-detected (rack on ROKS), replicated.size=N
-#   erasurecoded  → failureDomain=auto-detected, erasureCoded.dataChunks=K,codingChunks=M
+# failureDomain is set cluster-wide by ocs-operator (StorageCluster .status.failureDomain,
+# typically "rack" on ROKS) and auto-detected by 01-setup-storage-pools.sh.
+#   replicated    → replicated.size=N
+#   erasurecoded  → erasureCoded.dataChunks=K,codingChunks=M
 #   cephfs        → CephFilesystem with data_replica_count=N (metadata pool always size=3)
 # ---------------------------------------------------------------------------
 declare -a ODF_POOLS=(
