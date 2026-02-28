@@ -174,8 +174,26 @@ wait_for_all_fio_complete() {
             vm_last_state["${vm_name}"]="waiting-start"
           fi
         elif [[ "${exec_exit}" == "0" ]]; then
-          log_info "fio completed in VM ${vm_name} ($(_format_duration "${elapsed}"))"
-          vm_done["${vm_name}"]=1
+          # Verify results file exists and is non-empty before declaring completion.
+          # Prevents false positive when systemd briefly reports PID>0 + exit=0
+          # during service startup (before fio has actually run and written output).
+          local has_results
+          has_results=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
+            --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
+            --username=fedora --command="find /opt/perf-test/results -name '*.json' -size +0c 2>/dev/null | grep -q . && echo READY || echo MISSING" \
+            "vm/${vm_name}" 2>/dev/null || echo "MISSING")
+          if [[ "${has_results}" == *"READY"* ]]; then
+            log_info "fio completed in VM ${vm_name} ($(_format_duration "${elapsed}"))"
+            vm_done["${vm_name}"]=1
+          else
+            # Service reports exit 0 but no results file — transient state, keep waiting
+            all_done=0
+            ((pending_count += 1))
+            if [[ "${vm_last_state[${vm_name}]}" != "waiting-results" ]]; then
+              log_info "VM ${vm_name}: service exited but results file not ready, still waiting..."
+              vm_last_state["${vm_name}"]="waiting-results"
+            fi
+          fi
         else
           log_error "fio failed in VM ${vm_name} (exit code: ${exec_exit})"
           vm_done["${vm_name}"]=1

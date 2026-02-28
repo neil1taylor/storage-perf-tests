@@ -516,10 +516,11 @@ collect_vm_results() {
   mkdir -p "${output_dir}"
 
   # Copy fio JSON results
+  local fio_out="${output_dir}/${vm_name}-fio.json"
   timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
     --username=fedora --command="cat /opt/perf-test/results/*.json" \
-    "vm/${vm_name}" > "${output_dir}/${vm_name}-fio.json" 2>/dev/null || {
+    "vm/${vm_name}" > "${fio_out}" 2>/dev/null || {
     log_warn "Could not collect fio JSON from ${vm_name}, trying alternative method..."
     # Fallback: try via oc exec on the virt-launcher pod
     local pod
@@ -528,9 +529,23 @@ collect_vm_results() {
     if [[ -n "${pod}" ]]; then
       oc exec -n "${TEST_NAMESPACE}" "${pod}" -c compute -- \
         cat /opt/perf-test/results/*.json \
-        > "${output_dir}/${vm_name}-fio.json" 2>/dev/null || true
+        > "${fio_out}" 2>/dev/null || true
     fi
   }
+
+  # Retry if collected file is empty (transient SSH transport issue)
+  if [[ ! -s "${fio_out}" ]]; then
+    log_warn "Empty fio JSON from ${vm_name}, retrying after 5s..."
+    sleep 5
+    timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \
+      --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
+      --username=fedora --command="cat /opt/perf-test/results/*.json" \
+      "vm/${vm_name}" > "${fio_out}" 2>/dev/null || true
+  fi
+
+  if [[ ! -s "${fio_out}" ]]; then
+    log_error "Failed to collect fio JSON from ${vm_name} (empty after retry)"
+  fi
 
   # Collect system info
   timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \

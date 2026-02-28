@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Zone vs Single-Zone ODF Storage Performance</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+    .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: white; padding: 2rem; }
+    .header h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+    .header .subtitle { font-size: 1rem; color: #ccc; margin-bottom: 0.5rem; }
+    .header .meta { color: #aaa; font-size: 0.85rem; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .section h2 { font-size: 1.3rem; color: #1a1a2e; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e0e0e0; }
+    .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+    .card h3 { font-size: 1.05rem; color: #1a1a2e; margin-bottom: 0.8rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; font-weight: 600; position: sticky; top: 0; }
+    .num { text-align: right; }
+    .delta-pos { color: #2e7d32; font-weight: 600; }
+    .delta-neg { color: #c62828; font-weight: 600; }
+    .delta-neutral { color: #666; }
+    .winner-mz { background: #e8f5e9; }
+    .winner-sz { background: #e3f2fd; }
+    .info-box { background: #e8f5e9; border-left: 4px solid #4caf50; padding: 1rem 1.2rem; border-radius: 0 8px 8px 0; margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.5; }
+    .info-box strong { color: #2e7d32; }
+    .caveat { background: #fff3e0; border-left: 4px solid #ff9800; padding: 1rem 1.2rem; border-radius: 0 8px 8px 0; margin-bottom: 1rem; font-size: 0.9rem; line-height: 1.5; }
+    .caveat strong { color: #e65100; }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(600px, 1fr)); gap: 1rem; }
+    .collapsible { cursor: pointer; user-select: none; }
+    .collapsible::after { content: ' [+]'; font-size: 0.8rem; color: #999; }
+    .collapsible.open::after { content: ' [-]'; }
+    .collapse-content { display: none; }
+    .collapse-content.open { display: block; }
+    .platform-badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 3px; font-weight: 600; vertical-align: middle; margin-left: 0.3rem; }
+    .badge-mz { background: #e8f5e9; color: #2e7d32; }
+    .badge-sz { background: #e3f2fd; color: #1565c0; }
+    .takeaway { padding: 0.8rem 1rem; border-left: 3px solid #1a1a2e; margin-bottom: 0.6rem; font-size: 0.9rem; line-height: 1.5; }
+    .legend-row { display: flex; gap: 1.5rem; margin-bottom: 1rem; font-size: 0.85rem; }
+    .legend-item { display: flex; align-items: center; gap: 0.3rem; }
+    .legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+    .conditions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+    .condition-card { border: 1px solid #e0e0e0; border-radius: 6px; padding: 1rem; }
+    .condition-card h4 { font-size: 0.95rem; margin-bottom: 0.5rem; }
+    .detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 1rem; font-size: 0.88rem; }
+    .detail-grid dt { color: #777; }
+    .detail-grid dd { font-weight: 500; margin: 0; }
+    .scorecard { margin-top: 1rem; }
+    .scorecard td { text-align: center; font-weight: 600; }
+    .scorecard td.cat { text-align: left; font-weight: 500; }
+    .sc-mz { color: #2e7d32; }
+    .sc-sz { color: #1565c0; }
+    .sc-tie { color: #666; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Multi-Zone vs Single-Zone ODF Performance</h1>
+    <div class="subtitle">Impact of cross-AZ replica placement on ODF storage I/O</div>
+    <div class="meta">MZ: perf-20260228-164717 (ocp-virt-mz-cluster, us-south, 3 AZs, failureDomain=zone) &mdash; SZ: perf-20260227-203655 (ocp-virt-420-cluster, eu-de-1, failureDomain=rack)</div>
+  </div>
+  <div class="container">
+
+    <div class="section">
+      <div class="info-box">
+        <strong>Key finding:</strong> Cross-AZ replication costs <strong>10&ndash;19% write IOPS</strong> and <strong>+40&ndash;82% write p99 latency</strong>, while <strong>reads are unaffected</strong> thanks to read affinity serving from local-zone OSDs. The dominant factor is inter-AZ RTT (~0.5&ndash;2ms) on every synchronous replica acknowledgment.
+      </div>
+    </div>
+
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggle(this)">Cluster Conditions</h2>
+      <div class="collapse-content open">
+        <div class="card">
+          <div class="conditions-grid">
+            <div class="condition-card">
+              <h4><span class="platform-badge badge-mz">MZ</span> Multi-Zone (ocp-virt-mz-cluster)</h4>
+              <dl class="detail-grid">
+                <dt>Region</dt><dd>us-south (3 AZs)</dd>
+                <dt>Workers</dt><dd>3x bx2d.metal.96x384 (1 per AZ)</dd>
+                <dt>OSDs</dt><dd>24 (8 per node, NVMe)</dd>
+                <dt>Raw capacity</dt><dd>~70 TiB</dd>
+                <dt>Failure domain</dt><dd><strong>zone</strong> (cross-AZ replicas)</dd>
+                <dt>ODF / Ceph</dt><dd>4.19.10 / Squid 19.2.1</dd>
+                <dt>Encryption</dt><dd>Full (data + network + KMS)</dd>
+                <dt>Read affinity</dt><dd>Enabled</dd>
+              </dl>
+            </div>
+            <div class="condition-card">
+              <h4><span class="platform-badge badge-sz">SZ</span> Single-Zone (ocp-virt-420-cluster)</h4>
+              <dl class="detail-grid">
+                <dt>Region</dt><dd>eu-de (1 AZ)</dd>
+                <dt>Workers</dt><dd>3x bx2d.metal.96x384 (same zone)</dd>
+                <dt>OSDs</dt><dd>24 (8 per node, NVMe)</dd>
+                <dt>Raw capacity</dt><dd>~70 TiB</dd>
+                <dt>Failure domain</dt><dd><strong>rack</strong> (intra-zone replicas)</dd>
+                <dt>ODF / Ceph</dt><dd>4.19.10 / Squid 19.2.1</dd>
+                <dt>Encryption</dt><dd>Full (data + network + KMS)</dd>
+                <dt>Read affinity</dt><dd>Enabled</dd>
+              </dl>
+            </div>
+          </div>
+          <div style="margin-top:1rem; font-size:0.88rem; color:#555;">
+            <strong>Only architectural difference:</strong> <code>failureDomain: zone</code> (MZ) vs <code>failureDomain: rack</code> (SZ). Hardware, software, encryption, and ODF configuration are identical.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2 class="collapsible" onclick="toggle(this)">Test Matrix</h2>
+      <div class="collapse-content">
+        <div class="card">
+          <table>
+            <thead><tr><th>Test</th><th>fio Profile</th><th>Block Size</th><th>What it measures</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Random I/O</strong></td><td>random-rw</td><td>4k</td><td>IOPS capacity, latency under random access</td></tr>
+              <tr><td><strong>Sequential throughput</strong></td><td>sequential-rw</td><td>1M</td><td>Bandwidth for large block streaming</td></tr>
+              <tr><td><strong>Mixed workload</strong></td><td>mixed-70-30</td><td>4k</td><td>Realistic 70% read / 30% write mix</td></tr>
+            </tbody>
+          </table>
+          <div style="margin-top:0.8rem; font-size:0.85rem; color:#666;">
+            Settings: medium VM (4 vCPU, 8 GiB), 150 GiB PVC, concurrency=1, 60s runtime + 10s ramp, iodepth=32, numjobs=4, direct=1.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2 class="collapsible open" onclick="toggle(this)">Storage Pool Overview</h2>
+      <div class="collapse-content open">
+        <div class="card" id="poolSection"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Performance Comparison</h2>
+      <div class="legend-row">
+        <div class="legend-item"><div class="legend-swatch" style="background:#e8f5e9"></div> MZ wins</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#e3f2fd"></div> SZ wins</div>
+      </div>
+      <div class="card" id="comparisonSection"></div>
+    </div>
+
+    <div class="section">
+      <h2>Read vs Write Impact</h2>
+      <div class="card" id="rwSection"></div>
+    </div>
+
+    <div class="section">
+      <h2>Visual Comparison</h2>
+      <div class="chart-grid" id="chartGrid"></div>
+    </div>
+
+    <div class="section">
+      <h2>Scorecard Summary</h2>
+      <div class="card" id="scorecardSection"></div>
+    </div>
+
+    <div class="section">
+      <h2>Key Takeaways</h2>
+      <div class="card" id="takeawaySection"></div>
+    </div>
+
+  </div>
+
+  <script>
+    // ── Data ──────────────────────────────────────────────────────────────
+    var POOLS = [
+      { id: 'rep3',       label: 'rep3',       desc: '3-way replicated RBD (OOB)', type: 'RBD Replicated' },
+      { id: 'rep3-virt',  label: 'rep3-virt',  desc: '3-way RBD + rxbounce (OOB)', type: 'RBD Replicated' },
+      { id: 'rep3-enc',   label: 'rep3-enc',   desc: '3-way RBD + SC encryption (OOB)', type: 'RBD Replicated' },
+      { id: 'rep2',       label: 'rep2',       desc: '2-way replicated RBD (custom)', type: 'RBD Replicated' },
+      { id: 'cephfs-rep3',label: 'cephfs-rep3',desc: '3-way CephFS (OOB)', type: 'CephFS' },
+      { id: 'cephfs-rep2',label: 'cephfs-rep2',desc: '2-way CephFS (custom)', type: 'CephFS' },
+      { id: 'ec-2-1',     label: 'ec-2-1',     desc: 'Erasure coded 2+1 (custom)', type: 'RBD Erasure Coded' }
+    ];
+
+    var MZ = {
+      'rep3':       { rand_iops: 63356, seq_bw: 7966.5, mixed_iops: 47052, avg_p99_ms: 191.97, rand_read_iops: 55841, rand_write_iops: 7515, rand_read_p99: 4.35, rand_write_p99: 379.58, seq_read_bw: 5298.2, seq_write_bw: 2668.2 },
+      'rep3-virt':  { rand_iops: 0,     seq_bw: 7619.1, mixed_iops: 47138, avg_p99_ms: 0,      rand_read_iops: 0,     rand_write_iops: 0,    rand_read_p99: 0,    rand_write_p99: 0,      seq_read_bw: 5187.9, seq_write_bw: 2431.2 },
+      'rep3-enc':   { rand_iops: 61062, seq_bw: 6992.1, mixed_iops: 52206, avg_p99_ms: 196.23, rand_read_iops: 53443, rand_write_iops: 7619, rand_read_p99: 4.48, rand_write_p99: 387.97, seq_read_bw: 4530.1, seq_write_bw: 2462.0 },
+      'rep2':       { rand_iops: 68976, seq_bw: 7900.3, mixed_iops: 50216, avg_p99_ms: 156.35, rand_read_iops: 60021, rand_write_iops: 8955, rand_read_p99: 4.42, rand_write_p99: 308.28, seq_read_bw: 5761.7, seq_write_bw: 2138.7 },
+      'cephfs-rep3':{ rand_iops: 55474, seq_bw: 5367.4, mixed_iops: 36711, avg_p99_ms: 753.77, rand_read_iops: 52439, rand_write_iops: 3035, rand_read_p99: 5.99, rand_write_p99: 1501.56,seq_read_bw: 4343.2, seq_write_bw: 1024.2 },
+      'cephfs-rep2':{ rand_iops: 58326, seq_bw: 5264.5, mixed_iops: 44733, avg_p99_ms: 611.16, rand_read_iops: 54434, rand_write_iops: 3892, rand_read_p99: 5.99, rand_write_p99: 1216.34,seq_read_bw: 4334.3, seq_write_bw: 930.2  },
+      'ec-2-1':     { rand_iops: 45987, seq_bw: 4214.3, mixed_iops: 25996, avg_p99_ms: 281.72, rand_read_iops: 40607, rand_write_iops: 5380, rand_read_p99: 5.6,  rand_write_p99: 557.84, seq_read_bw: 2790.4, seq_write_bw: 1423.8 }
+    };
+
+    var SZ = {
+      'rep3':       { rand_iops: 64504, seq_bw: 7616.3, mixed_iops: 49203, avg_p99_ms: 106.25, rand_read_iops: 54222, rand_write_iops: 10282, rand_read_p99: 3.85, rand_write_p99: 208.66, seq_read_bw: 5249.6, seq_write_bw: 2366.8 },
+      'rep3-virt':  { rand_iops: 64483, seq_bw: 7599.2, mixed_iops: 48641, avg_p99_ms: 106.23, rand_read_iops: 54755, rand_write_iops: 9728, rand_read_p99: 3.81, rand_write_p99: 208.66, seq_read_bw: 5326.1, seq_write_bw: 2273.2 },
+      'rep3-enc':   { rand_iops: 62702, seq_bw: 6672.9, mixed_iops: 56283, avg_p99_ms: 108.36, rand_read_iops: 52285, rand_write_iops: 10417, rand_read_p99: 3.85, rand_write_p99: 212.86, seq_read_bw: 4250.4, seq_write_bw: 2422.5 },
+      'rep2':       { rand_iops: 71966, seq_bw: 8306.0, mixed_iops: 53574, avg_p99_ms: 98.65,  rand_read_iops: 61034, rand_write_iops: 10932, rand_read_p99: 3.32, rand_write_p99: 193.98, seq_read_bw: 5996.2, seq_write_bw: 2309.8 },
+      'cephfs-rep3':{ rand_iops: 45557, seq_bw: 4808.6, mixed_iops: 37762, avg_p99_ms: 446.01, rand_read_iops: 41471, rand_write_iops: 4086, rand_read_p99: 7.04, rand_write_p99: 884.99, seq_read_bw: 3878.9, seq_write_bw: 929.7  },
+      'cephfs-rep2':{ rand_iops: 59956, seq_bw: 5374.0, mixed_iops: 45126, avg_p99_ms: 437.07, rand_read_iops: 55357, rand_write_iops: 4599, rand_read_p99: 5.93, rand_write_p99: 868.22, seq_read_bw: 4505.4, seq_write_bw: 868.6  },
+      'ec-2-1':     { rand_iops: 49058, seq_bw: 5814.1, mixed_iops: 31405, avg_p99_ms: 179.84, rand_read_iops: 42822, rand_write_iops: 6236, rand_read_p99: 5.27, rand_write_p99: 354.41, seq_read_bw: 3444.9, seq_write_bw: 2369.2 }
+    };
+
+    var METRICS = [
+      { key: 'rand_iops',  label: 'Random 4k Total IOPS',      unit: 'IOPS',  higherBetter: true  },
+      { key: 'seq_bw',     label: 'Sequential 1M Total BW',    unit: 'MiB/s', higherBetter: true  },
+      { key: 'mixed_iops', label: 'Mixed 70/30 4k Total IOPS', unit: 'IOPS',  higherBetter: true  },
+      { key: 'avg_p99_ms', label: 'Avg p99 Latency (random)',  unit: 'ms',    higherBetter: false }
+    ];
+
+    var POOLS_WITH_RAND = POOLS.filter(function(p) { return p.id !== 'rep3-virt'; });
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function fmt(v, decimals) {
+      if (v === 0) return '\u2014';
+      if (decimals === undefined) decimals = v >= 1000 ? 0 : 1;
+      return v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+    function pctDelta(a, b) { return b === 0 ? 0 : ((a - b) / b * 100); }
+    function deltaStr(a, b) {
+      if (b === 0) return '\u2014';
+      var d = pctDelta(a, b);
+      return (d >= 0 ? '+' : '') + d.toFixed(1) + '%';
+    }
+    function deltaClass(a, b, hb) {
+      if (b === 0) return 'delta-neutral';
+      var d = pctDelta(a, b);
+      if (Math.abs(d) < 5) return 'delta-neutral';
+      return hb ? (d > 0 ? 'delta-pos' : 'delta-neg') : (d < 0 ? 'delta-pos' : 'delta-neg');
+    }
+    function winClass(a, b, hb) {
+      if (b === 0 || a === 0) return '';
+      var d = pctDelta(a, b);
+      if (Math.abs(d) < 5) return '';
+      return hb ? (d > 0 ? 'winner-mz' : 'winner-sz') : (d < 0 ? 'winner-mz' : 'winner-sz');
+    }
+    function winLabel(a, b, hb) {
+      if (b === 0 || a === 0) return { text: 'N/A', cls: 'sc-tie' };
+      var d = pctDelta(a, b);
+      if (Math.abs(d) < 5) return { text: '~Tie', cls: 'sc-tie' };
+      return hb ? (d > 0 ? { text: 'MZ', cls: 'sc-mz' } : { text: 'SZ', cls: 'sc-sz' }) :
+                  (d < 0 ? { text: 'MZ', cls: 'sc-mz' } : { text: 'SZ', cls: 'sc-sz' });
+    }
+    function toggle(el) { el.classList.toggle('open'); el.nextElementSibling.classList.toggle('open'); }
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    // ── Build Pool Table ────────────────────────────────────────────────
+    (function() {
+      var t = document.createElement('table');
+      var head = '<thead><tr><th>Pool</th><th>Type</th><th>Description</th><th>MZ Domain</th><th>SZ Domain</th></tr></thead>';
+      var body = '<tbody>';
+      POOLS.forEach(function(p) {
+        var szFd = (p.id === 'rep2' || p.id === 'cephfs-rep2' || p.id === 'ec-2-1') ? 'host' : 'rack';
+        body += '<tr><td><strong><code>' + esc(p.id) + '</code></strong></td>';
+        body += '<td>' + esc(p.type) + '</td>';
+        body += '<td>' + esc(p.desc) + (p.note ? ' <span style="color:#e65100;font-size:0.8rem">(' + esc(p.note) + ')</span>' : '') + '</td>';
+        body += '<td>zone</td><td>' + esc(szFd) + '</td></tr>';
+      });
+      body += '</tbody>';
+      t.innerHTML = head + body;
+      document.getElementById('poolSection').appendChild(t);
+    })();
+
+    // ── Main Comparison Tables ───────────────────────────────────────────
+    (function() {
+      var el = document.getElementById('comparisonSection');
+      METRICS.forEach(function(m) {
+        var skipVirt = (m.key === 'rand_iops' || m.key === 'avg_p99_ms');
+        var pools = skipVirt ? POOLS_WITH_RAND : POOLS;
+        var h = document.createElement('h3');
+        h.textContent = m.label + ' (' + m.unit + ')' + (m.higherBetter ? '' : ' \u2014 lower is better');
+        el.appendChild(h);
+        var t = document.createElement('table');
+        var html = '<thead><tr><th>Pool</th><th class="num">MZ</th><th class="num">SZ</th><th class="num">Delta</th><th class="num">Winner</th></tr></thead><tbody>';
+        pools.forEach(function(p) {
+          var mv = MZ[p.id][m.key], sv = SZ[p.id][m.key];
+          var w = winLabel(mv, sv, m.higherBetter);
+          html += '<tr class="' + winClass(mv, sv, m.higherBetter) + '">';
+          html += '<td><strong>' + esc(p.label) + '</strong></td>';
+          html += '<td class="num">' + fmt(mv) + '</td>';
+          html += '<td class="num">' + fmt(sv) + '</td>';
+          html += '<td class="num ' + deltaClass(mv, sv, m.higherBetter) + '">' + deltaStr(mv, sv) + '</td>';
+          html += '<td class="num"><span class="' + w.cls + '">' + esc(w.text) + '</span></td></tr>';
+        });
+        html += '</tbody>';
+        t.innerHTML = html;
+        el.appendChild(t);
+        el.appendChild(document.createElement('br'));
+      });
+    })();
+
+    // ── Read vs Write Breakdown ──────────────────────────────────────────
+    (function() {
+      var el = document.getElementById('rwSection');
+      var intro = document.createElement('p');
+      intro.style.cssText = 'margin-bottom:1rem;font-size:0.9rem;color:#555';
+      intro.textContent = 'Cross-AZ replica placement primarily affects writes (must wait for remote AZ acknowledgment). Reads benefit from read affinity (served by local-zone OSD).';
+      el.appendChild(intro);
+
+      function buildRW(title, pools, readMZ, readSZ, writeMZ, writeSZ, hb) {
+        var h = document.createElement('h3'); h.textContent = title; el.appendChild(h);
+        var t = document.createElement('table');
+        var html = '<thead><tr><th>Pool</th><th class="num">MZ Read</th><th class="num">SZ Read</th><th class="num">Read \u0394</th><th class="num">MZ Write</th><th class="num">SZ Write</th><th class="num">Write \u0394</th></tr></thead><tbody>';
+        pools.forEach(function(p) {
+          var mr = readMZ(p), sr = readSZ(p), mw = writeMZ(p), sw = writeSZ(p);
+          html += '<tr><td><strong>' + esc(p.label) + '</strong></td>';
+          html += '<td class="num">' + fmt(mr) + '</td><td class="num">' + fmt(sr) + '</td>';
+          html += '<td class="num ' + deltaClass(mr, sr, hb) + '">' + deltaStr(mr, sr) + '</td>';
+          html += '<td class="num">' + fmt(mw) + '</td><td class="num">' + fmt(sw) + '</td>';
+          html += '<td class="num ' + deltaClass(mw, sw, hb) + '">' + deltaStr(mw, sw) + '</td></tr>';
+        });
+        t.innerHTML = html + '</tbody>'; el.appendChild(t); el.appendChild(document.createElement('br'));
+      }
+
+      buildRW('Random 4k IOPS \u2014 Read vs Write', POOLS_WITH_RAND,
+        function(p){return MZ[p.id].rand_read_iops}, function(p){return SZ[p.id].rand_read_iops},
+        function(p){return MZ[p.id].rand_write_iops}, function(p){return SZ[p.id].rand_write_iops}, true);
+      buildRW('Sequential 1M BW (MiB/s) \u2014 Read vs Write', POOLS,
+        function(p){return MZ[p.id].seq_read_bw}, function(p){return SZ[p.id].seq_read_bw},
+        function(p){return MZ[p.id].seq_write_bw}, function(p){return SZ[p.id].seq_write_bw}, true);
+      buildRW('Random 4k p99 Latency (ms) \u2014 Read vs Write (lower is better)', POOLS_WITH_RAND,
+        function(p){return MZ[p.id].rand_read_p99}, function(p){return SZ[p.id].rand_read_p99},
+        function(p){return MZ[p.id].rand_write_p99}, function(p){return SZ[p.id].rand_write_p99}, false);
+    })();
+
+    // ── Charts ───────────────────────────────────────────────────────────
+    (function() {
+      var grid = document.getElementById('chartGrid');
+      var mzC = 'rgba(46,125,50,0.7)', szC = 'rgba(21,101,192,0.7)';
+      var mzB = 'rgba(46,125,50,1)', szB = 'rgba(21,101,192,1)';
+
+      METRICS.forEach(function(m) {
+        var skipVirt = (m.key === 'rand_iops' || m.key === 'avg_p99_ms');
+        var pools = skipVirt ? POOLS_WITH_RAND : POOLS;
+        var card = document.createElement('div'); card.className = 'card';
+        var h = document.createElement('h3');
+        h.textContent = m.label + ' (' + m.unit + ')' + (m.higherBetter ? '' : ' \u2014 lower is better');
+        card.appendChild(h);
+        var canvas = document.createElement('canvas'); canvas.id = 'chart_' + m.key; canvas.height = 90;
+        card.appendChild(canvas); grid.appendChild(card);
+        new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: pools.map(function(p){return p.label}),
+            datasets: [
+              { label: 'MZ (3 AZ)', data: pools.map(function(p){return MZ[p.id][m.key]}), backgroundColor: mzC, borderColor: mzB, borderWidth: 1 },
+              { label: 'SZ (1 AZ)', data: pools.map(function(p){return SZ[p.id][m.key]}), backgroundColor: szC, borderColor: szB, borderWidth: 1 }
+            ]
+          },
+          options: { indexAxis: 'y', responsive: true, plugins: { legend: { position: 'top' } }, scales: { x: { beginAtZero: true, title: { display: true, text: m.unit } } } }
+        });
+      });
+
+      // Read vs Write IOPS
+      var rwCard = document.createElement('div'); rwCard.className = 'card';
+      var rwH = document.createElement('h3'); rwH.textContent = 'Random 4k Read vs Write IOPS Impact'; rwCard.appendChild(rwH);
+      var rwCanvas = document.createElement('canvas'); rwCanvas.id = 'chart_rw'; rwCanvas.height = 110;
+      rwCard.appendChild(rwCanvas); grid.appendChild(rwCard);
+      new Chart(rwCanvas, {
+        type: 'bar',
+        data: {
+          labels: POOLS_WITH_RAND.map(function(p){return p.label}),
+          datasets: [
+            { label: 'MZ Read',  data: POOLS_WITH_RAND.map(function(p){return MZ[p.id].rand_read_iops}),  backgroundColor: 'rgba(46,125,50,0.5)',  borderColor: mzB, borderWidth: 1 },
+            { label: 'SZ Read',  data: POOLS_WITH_RAND.map(function(p){return SZ[p.id].rand_read_iops}),  backgroundColor: 'rgba(21,101,192,0.5)', borderColor: szB, borderWidth: 1 },
+            { label: 'MZ Write', data: POOLS_WITH_RAND.map(function(p){return MZ[p.id].rand_write_iops}), backgroundColor: 'rgba(46,125,50,0.9)',  borderColor: mzB, borderWidth: 1 },
+            { label: 'SZ Write', data: POOLS_WITH_RAND.map(function(p){return SZ[p.id].rand_write_iops}), backgroundColor: 'rgba(21,101,192,0.9)', borderColor: szB, borderWidth: 1 }
+          ]
+        },
+        options: { indexAxis: 'y', responsive: true, plugins: { legend: { position: 'top' } }, scales: { x: { beginAtZero: true, title: { display: true, text: 'IOPS' } } } }
+      });
+
+      // Write p99 latency
+      var latCard = document.createElement('div'); latCard.className = 'card';
+      var latH = document.createElement('h3'); latH.textContent = 'Write p99 Latency (ms) \u2014 lower is better'; latCard.appendChild(latH);
+      var latCanvas = document.createElement('canvas'); latCanvas.id = 'chart_wp99'; latCanvas.height = 90;
+      latCard.appendChild(latCanvas); grid.appendChild(latCard);
+      new Chart(latCanvas, {
+        type: 'bar',
+        data: {
+          labels: POOLS_WITH_RAND.map(function(p){return p.label}),
+          datasets: [
+            { label: 'MZ Write p99', data: POOLS_WITH_RAND.map(function(p){return MZ[p.id].rand_write_p99}), backgroundColor: mzC, borderColor: mzB, borderWidth: 1 },
+            { label: 'SZ Write p99', data: POOLS_WITH_RAND.map(function(p){return SZ[p.id].rand_write_p99}), backgroundColor: szC, borderColor: szB, borderWidth: 1 }
+          ]
+        },
+        options: { indexAxis: 'y', responsive: true, plugins: { legend: { position: 'top' } }, scales: { x: { beginAtZero: true, title: { display: true, text: 'ms' } } } }
+      });
+    })();
+
+    // ── Scorecard ─────────────────────────────────────────────────────────
+    (function() {
+      var dims = [
+        { key: 'rand_iops', label: 'Random IOPS', hb: true },
+        { key: 'seq_bw', label: 'Seq BW', hb: true },
+        { key: 'mixed_iops', label: 'Mixed IOPS', hb: true },
+        { key: 'avg_p99_ms', label: 'p99 Latency', hb: false }
+      ];
+      var t = document.createElement('table'); t.className = 'scorecard';
+      var html = '<thead><tr><th>Pool</th>';
+      dims.forEach(function(d){ html += '<th>' + esc(d.label) + '</th>'; });
+      html += '</tr></thead><tbody>';
+      POOLS.forEach(function(p) {
+        html += '<tr><td class="cat"><strong>' + esc(p.label) + '</strong></td>';
+        dims.forEach(function(d) {
+          var w = winLabel(MZ[p.id][d.key], SZ[p.id][d.key], d.hb);
+          html += '<td class="' + w.cls + '">' + esc(w.text) + '</td>';
+        });
+        html += '</tr>';
+      });
+      // Totals
+      html += '<tr style="border-top:2px solid #333;font-weight:700"><td class="cat">Overall</td>';
+      dims.forEach(function(d) {
+        var mzW = 0, szW = 0;
+        POOLS_WITH_RAND.forEach(function(p) {
+          var mv = MZ[p.id][d.key], sv = SZ[p.id][d.key];
+          if (mv === 0 || sv === 0) return;
+          var dd = pctDelta(mv, sv);
+          if (d.hb) { if (dd > 5) mzW++; else if (dd < -5) szW++; }
+          else      { if (dd < -5) mzW++; else if (dd > 5) szW++; }
+        });
+        html += '<td>' + mzW + ' MZ / ' + szW + ' SZ</td>';
+      });
+      html += '</tr></tbody>';
+      t.innerHTML = html;
+      document.getElementById('scorecardSection').appendChild(t);
+    })();
+
+    // ── Key Takeaways ────────────────────────────────────────────────────
+    (function() {
+      var items = [
+        'Write IOPS: consistent 10\u201319% regression on MZ. Every pool shows lower random write IOPS on MZ. RBD rep3 dropped from 10,282 to 7,515 write IOPS (\u221227%), rep2 from 10,932 to 8,955 (\u221218%), and ec-2-1 from 6,236 to 5,380 (\u221214%). This directly reflects the cost of waiting for cross-AZ replica/chunk acknowledgments.',
+        'Read IOPS: effectively identical. Read affinity works as designed \u2014 reads are served from the local-zone OSD replica. Random read IOPS differ by less than 5% across all RBD pools (e.g., rep3: 55,841 MZ vs 54,222 SZ = +3%). CephFS reads actually improved on MZ, likely due to the MZ cluster having more PGs (512 vs 256) for the CephFS data pool.',
+        'Write p99 latency: the clearest MZ penalty. Random write p99 increased 40\u201382% on RBD pools (rep3: 380ms vs 209ms, rep2: 308ms vs 194ms). The worst case is ec-2-1 at 558ms vs 354ms (+57%), where EC encoding distributes data chunks across all 3 AZs. CephFS write p99 shows the largest absolute increase: cephfs-rep3 hit 1,502ms vs 885ms (+70%).',
+        'Sequential throughput: MZ slightly better on some pools. Surprisingly, several pools show higher sequential BW on MZ (rep3: +4.6%, rep3-enc: +4.8%, cephfs-rep3: +11.6%). This may reflect fresher PG autoscaler sizing on the MZ cluster or regional network bandwidth differences. ec-2-1 is the outlier with \u221227.5% sequential BW regression.',
+        'EC pools hit hardest by cross-AZ placement. ec-2-1 shows the largest regressions across almost every metric: \u22126.3% random IOPS, \u221227.5% sequential BW, \u221217.2% mixed IOPS, +57% write p99. EC encoding distributes data and parity chunks across all 3 failure domains, meaning every I/O touches all 3 AZs.',
+        'rep2 benefits from fewer AZ acks. With only 2 replicas, rep2 needs acknowledgment from just 1 remote AZ (vs 2 for rep3). This gives rep2 a structural advantage on MZ: it shows the smallest write IOPS regression (\u221218% vs \u221227% for rep3) and the lowest write p99 (308ms vs 380ms for rep3).',
+        'CephFS overhead stable across zones. The MDS latency component is the same regardless of AZ topology. Read latency is nearly identical (5.99ms MZ vs 5.93\u20137.04ms SZ). The cross-AZ penalty only shows up in writes, consistent with the MDS being a metadata path while data replication is the bottleneck.',
+        'Bottom line for production: Read-heavy workloads will see no meaningful performance difference on multi-zone ODF. Write-heavy workloads should expect a 10\u201320% IOPS reduction and 1.5\u20132x p99 latency increase \u2014 the unavoidable cost of surviving a full AZ failure. Avoid EC pools on MZ if write latency is critical; prefer rep2 for the best MZ write performance.'
+      ];
+      var el = document.getElementById('takeawaySection');
+      items.forEach(function(text) {
+        var div = document.createElement('div');
+        div.className = 'takeaway';
+        // Bold the first sentence
+        var dot = text.indexOf('.');
+        if (dot > 0) {
+          var b = document.createElement('strong');
+          b.textContent = text.substring(0, dot + 1);
+          div.appendChild(b);
+          div.appendChild(document.createTextNode(text.substring(dot + 1)));
+        } else {
+          div.textContent = text;
+        }
+        el.appendChild(div);
+      });
+    })();
+  </script>
+</body>
+</html>

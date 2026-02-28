@@ -144,18 +144,84 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Execute a ceph CLI command, trying toolbox first, then falling back to an
+# OSD pod with the admin keyring. Encrypted clusters (e.g. IBM KP) may not
+# have a toolbox; OSD pods lack the admin keyring by default, so we inject
+# it from the rook-ceph-admin-keyring secret + a temp ceph.conf with
+# ms_client_mode=secure for encrypted messenger.
+# ---------------------------------------------------------------------------
+CEPH_EXEC_OSD_POD=""
+CEPH_EXEC_INITIALIZED=""
+
+_init_ceph_exec_osd() {
+  [[ -n "${CEPH_EXEC_INITIALIZED}" ]] && return 0
+
+  local osd_pod
+  osd_pod=$(oc get pod -n "${ODF_NAMESPACE}" -l app=rook-ceph-osd --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  [[ -z "${osd_pod}" ]] && return 1
+
+  # Extract admin keyring from K8s secret
+  local admin_key
+  admin_key=$(oc get secret rook-ceph-admin-keyring -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.data.keyring}' 2>/dev/null | base64 -d | grep key | awk '{print $3}')
+  [[ -z "${admin_key}" ]] && return 1
+
+  # Get mon endpoints (v2 addresses)
+  local mon_hosts
+  mon_hosts=$(oc get configmap rook-ceph-mon-endpoints -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.data.mapping}' 2>/dev/null | \
+    jq -r '.node | to_entries[] | .value.Address' | \
+    while read -r ip; do echo -n "[v2:${ip}:3300],"; done | sed 's/,$//')
+  [[ -z "${mon_hosts}" ]] && return 1
+
+  # Write temp ceph.conf and admin keyring to OSD pod
+  oc exec -n "${ODF_NAMESPACE}" "${osd_pod}" -- bash -c "
+    cat > /tmp/ceph.conf << 'CONF'
+[global]
+mon_host = ${mon_hosts}
+ms_client_mode = secure
+CONF
+    cat > /tmp/admin.keyring << KEY
+[client.admin]
+key = ${admin_key}
+KEY" 2>/dev/null || return 1
+
+  CEPH_EXEC_OSD_POD="${osd_pod}"
+  CEPH_EXEC_INITIALIZED="true"
+  return 0
+}
+
+ceph_exec() {
+  # Try toolbox deployment first
+  local output
+  if output=$(oc -n "${ODF_NAMESPACE}" exec deploy/rook-ceph-tools -- "$@" 2>/dev/null); then
+    echo "${output}"
+    return 0
+  fi
+
+  # Fallback: OSD pod with injected admin keyring
+  if _init_ceph_exec_osd; then
+    if output=$(oc exec -n "${ODF_NAMESPACE}" "${CEPH_EXEC_OSD_POD}" -- \
+      bash -c "$(printf '%q ' "$@") --conf /tmp/ceph.conf --keyring /tmp/admin.keyring" 2>/dev/null); then
+      echo "${output}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # Update CephFS CSI provisioner/node auth caps to include a new filesystem.
 # Rook only authorizes the OOB CephFilesystem; custom ones need caps added.
 # ---------------------------------------------------------------------------
 update_cephfs_csi_caps() {
   local fs_name="$1"
 
-  # Find the Rook tools pod
-  local tools_pod
-  tools_pod=$(oc get pod -n "${ODF_NAMESPACE}" -l app=rook-ceph-tools \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-  if [[ -z "${tools_pod}" ]]; then
-    log_warn "Rook tools pod not found — cannot update CephFS CSI auth caps"
+  # Verify ceph CLI access (via toolbox or OSD pod)
+  if ! ceph_exec ceph status &>/dev/null; then
+    log_warn "Cannot access Ceph CLI — cannot update CephFS CSI auth caps"
     log_warn "PVC provisioning for ${fs_name} may fail with 'Operation not permitted'"
     return 0
   fi
@@ -174,8 +240,7 @@ update_cephfs_csi_caps() {
 
   # Check if the provisioner already has caps for this filesystem
   local current_prov_caps
-  current_prov_caps=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
-    ceph auth get "client.${prov_user}" 2>/dev/null | grep "caps osd" || echo "")
+  current_prov_caps=$(ceph_exec ceph auth get "client.${prov_user}" 2>/dev/null | grep "caps osd" || echo "")
 
   if echo "${current_prov_caps}" | grep -q "${fs_name}"; then
     log_info "CephFS CSI caps already include ${fs_name} — skipping"
@@ -186,30 +251,26 @@ update_cephfs_csi_caps() {
 
   # Extract existing OSD caps to preserve them, then append the new filesystem
   local prov_osd_caps node_osd_caps
-  prov_osd_caps=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
-    ceph auth get "client.${prov_user}" 2>/dev/null | \
+  prov_osd_caps=$(ceph_exec ceph auth get "client.${prov_user}" 2>/dev/null | \
     sed -n 's/.*caps osd = "\(.*\)"/\1/p')
-  node_osd_caps=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
-    ceph auth get "client.${node_user}" 2>/dev/null | \
+  node_osd_caps=$(ceph_exec ceph auth get "client.${node_user}" 2>/dev/null | \
     sed -n 's/.*caps osd = "\(.*\)"/\1/p')
 
   # Append caps for the new filesystem
   local new_prov_osd="${prov_osd_caps}, allow rw tag cephfs metadata=${fs_name}"
   local new_node_osd="${node_osd_caps}, allow rw tag cephfs *=${fs_name}"
 
-  oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
-    ceph auth caps "client.${prov_user}" \
-      mds "allow rw path=/volumes/csi" \
-      mgr "allow rw" \
-      mon "allow r, allow command 'osd blocklist'" \
-      osd "${new_prov_osd}" 2>&1 | head -1
+  ceph_exec ceph auth caps "client.${prov_user}" \
+    mds "allow rw path=/volumes/csi" \
+    mgr "allow rw" \
+    mon "allow r, allow command 'osd blocklist'" \
+    osd "${new_prov_osd}" 2>&1 | head -1
 
-  oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
-    ceph auth caps "client.${node_user}" \
-      mds "allow rw path=/volumes/csi" \
-      mgr "allow rw" \
-      mon "allow r" \
-      osd "${new_node_osd}" 2>&1 | head -1
+  ceph_exec ceph auth caps "client.${node_user}" \
+    mds "allow rw path=/volumes/csi" \
+    mgr "allow rw" \
+    mon "allow r" \
+    osd "${new_node_osd}" 2>&1 | head -1
 
   log_info "CephFS CSI auth caps updated for ${fs_name}"
 
@@ -433,17 +494,33 @@ main() {
   # Discover OSD topology — count unique failure domains (racks on ROKS)
   local failure_domain
   failure_domain=$(detect_failure_domain)
-  log_info "Using failureDomain: ${failure_domain} (from OOB CephBlockPool)"
+  log_info "Using failureDomain: ${failure_domain}"
 
   local failure_domain_count
   if [[ "${failure_domain}" == "host" ]]; then
     failure_domain_count=$(oc get pods -n "${ODF_NAMESPACE}" -l app=rook-ceph-osd \
       -o jsonpath='{.items[*].spec.nodeName}' 2>/dev/null | tr ' ' '\n' | sort -u | grep -c . || echo "0")
+  elif [[ "${failure_domain}" == "zone" ]]; then
+    # For zone, count unique zones from worker node topology labels (no Ceph CLI needed)
+    failure_domain_count=$(oc get nodes -l node-role.kubernetes.io/worker \
+      -o jsonpath='{range .items[*]}{.metadata.labels.topology\.kubernetes\.io/zone}{"\n"}{end}' 2>/dev/null | \
+      sort -u | grep -c . || echo "0")
   else
-    # For rack/zone, query the CRUSH tree
+    # For rack or other CRUSH types, try toolbox first, fall back to OSD pod
     failure_domain_count=$(oc -n "${ODF_NAMESPACE}" exec deploy/rook-ceph-tools -- \
       ceph osd crush tree --format json 2>/dev/null | \
       jq --arg fd "${failure_domain}" '[.. | objects | select(.type == $fd)] | length' 2>/dev/null || echo "0")
+    if [[ "${failure_domain_count}" -eq 0 ]]; then
+      # Toolbox unavailable — try via OSD pod (handles encrypted clusters)
+      local osd_pod
+      osd_pod=$(oc get pod -n "${ODF_NAMESPACE}" -l app=rook-ceph-osd \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+      if [[ -n "${osd_pod}" ]]; then
+        failure_domain_count=$(oc exec -n "${ODF_NAMESPACE}" "${osd_pod}" -- \
+          ceph osd crush tree --format json 2>/dev/null | \
+          jq --arg fd "${failure_domain}" '[.. | objects | select(.type == $fd)] | length' 2>/dev/null || echo "0")
+      fi
+    fi
   fi
   log_info "Failure domains (${failure_domain}): ${failure_domain_count}"
 

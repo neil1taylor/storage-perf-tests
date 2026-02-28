@@ -30,7 +30,7 @@ Key findings:
 - **Pool CSI near block-storage IOPS** — bench-pool delivers 53k random IOPS, comparable to RBD pools and 9x faster than ibmc-vpc-file-3000-iops
 - **IBM Cloud File CSI is IOPS-bound** — performance scales linearly with provisioned IOPS tier (500/1000/3000)
 
-See the [interactive ranking report](docs/examples/ranking-report-example.html) for detailed charts and composite scores, or the [ROKS vs VCF comparison](docs/examples/roks-vs-vcf-comparison.html) for cross-platform analysis.
+See the [interactive ranking report](docs/examples/ranking-report-example.html) for detailed charts and composite scores, the [ROKS vs VCF comparison](docs/examples/roks-vs-vcf-comparison.html) for cross-platform analysis, or the [MZ vs SZ comparison](docs/examples/mz-vs-sz-comparison.html) for multi-zone vs single-zone ODF performance impact.
 
 ## Documentation
 
