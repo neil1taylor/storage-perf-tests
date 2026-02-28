@@ -275,6 +275,8 @@ export LOG_FILE="${RESULTS_DIR}/${RUN_ID}.log"
 
 echo "[config] Run ID: ${RUN_ID}"
 echo "[config] Cluster: ${CLUSTER_TYPE} (${WORKER_FLAVOR}, ${WORKER_COUNT} workers)"
+echo "[config] Region: ${CLUSTER_REGION}, Zones: ${CLUSTER_ZONES} (multi-AZ=${CLUSTER_MULTI_AZ})"
+echo "[config] CSI dedup: file=${FILE_CSI_DEDUP}, block=${BLOCK_CSI_DEDUP}"
 echo "[config] Namespace: ${TEST_NAMESPACE}"
 echo "[config] ODF pools: ${#ODF_POOLS[@]}"
 echo "[config] File CSI profiles: ${FILE_CSI_DISCOVERY}"
