@@ -89,8 +89,18 @@ detect_pool_csi_topology() {
   local region zone
   region=$(oc get nodes -l node-role.kubernetes.io/worker= \
     -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/region}' 2>/dev/null || echo "")
-  zone=$(oc get nodes -l node-role.kubernetes.io/worker= \
-    -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null || echo "")
+
+  if [[ "${CLUSTER_MULTI_AZ}" == "true" ]]; then
+    # For multi-zone, get all unique zones
+    local all_zones
+    all_zones=$(oc get nodes -l node-role.kubernetes.io/worker= \
+      -o jsonpath='{.items[*].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null | \
+      tr ' ' '\n' | sort -u | paste -sd ',' -)
+    zone="${all_zones}"
+  else
+    zone=$(oc get nodes -l node-role.kubernetes.io/worker= \
+      -o jsonpath='{.items[0].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null || echo "")
+  fi
 
   if [[ -z "${region}" || -z "${zone}" ]]; then
     log_error "Could not detect region/zone from worker node topology labels"
@@ -167,6 +177,15 @@ setup_pool_csi() {
     local region="${topo%%:*}"
     local zone="${topo#*:}"
     log_info "Detected topology: region=${region}, zone=${zone}"
+
+    if [[ "${CLUSTER_MULTI_AZ}" == "true" ]]; then
+      # FileSharePool spec accepts a single zone — use first zone and warn.
+      # TODO: Create one FileSharePool per zone when multi-zone is validated.
+      local first_zone="${zone%%,*}"
+      log_warn "Multi-zone cluster detected. FileSharePool will be created in zone ${first_zone} only."
+      log_warn "Cross-AZ PVC access may incur additional latency."
+      zone="${first_zone}"
+    fi
 
     # Detect resource group
     local resource_group
