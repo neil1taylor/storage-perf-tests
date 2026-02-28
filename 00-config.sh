@@ -152,8 +152,14 @@ export FILE_CSI_PROFILES
 
 # Set to "auto" to discover all vpc-file StorageClasses at runtime
 export FILE_CSI_DISCOVERY="auto"
-# When auto-discovering, skip -metro- and -retain- variants (same I/O perf as base SC)
-export FILE_CSI_DEDUP="${FILE_CSI_DEDUP:-true}"
+# When auto-discovering, skip -metro- and -retain- variants on single-zone clusters.
+# On multi-zone clusters, metro SCs may have different performance characteristics
+# (cross-AZ NFS access), so include them by default.
+if [[ "${CLUSTER_MULTI_AZ}" == "true" ]]; then
+  export FILE_CSI_DEDUP="${FILE_CSI_DEDUP:-false}"
+else
+  export FILE_CSI_DEDUP="${FILE_CSI_DEDUP:-true}"
+fi
 
 # ---------------------------------------------------------------------------
 # fio settings
@@ -219,8 +225,14 @@ export SSH_KEY_PATH="${SSH_KEY_PATH:-./ssh-keys/perf-test-key}"
 # ---------------------------------------------------------------------------
 export BLOCK_CSI_ENABLED="${BLOCK_CSI_ENABLED:-true}"
 export BLOCK_CSI_DISCOVERY="auto"
-# When auto-discovering, skip -metro- and -retain- variants (same I/O perf as base SC)
-export BLOCK_CSI_DEDUP="${BLOCK_CSI_DEDUP:-true}"
+# When auto-discovering, skip -metro- and -retain- variants on single-zone clusters.
+# On multi-zone clusters, metro SCs may have different performance characteristics
+# (cross-AZ block access), so include them by default.
+if [[ "${CLUSTER_MULTI_AZ}" == "true" ]]; then
+  export BLOCK_CSI_DEDUP="${BLOCK_CSI_DEDUP:-false}"
+else
+  export BLOCK_CSI_DEDUP="${BLOCK_CSI_DEDUP:-true}"
+fi
 declare -a BLOCK_CSI_PROFILES=(
   "ibmc-vpc-block-5iops-tier"
   "ibmc-vpc-block-10iops-tier"

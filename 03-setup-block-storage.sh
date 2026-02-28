@@ -113,7 +113,8 @@ main() {
 
   # Filter out -metro- and -retain- variants when auto-discovering.
   # These differ only in topology constraints or PV reclaim policy —
-  # I/O performance is identical to the base SC for each IOPS tier.
+  # I/O performance is identical on single-zone. On multi-zone clusters,
+  # metro SCs are included since cross-AZ topology may affect performance.
   if [[ "${BLOCK_CSI_DISCOVERY}" == "auto" && "${BLOCK_CSI_DEDUP}" == "true" ]]; then
     local pre_filter=${#block_scs[@]}
     local -a deduped_scs=()

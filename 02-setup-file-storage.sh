@@ -253,7 +253,8 @@ main() {
   fi
 
   # Filter out variants that duplicate I/O behaviour or are inaccessible:
-  #   -metro- / -retain-  — same I/O perf as base SC (topology/reclaim only)
+  #   -metro- / -retain-  — same I/O perf on single-zone (topology/reclaim only);
+  #                          included on multi-zone where cross-AZ access may differ
   #   -regional*           — use 'rfs' profile which requires IBM support allowlisting
   #   -eit                 — encryption-in-transit not supported on RHCOS (ROKS worker nodes)
   #   -min-iops            — ~100 IOPS at 150Gi; too slow for fio (starves SSH during test file creation)
