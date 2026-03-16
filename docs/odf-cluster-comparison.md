@@ -1,75 +1,84 @@
-# ODF Cluster Comparison: Multi-Zone vs Single-Zone
+# ODF Cluster Comparison: Multi-Zone vs Single-Zone vs Unmanaged Single-Zone
 
-**Date:** 2026-02-28
+**Date:** 2026-03-16
 **Compared clusters:**
-- **MZ:** `ocp-virt-mz-cluster` — multi-zone, us-south (3 AZs)
-- **SZ:** `ocp-virt-420-cluster` — single-zone, eu-de-1
+- **MZ:** `ocp-virt-mz-cluster` — ROKS managed, multi-zone, us-south (3 AZs)
+- **SZ:** `ocp-virt-420-cluster` — ROKS managed, single-zone, eu-de-1
+- **unmanaged_sz:** `szocp` — self-managed OCP, single-zone (no zone labels), 3-node compact
 
 ---
 
 ## Cluster Infrastructure
 
-| Property | **MZ** (ocp-virt-mz-cluster) | **SZ** (ocp-virt-420-cluster) |
-|---|---|---|
-| Region | us-south | eu-de |
-| Zones | 3 (us-south-1, -2, -3) | 1 (eu-de-1) |
-| Workers | 3 (1 per zone) | 3 (all same zone) |
-| Instance type | bx2d.metal.96x384 | bx2d.metal.96x384 |
-| OCP version | v1.33.6 | v1.33.6 |
-| ODF version | 4.19.10 | 4.19.10 |
-| Ceph version | Squid 19.2.1-292 | Squid 19.2.1-292 |
+| Property | **MZ** (ocp-virt-mz-cluster) | **SZ** (ocp-virt-420-cluster) | **unmanaged_sz** (szocp) |
+|---|---|---|---|
+| Platform | ROKS managed | ROKS managed | Self-managed OCP |
+| Region | us-south | eu-de | n/a (no topology labels) |
+| Zones | 3 (us-south-1, -2, -3) | 1 (eu-de-1) | 0 (no zone labels) |
+| Workers | 3 (1 per zone) | 3 (all same zone) | 3 (compact: control+worker) |
+| Instance type | bx2d.metal.96x384 | bx2d.metal.96x384 | 96 vCPU, ~377 GiB RAM (BM/NVMe) |
+| OCP version | v1.33.6 | v1.33.6 | 4.20.15 |
+| ODF version | 4.19.10 | 4.19.10 | 4.20.7-rhodf |
+| Ceph version | Squid 19.2.1-292 | Squid 19.2.1-292 | Squid 19.2.1-331 |
 
-Both clusters use identical bare-metal hardware (96 vCPU, 384 GiB RAM per node) and identical ODF/Ceph software versions.
+MZ and SZ use identical bare-metal hardware (96 vCPU, 384 GiB RAM per node) and identical ODF/Ceph software versions. unmanaged_sz is a self-managed OCP compact cluster with similar hardware but newer OCP/ODF versions and Ceph build.
 
 ---
 
 ## ODF / StorageCluster Configuration
 
-| Property | **MZ** | **SZ** |
-|---|---|---|
-| StorageCluster phase | Ready | Ready |
-| Device set count | 8 | 8 |
-| Device set replica | 3 | 3 |
-| **Total OSDs** | **24** | **24** |
-| OSDs per node | 8 | 8 |
-| OSD size | 2980 GiB (NVMe) | 2980 GiB (NVMe) |
-| Raw capacity | ~70 TiB | ~70 TiB |
-| Device class | SSD | SSD |
-| Resource profile | balanced | balanced |
+| Property | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|
+| StorageCluster phase | Ready | Ready | Ready |
+| Device set count | 8 | 8 | 24 |
+| Device set replica | 3 | 3 | 1 |
+| **Total OSDs** | **24** | **24** | **24** |
+| OSDs per node | 8 | 8 | 8 |
+| OSD size | 2980 GiB (NVMe) | 2980 GiB (NVMe) | 2980 GiB (NVMe) |
+| Raw capacity | ~70 TiB | ~70 TiB | ~70 TiB |
+| Device class | SSD | SSD | SSD |
+| Resource profile | balanced | balanced | balanced |
+| Flexible scaling | not set | not set | `true` |
+| CRUSH failure domain | zone | rack | host |
+| Pool replication | 3 copies | 3 copies | 3 copies |
+| Capacity scaling | In triples (across failure domains) | In triples (across failure domains) | Per-host (add 1 node → more OSDs) |
+
+> **Clarification on `replica` vs replication:** The device set `replica` field controls how the ocs-operator provisions OSDs — on ROKS, `replica: 3` means each device set spans 3 failure domains (zone or rack), so capacity grows in triples. On unmanaged_sz, `replica: 1` with `flexibleScaling: true` means each OSD is independent, allowing capacity to grow by adding a single host. In both cases, **data redundancy is identical** — all Ceph pools use `size: 3` (3 data copies across 3 hosts/racks/zones). The device set replica is an OSD provisioning model, not a data replication factor.
 
 ### Encryption
 
-| Property | **MZ** | **SZ** |
-|---|---|---|
-| Cluster-wide encryption | yes | yes |
-| StorageClass encryption | yes | yes |
-| Network encryption (msgr2) | yes | yes |
-| KMS provider | IBM Key Protect (us-south) | IBM Key Protect (eu-de) |
-| Key rotation | weekly | weekly |
-| CephFS kernel mount | ms_mode=secure | ms_mode=secure |
+| Property | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|
+| Cluster-wide encryption | yes | yes | no |
+| StorageClass encryption | yes | yes | no |
+| Network encryption (msgr2) | yes | yes | no |
+| KMS provider | IBM Key Protect (us-south) | IBM Key Protect (eu-de) | n/a |
+| Key rotation | weekly | weekly | n/a |
+| CephFS kernel mount | ms_mode=secure | ms_mode=secure | default |
 
 ### CSI Features
 
-| Property | **MZ** | **SZ** |
-|---|---|---|
-| Read affinity | enabled | enabled |
-| Skip user creation | true | true |
+| Property | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|
+| Read affinity | enabled | enabled | not configured |
+| Skip user creation | true | true | not configured |
 
 ---
 
 ## Failure Domain & CRUSH Topology
 
-This is the **primary architectural difference** between the two clusters.
+This is the **primary architectural difference** between the clusters.
 
-| Property | **MZ** | **SZ** |
-|---|---|---|
-| **failureDomain** | **zone** | **rack** |
-| failureDomainKey | `topology.kubernetes.io/zone` | `topology.rook.io/rack` |
-| failureDomainValues | us-south-1, us-south-2, us-south-3 | rack0, rack1, rack2 |
-| **Failure domain count** | **3 zones** | **3 racks** |
-| Replicas survive | Full AZ outage | Single rack/host outage |
-| Mon anti-affinity | `topology.kubernetes.io/zone` | `topology.rook.io/rack` |
-| MDS anti-affinity | `topology.kubernetes.io/zone` | `topology.rook.io/rack` |
+| Property | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|
+| **failureDomain** | **zone** | **rack** | **host** |
+| failureDomainKey | `topology.kubernetes.io/zone` | `topology.rook.io/rack` | n/a |
+| failureDomainValues | us-south-1, us-south-2, us-south-3 | rack0, rack1, rack2 | szocp-control-0-{0,1,2} |
+| **Failure domain count** | **3 zones** | **3 racks** | **3 hosts** |
+| Replicas survive | Full AZ outage | Single rack/host outage | Single host outage |
+| Mon anti-affinity | `topology.kubernetes.io/zone` | `topology.rook.io/rack` | host (implicit) |
+| MDS anti-affinity | `topology.kubernetes.io/zone` | `topology.rook.io/rack` | host (implicit) |
+| CRUSH hierarchy | root→region→zone→host | root→region→zone→rack→host | root→host (flat) |
 
 ### CRUSH Tree: MZ Cluster
 
@@ -108,6 +117,20 @@ root default (69.9 TiB)
 
 **Key:** Single zone with synthetic rack labels. Each worker gets its own rack bucket.
 
+### CRUSH Tree: unmanaged_sz Cluster
+
+```
+root default (69.9 TiB)
+├── host szocp-control-0-0
+│   └── osd.0, osd.2, osd.7, osd.10, osd.12, osd.15, osd.18, osd.22
+├── host szocp-control-0-1
+│   └── osd.3, osd.5, osd.8, osd.9, osd.13, osd.19, osd.20, osd.23
+└── host szocp-control-0-2
+    └── osd.1, osd.4, osd.6, osd.11, osd.14, osd.16, osd.17, osd.21
+```
+
+**Key:** Flat CRUSH tree with no region, zone, or rack buckets. `flexibleScaling: true` with `failureDomain: host`. Each compact node (combined control-plane + worker) has 8 NVMe-backed OSDs.
+
 ---
 
 ## Ceph Pools
@@ -136,21 +159,43 @@ root default (69.9 TiB)
 | perf-test-cephfs-rep2-metadata | rep | 3 | 5 | 16 | — | Custom CephFS metadata |
 | perf-test-cephfs-rep2-data0 | rep | 2 | 6 | 128 | 0.10 | Custom CephFS data |
 
-**Note:** Both clusters have custom perf-test pools. The MZ cluster uses `failureDomain: zone` for custom pools; the SZ cluster uses `failureDomain: host`.
+### unmanaged_sz Cluster (12 pools, 1865 PGs)
+
+| Pool | Type | Size | Crush Rule | PGs | Target Ratio | Notes |
+|---|---|---|---|---|---|---|
+| .mgr | rep | 3 | 4/6 | 1 | — | Manager pool |
+| cephblockpool | rep | 3 | 1 | 1024 | 0.49 | OOB RBD block pool |
+| cephfilesystem-metadata | rep | 3 | 3 | 16 | — | CephFS metadata |
+| cephfilesystem-data0 | rep | 3 | 7 | 512 | 0.49 | CephFS data |
+| rgw.control | rep | 3 | 2 | 8 | — | RGW control pool |
+| rgw.meta | rep | 3 | 5 | 8 | — | RGW meta pool |
+| rgw.log | rep | 3 | 8 | 8 | — | RGW log pool |
+| rgw.buckets.index | rep | 3 | 9 | 8 | — | RGW buckets index |
+| rgw.buckets.non-ec | rep | 3 | 10 | 8 | — | RGW buckets non-EC |
+| rgw.otp | rep | 3 | 11 | 8 | — | RGW OTP pool |
+| .rgw.root | rep | 3 | 12 | 8 | — | RGW root pool |
+| rgw.buckets.data | rep | 3 | 13 | 256 | 0.49 | RGW buckets data |
+
+**Notes:**
+- MZ and SZ have custom perf-test pools. unmanaged_sz has only OOB pools (no custom perf-test pools yet).
+- unmanaged_sz has RGW (Rados Gateway) deployed with 7 pools, not present on MZ/SZ.
+- unmanaged_sz has no `.nfs` pool.
+- All unmanaged_sz pools use `failureDomain: host` with flat CRUSH (no rack/zone).
 
 ### PG Distribution Comparison (OOB pools only)
 
-| Pool | **MZ PGs** | **SZ PGs** |
-|---|---|---|
-| Blockpool | **256** | 128 |
-| CephFS data0 | **512** | 256 |
-| CephFS metadata | 16 | 16 |
-| .mgr | 32 | 32 |
-| .nfs | 32 | 32 |
-| **Total (OOB)** | **848** | **476** |
-| **Total (all)** | **848** | **768** |
+| Pool | **MZ PGs** | **SZ PGs** | **unmanaged_sz PGs** |
+|---|---|---|---|
+| Blockpool | **256** | 128 | **1024** |
+| CephFS data0 | **512** | 256 | **512** |
+| CephFS metadata | 16 | 16 | 16 |
+| .mgr | 32 | 32 | 1 |
+| .nfs | 32 | 32 | — |
+| RGW pools (all) | — | — | 304 |
+| **Total (OOB)** | **848** | **476** | **1857** |
+| **Total (all)** | **848** | **768** | **1865** |
 
-The MZ cluster's PG autoscaler has assigned more PGs to the OOB pools because there are no custom pools consuming `target_size_ratio`. On the SZ cluster, the custom pools with `target_size_ratio: 0.1` reduce the effective ratio for the OOB pools from 0.49 to ~0.38, resulting in fewer PGs.
+The MZ cluster's PG autoscaler has assigned more PGs to the OOB pools because there are no custom pools consuming `target_size_ratio`. On the SZ cluster, the custom pools with `target_size_ratio: 0.1` reduce the effective ratio for the OOB pools from 0.49 to ~0.38, resulting in fewer PGs. The unmanaged_sz cluster has the highest PG count due to the blockpool having 1024 PGs and the additional RGW pool PGs; no custom pools have been created to compete for PG allocation.
 
 ---
 
@@ -174,57 +219,67 @@ The MZ cluster's PG autoscaler has assigned more PGs to the OOB pools because th
 | perf-test-rep2 | host | 2 | 0/0 | 0.10 |
 | perf-test-ec-2-1 | host | 0 | 2/1 | — |
 
-**Note:** Custom pools on SZ use `failureDomain: host` (finer-grained than the cluster-level `rack`). On MZ, custom pools use `failureDomain: zone` to match the cluster-level setting.
+### unmanaged_sz Cluster
+
+| Pool | failureDomain | Replica Size | EC Data/Code | Target Ratio |
+|---|---|---|---|---|
+| builtin-mgr | host | 3 | 0/0 | — |
+| ocs-storagecluster-cephblockpool | host | 3 | 0/0 | 0.49 |
+
+**Note:** Custom pools on SZ use `failureDomain: host` (finer-grained than the cluster-level `rack`). On MZ, custom pools use `failureDomain: zone` to match the cluster-level setting. unmanaged_sz uses `failureDomain: host` cluster-wide (flat CRUSH, no rack/zone). unmanaged_sz has no NFS builtin pool and no custom perf-test pools yet.
 
 ---
 
 ## CephFilesystems
 
-| Filesystem | **MZ** | **SZ** |
-|---|---|---|
-| OOB (ocs-storagecluster-cephfilesystem) | Ready | Ready |
-| perf-test-cephfs-rep2 | — (not created) | Ready |
-| MDS count | 1 active + 1 standby | 2 active + 2 standby |
+| Filesystem | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|
+| OOB (ocs-storagecluster-cephfilesystem) | Ready | Ready | Ready |
+| perf-test-cephfs-rep2 | — (not created) | Ready | — (not created) |
+| MDS count | 1 active + 1 standby | 2 active + 2 standby | 1 active + 1 standby-replay |
 
 ---
 
 ## StorageClasses
 
-### ODF StorageClasses (identical on both)
+### ODF StorageClasses
 
-| StorageClass | Provisioner | Present on MZ | Present on SZ |
-|---|---|---|---|
-| ocs-storagecluster-ceph-rbd | rbd.csi.ceph.com | yes | yes |
-| ocs-storagecluster-ceph-rbd-virtualization | rbd.csi.ceph.com | yes | yes |
-| ocs-storagecluster-ceph-rbd-encrypted | rbd.csi.ceph.com | yes | yes |
-| ocs-storagecluster-cephfs | cephfs.csi.ceph.com | yes | yes |
-| ocs-storagecluster-ceph-nfs | nfs.csi.ceph.com | yes | yes |
+| StorageClass | Provisioner | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|---|
+| ocs-storagecluster-ceph-rbd | rbd.csi.ceph.com | yes | yes | yes |
+| ocs-storagecluster-ceph-rbd-virtualization | rbd.csi.ceph.com | yes | yes | yes (default) |
+| ocs-storagecluster-ceph-rbd-encrypted | rbd.csi.ceph.com | yes | yes | no |
+| ocs-storagecluster-cephfs | cephfs.csi.ceph.com | yes | yes | yes |
+| ocs-storagecluster-ceph-nfs | nfs.csi.ceph.com | yes | yes | no |
+| ocs-storagecluster-ceph-rgw | ceph.rook.io/bucket | no | no | yes |
+| localblock-sc | kubernetes.io/no-provisioner | no | no | yes |
+| openshift-storage.noobaa.io | noobaa.io/obc | yes | yes | yes |
 
 ### StorageClass Parameters
 
-**RBD (ocs-storagecluster-ceph-rbd):** Identical on both clusters.
+**RBD (ocs-storagecluster-ceph-rbd):** Identical on all three clusters.
 - `imageFeatures: layering,deep-flatten,exclusive-lock,object-map,fast-diff`
 - `imageFormat: 2`
 - `pool: ocs-storagecluster-cephblockpool`
 - No `mapOptions` or `mounter` set
 
-**RBD Virtualization (ocs-storagecluster-ceph-rbd-virtualization):** Identical on both clusters.
+**RBD Virtualization (ocs-storagecluster-ceph-rbd-virtualization):** Identical on all three clusters.
 - Same as above, plus:
 - `mapOptions: krbd:rxbounce`
 - `mounter: rbd`
 
-**CephFS (ocs-storagecluster-cephfs):** Identical on both clusters.
+**CephFS (ocs-storagecluster-cephfs):** Identical on all three clusters.
 - `fsName: ocs-storagecluster-cephfilesystem`
 
 ### IBM Cloud CSI StorageClasses (SZ only)
 
-The SZ cluster also has IBM Cloud File CSI StorageClasses that are not present on the MZ cluster:
+The SZ cluster also has IBM Cloud File CSI StorageClasses that are not present on the MZ or unmanaged_sz clusters:
 - `ibmc-vpc-file-500-iops`, `ibmc-vpc-file-1000-iops`, `ibmc-vpc-file-3000-iops`
 - `ibmc-vpc-file-eit`, `ibmc-vpc-file-min-iops`
 - Metro/retain/regional variants
 - Pool CSI: `bench-pool`, `ibm-vpc-file-pool`
 
-The MZ cluster has **no IBM Cloud CSI StorageClasses** — `02-setup-file-storage.sh` and `03-setup-block-storage.sh` have not been run yet.
+The MZ cluster has **no IBM Cloud CSI StorageClasses** — `02-setup-file-storage.sh` and `03-setup-block-storage.sh` have not been run yet. The unmanaged_sz cluster is self-managed (non-ROKS) and has **no IBM Cloud CSI drivers** installed.
 
 ### Custom Perf-Test StorageClasses (SZ only)
 
@@ -234,27 +289,28 @@ The MZ cluster has **no IBM Cloud CSI StorageClasses** — `02-setup-file-storag
 | perf-test-sc-ec-2-1 | rbd.csi.ceph.com |
 | perf-test-sc-cephfs-rep2 | cephfs.csi.ceph.com |
 
-Present on both clusters (created by `01-setup-storage-pools.sh`).
+Present on SZ only. No custom perf-test StorageClasses exist on MZ or unmanaged_sz yet.
 
 ---
 
 ## Ceph Cluster Health
 
-| Metric | **MZ** | **SZ** |
-|---|---|---|
-| Health | HEALTH_OK | HEALTH_OK |
-| MON daemons | 3 (quorum a,b,c) | 3 (quorum a,c,b) |
-| MGR daemons | 2 (a active, b standby) | 2 (b active, a standby) |
-| MDS daemons | 1 active + 1 standby | 2 active + 2 standby |
-| OSD count | 24 up, 24 in | 24 up, 24 in |
-| OSD uptime | ~12 min (just scaled up) | 4 days |
-| Total pools | 5 | 9 |
-| Total PGs | 848 (all active+clean) | 768 (all active+clean) |
-| Objects | 58 | 6,140 |
-| Data stored | 613 KiB | 23 GiB |
-| Raw used | 1.4 GiB | 85 GiB |
-| Raw available | ~70 TiB | ~70 TiB |
-| CephFS volumes | 1/1 healthy | 2/2 healthy |
+| Metric | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|
+| Health | HEALTH_OK | HEALTH_OK | HEALTH_OK |
+| MON daemons | 3 (quorum a,b,c) | 3 (quorum a,c,b) | 3 (quorum a,b,c) |
+| MGR daemons | 2 (a active, b standby) | 2 (b active, a standby) | 2 (a active, b standby) |
+| MDS daemons | 1 active + 1 standby | 2 active + 2 standby | 1 active + 1 standby-replay |
+| RGW daemons | — | — | 1 active |
+| OSD count | 24 up, 24 in | 24 up, 24 in | 24 up, 24 in |
+| OSD uptime | ~12 min (just scaled up) | 4 days | — |
+| Total pools | 5 | 9 | 12 |
+| Total PGs | 848 (all active+clean) | 768 (all active+clean) | 1865 (all active+clean) |
+| Objects | 58 | 6,140 | — |
+| Data stored | 613 KiB | 23 GiB | 14 GiB |
+| Raw used | 1.4 GiB | 85 GiB | — |
+| Raw available | ~70 TiB | ~70 TiB | ~70 TiB |
+| CephFS volumes | 1/1 healthy | 2/2 healthy | 1/1 healthy |
 
 ---
 
@@ -278,54 +334,82 @@ Present on both clusters (created by `01-setup-storage-pools.sh`).
 | rack2 | ...000009d9 | 8 (osd.2,5,8,11,14,17,20,23) | 76-93 | 23.3 TiB |
 | **Total** | | **24** | MIN/MAX VAR: 0.77/1.16 | **69.9 TiB** |
 
-**Note:** The MZ cluster shows higher VAR (0.68–2.46) because it was just scaled from 3→24 OSDs and the PG distribution hasn't fully rebalanced yet. The original 3 OSDs (0, 1, 2) still hold more metadata. This will equalize over time.
+### unmanaged_sz Cluster
+
+| Host | OSDs | OSD IDs | Weight |
+|---|---|---|---|
+| szocp-control-0-0 | 8 | osd.0, 2, 7, 10, 12, 15, 18, 22 | 23.3 TiB |
+| szocp-control-0-1 | 8 | osd.3, 5, 8, 9, 13, 19, 20, 23 | 23.3 TiB |
+| szocp-control-0-2 | 8 | osd.1, 4, 6, 11, 14, 16, 17, 21 | 23.3 TiB |
+| **Total** | **24** | | **69.9 TiB** |
+
+**Note:** The MZ cluster shows higher VAR (0.68–2.46) because it was just scaled from 3→24 OSDs and the PG distribution hasn't fully rebalanced yet. The original 3 OSDs (0, 1, 2) still hold more metadata. This will equalize over time. The unmanaged_sz cluster has perfectly balanced OSD distribution (8 per node) with a flat CRUSH tree.
 
 ---
 
-## Performance Implications for Multi-Zone
+## Performance Implications
 
-### Cross-AZ Latency
+### Cross-AZ Latency (MZ)
 - **Writes:** Each replicated write must wait for acknowledgment from replicas in different AZs. Inter-AZ latency within us-south is typically 0.5–2ms RTT, which directly adds to write latency compared to the SZ cluster where all replicas are on the same LAN segment.
 - **Reads:** Read affinity (`csi.readAffinity.enabled: true`) means reads are served from the local-zone OSD replica, so read latency should be comparable to SZ.
 
+### Compact Cluster Considerations (unmanaged_sz)
+- **No rack isolation:** With `failureDomain: host` and a flat CRUSH tree (root→host), there is no rack-level fault isolation. Losing one node loses 1/3 of the cluster, but data remains available via the other 2 replicas.
+- **Control-plane co-location:** All 3 nodes run both control-plane and worker workloads. API server, etcd, and scheduler compete with OSD and benchmark VMs for CPU/memory. This may introduce performance variability not seen on dedicated-worker clusters.
+- **No encryption overhead:** Unlike MZ/SZ, unmanaged_sz has no data-at-rest or in-transit encryption, which should result in lower CPU overhead for I/O operations.
+- **No read affinity:** CSI read affinity is not configured. Reads may be served from any OSD replica, though with only 3 hosts on the same LAN segment, the impact is minimal.
+- **RGW overhead:** RGW daemon is active and its 7 pools consume 304 PGs. This adds a small background load not present on MZ/SZ, though all RGW pools are essentially empty.
+- **Higher PG count:** The blockpool has 1024 PGs (vs 256 on MZ, 128 on SZ), which may provide better load distribution across OSDs for RBD workloads.
+
 ### EC Pool Constraints
-- Both clusters have exactly 3 failure domains (3 zones on MZ, 3 racks on SZ).
+- All three clusters have exactly 3 failure domains (3 zones on MZ, 3 racks on SZ, 3 hosts on unmanaged_sz).
 - EC pools requiring ≤3 failure domains work (ec-2-1 needs 3). EC pools needing >3 (ec-3-1, ec-2-2, ec-4-2) will be automatically skipped.
-- Custom pools on MZ must use `failureDomain: zone` (matching the cluster-level setting), not `host` as used on SZ.
+- Custom pools on MZ must use `failureDomain: zone`, on SZ `failureDomain: host` (or `rack`), and on unmanaged_sz `failureDomain: host`.
 
 ### PG Rebalancing
 - The MZ cluster was just scaled from 3→24 OSDs. PG rebalancing to the new OSDs completes rapidly since the cluster is nearly empty (603 KiB of data). All 848 PGs are already active+clean.
 - The PG autoscaler has scaled up: blockpool 64→256 PGs, CephFS data 128→512 PGs, appropriate for 24 OSDs.
 
 ### Network Encryption Overhead
-Both clusters have identical encryption settings (msgr2 secure mode, KMS-backed OSD encryption). The encryption overhead is the same, but on MZ the cross-AZ traffic traverses the IBM Cloud backbone which may have different bandwidth characteristics than the intra-rack NVMe-over-TCP fabric.
+MZ and SZ have identical encryption settings (msgr2 secure mode, KMS-backed OSD encryption). The encryption overhead is the same, but on MZ the cross-AZ traffic traverses the IBM Cloud backbone which may have different bandwidth characteristics than the intra-rack NVMe-over-TCP fabric. unmanaged_sz has no encryption, eliminating this overhead entirely.
 
 ---
 
-## Summary: What's Identical
+## Summary: What's Identical Across All Three
 
-- Hardware: bx2d.metal.96x384 x 3 nodes
-- Software: OCP v1.33.6, ODF 4.19.10, Ceph Squid 19.2.1
 - OSD count: 24 (8 per node)
 - Raw capacity: ~70 TiB
+- NVMe-backed OSDs (~2980 GiB each)
+- 3 failure domains (zone/rack/host)
+- OOB RBD StorageClass parameters (imageFeatures, mapOptions)
+
+## Summary: What's Identical Between MZ and SZ Only
+
+- Hardware: bx2d.metal.96x384 x 3 nodes
+- Software: OCP v1.33.6, ODF 4.19.10, Ceph Squid 19.2.1-292
 - Encryption: Full (data-at-rest + in-transit + KMS)
 - Resource profile: balanced
-- OOB StorageClass parameters: Identical (imageFeatures, mapOptions, etc.)
+- ROKS managed platform
 
 ## Summary: What's Different
 
-| Aspect | **MZ** | **SZ** |
-|---|---|---|
-| Failure domain | **zone** (cross-AZ) | rack (intra-zone) |
-| CRUSH hierarchy | root→region→zone→host | root→region→zone→rack→host |
-| Write latency | Higher (cross-AZ RTT) | Lower (local LAN) |
-| Replica distribution | Across 3 AZs | Across 3 racks (same AZ) |
-| HA level | Survives full AZ outage | Survives single host outage |
-| Custom pools | rep2, ec-2-1, cephfs-rep2 | rep2, ec-2-1, cephfs-rep2 |
-| IBM Cloud CSI | Not discovered | File CSI (15 SCs) + Pool CSI |
-| CephFS MDS count | 1+1 | 2+2 |
-| Cluster age | ~4 hours | ~22 days |
-| Data on cluster | 603 KiB (empty) | 23 GiB |
+| Aspect | **MZ** | **SZ** | **unmanaged_sz** |
+|---|---|---|---|
+| Platform | ROKS managed | ROKS managed | Self-managed OCP |
+| OCP/ODF version | v1.33.6 / 4.19.10 | v1.33.6 / 4.19.10 | 4.20.15 / 4.20.7-rhodf |
+| Failure domain | **zone** (cross-AZ) | rack (intra-zone) | host (flat CRUSH) |
+| CRUSH hierarchy | root→region→zone→host | root→region→zone→rack→host | root→host |
+| Flexible scaling | not set | not set | `true` |
+| Write latency | Higher (cross-AZ RTT) | Lower (local LAN) | Lowest (no encryption, local LAN) |
+| Replica distribution | Across 3 AZs | Across 3 racks (same AZ) | Across 3 hosts (flat) |
+| HA level | Survives full AZ outage | Survives single host outage | Survives single host outage |
+| Encryption | Full (KMS) | Full (KMS) | None |
+| Custom pools | rep2, ec-2-1, cephfs-rep2 | rep2, ec-2-1, cephfs-rep2 | None yet |
+| IBM Cloud CSI | Not discovered | File CSI (15 SCs) + Pool CSI | Not available (non-ROKS) |
+| RGW | No | No | Yes (1 daemon) |
+| CephFS MDS count | 1+1 | 2+2 | 1+1 (standby-replay) |
+| Node role | Dedicated workers | Dedicated workers | Compact (control+worker) |
+| Topology labels | zone/region | zone/region/rack | None |
 
 ---
 
@@ -338,6 +422,8 @@ Both clusters have identical encryption settings (msgr2 secure mode, KMS-backed 
 **Reports:**
 - [MZ Ranking](ranking-perf-20260228-164717.html)
 - [MZ vs SZ Comparison](compare-perf-20260228-164717-vs-perf-20260227-203655.html)
+
+> **Note:** No performance tests have been run on the unmanaged_sz cluster yet. Ranking data for unmanaged_sz is pending.
 
 ### MZ Composite Ranking
 
