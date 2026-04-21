@@ -136,467 +136,374 @@ if [[ "${RANK_MODE}" == true ]]; then
 fi
 
 # ===========================================================================
-# Scale-test mode — replicate multi-VM tests (NFS dp2, ODF rep3, NFS rfs)
+# Scale-test auto-ramp mode
 #
-# This mode bypasses the normal test matrix entirely. It runs:
-#   Test #1: N VMs × discovered pools, mixed 70/30, rate_iops=500, 4k, QD32
-#   Test #2: N VMs × discovered pools, mixed 70/30, rate_iops=1000, 4k, QD32
-#   Test #3: 1 VM, NFS-only tier sweep (dp2 tiers + rfs capped/uncapped)
+# Progressively doubles VM count until p99 latency breaches the SLA, then
+# backfills linearly to find the precise capacity ceiling.
 #
-# VM count is configurable via --vms N (default: 200)
+# Requires --pool. Uses mixed-70-30-rated.fio at configured rate_iops.
 # ===========================================================================
 if [[ "${SCALE_TEST_MODE}" == true ]]; then
   mkdir -p "${RESULTS_DIR}" "${REPORTS_DIR}"
   ensure_ssh_key
+  source "${SCRIPT_DIR}/lib/report-helpers.sh"
 
-  # ─── Discover scale-test pools directly via oc get sc ───
-  discover_scale_test_pools() {
-    local -n _pools="$1"
-    _pools=()
+  pool_name="${FILTER_POOL}"
+  sc_name=$(get_storage_class_for_pool "${pool_name}")
+  rate_iops="${SCALE_RATE_IOPS}"
+  sla_ms="${SCALE_LATENCY_SLA_MS}"
+  max_vms="${SCALE_MAX_VMS}"
 
-    # NFS Zonal dp2: find any dp2 IOPS-tiered SC
-    local dp2_sc=""
-    dp2_sc=$(oc get sc -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-      | grep -E 'vpc-file.*[0-9]+-iops' | grep -v -- '-metro-\|-retain-\|-regional' | head -1 || echo "")
-    if [[ -n "${dp2_sc}" ]]; then
-      _pools+=("${dp2_sc}")
-      log_info "Scale-test pool (NFS Zonal dp2): ${dp2_sc}"
-    else
-      log_warn "No NFS Zonal (dp2) StorageClass found — skipping dp2 in multi-VM tests"
-    fi
+  scale_results_dir="${RESULTS_DIR}/scale-test/${pool_name}"
+  ramp_csv="${scale_results_dir}/ramp.csv"
+  ramp_summary="${scale_results_dir}/ramp-summary.json"
+  mkdir -p "${scale_results_dir}"
 
-    # ODF 3-replica
-    if oc get sc "${ODF_DEFAULT_SC}" &>/dev/null; then
-      _pools+=("rep3")
-      log_info "Scale-test pool (ODF rep3): ${ODF_DEFAULT_SC}"
-    else
-      log_warn "ODF default SC (${ODF_DEFAULT_SC}) not found — skipping ODF in multi-VM tests"
-    fi
+  # ─── Extract aggregated metrics from a step's results → CSV line ───
+  extract_step_metrics() {
+    local step_dir="$1"
+    local vm_count="$2"
+    local rate_iops="$3"
+    local sla_ms="$4"
 
-    # NFS Regional rfs
-    local rfs_sc=""
-    rfs_sc=$(oc get sc -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-      | grep -E 'vpc-file.*regional' | head -1 || echo "")
-    if [[ -n "${rfs_sc}" ]]; then
-      _pools+=("${rfs_sc}")
-      log_info "Scale-test pool (NFS Regional rfs): ${rfs_sc}"
-    else
-      log_warn "No NFS Regional (rfs) StorageClass found — skipping rfs in multi-VM tests"
-      log_warn "  Regional SCs require IBM support allowlisting and FILE_CSI_DEDUP=false during setup"
-    fi
+    local total_read_iops=0 total_write_iops=0 total_bw_kib=0
+    local max_p99_ns=0 sum_p50_ns=0 sum_p95_ns=0
+    local file_count=0
 
-    if [[ ${#_pools[@]} -eq 0 ]]; then
-      log_error "No scale-test pools discovered — cannot proceed"
-      exit 1
-    fi
-    log_info "Scale-test pools discovered: ${_pools[*]}"
-  }
+    while read -r json_file; do
+      local stats
+      stats=$(jq -r '[
+        (.jobs[0].read.iops // 0),
+        (.jobs[0].write.iops // 0),
+        (.jobs[0].read.bw_bytes // 0) + (.jobs[0].write.bw_bytes // 0),
+        (.jobs[0].write.clat_ns.percentile["50.000000"] // 0),
+        (.jobs[0].write.clat_ns.percentile["95.000000"] // 0),
+        (.jobs[0].write.clat_ns.percentile["99.000000"] // 0)
+      ] | @tsv' "${json_file}" 2>/dev/null || echo "0	0	0	0	0	0")
 
-  # ─── Discover all dp2 IOPS tier SCs for Test #3 ───
-  discover_dp2_tiers() {
-    local -n _tiers="$1"
-    _tiers=()
-    while IFS= read -r sc_name; do
-      # Extract IOPS number from SC name (e.g. ibmc-vpc-file-1000-iops → 1000)
-      local iops_num
-      iops_num=$(echo "${sc_name}" | grep -oE '[0-9]+-iops' | grep -oE '[0-9]+')
-      if [[ -n "${iops_num}" ]]; then
-        _tiers+=("${sc_name}:${iops_num}")
+      IFS=$'\t' read -r r_iops w_iops bw_bytes p50_ns p95_ns p99_ns <<< "${stats}"
+      total_read_iops=$(( total_read_iops + ${r_iops%.*} ))
+      total_write_iops=$(( total_write_iops + ${w_iops%.*} ))
+      total_bw_kib=$(( total_bw_kib + ${bw_bytes%.*} / 1024 ))
+      sum_p50_ns=$(( sum_p50_ns + ${p50_ns%.*} ))
+      sum_p95_ns=$(( sum_p95_ns + ${p95_ns%.*} ))
+      if [[ "${p99_ns%.*}" -gt "${max_p99_ns}" ]]; then
+        max_p99_ns="${p99_ns%.*}"
       fi
-    done < <(oc get sc -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-      | grep -E 'vpc-file.*[0-9]+-iops' | grep -v -- '-metro-\|-retain-\|-regional' | sort)
-  }
+      ((file_count += 1))
+    done < <(find "${step_dir}" -name "*-fio.json" -type f)
 
-  # ─── Run Tests #1 and #2 for a single pool (N VMs) ───
-  run_scale_test_multi_vm() {
-    local pool_name="$1"
-    local sc_name
-    sc_name=$(get_storage_class_for_pool "${pool_name}")
-
-    local concurrency="${SCALE_TEST_VMS}"
-    local vcpu=2
-    local memory="4Gi"
-    local pvc_size="150Gi"
-    local size_label="small"
-
-    # Override fio params for scale test
-    local saved_iodepth="${FIO_IODEPTH}"
-    local saved_numjobs="${FIO_NUMJOBS}"
-    local saved_filesize="${FIO_TEST_FILE_SIZE}"
-    local saved_rate_iops="${FIO_RATE_IOPS}"
-
-    FIO_IODEPTH=32
-    FIO_NUMJOBS=1
-    FIO_TEST_FILE_SIZE=10G
-
-    local profile_path="${SCRIPT_DIR}/fio-profiles/mixed-70-30-rated.fio"
-    local -a rate_iops_values=(500 1000)
-
-    for rate_iops in "${rate_iops_values[@]}"; do
-      local phase_start_time
-      phase_start_time=$(date +%s)
-      FIO_RATE_IOPS="${rate_iops}"
-      log_info ""
-      log_info "=== Scale Test: ${pool_name} — ${concurrency} VMs, rate_iops=${rate_iops} ==="
-
-      # Render fio profile with rate limiting
-      local rendered_fio
-      rendered_fio=$(render_fio_profile "${profile_path}" "4k")
-
-      # Render cloud-init (uses first VM name as placeholder — content is identical for all)
-      local cloud_init_content
-      cloud_init_content=$(render_cloud_init \
-        "${SCRIPT_DIR}/cloud-init/fio-runner.yaml" \
-        "${rendered_fio}" \
-        "scale-vm" \
-        "/mnt/data")
-
-      # Results directory
-      local test_results_dir="${RESULTS_DIR}/scale-test/${pool_name}/${concurrency}vm-rate${rate_iops}/mixed-70-30-rated/4k"
-      mkdir -p "${test_results_dir}"
-
-      # Create VMs in batches
-      local -a vm_names=()
-      local vm_create_failed=false
-      local batch_count=0
-
-      for ((i=1; i<=concurrency; i++)); do
-        local vm_name="scale-${pool_name}-c${concurrency}-${i}"
-        vm_name="${vm_name,,}"
-        vm_name="${vm_name//[^a-z0-9-]/-}"
-        vm_name="${vm_name:0:63}"
-        vm_name="${vm_name%-}"
-        vm_names+=("${vm_name}")
-
-        create_test_vm \
-          "${vm_name}" \
-          "${sc_name}" \
-          "${pvc_size}" \
-          "${vcpu}" \
-          "${memory}" \
-          "${cloud_init_content}" \
-          "${pool_name}" \
-          "${size_label}" \
-          "${SCRIPT_DIR}/vm-templates/vm-template.yaml" || {
-            log_error "[scale-test] Failed to create VM ${vm_name}"
-            vm_create_failed=true
-            break
-          }
-
-        ((batch_count += 1))
-        if (( batch_count >= SCALE_VM_BATCH_SIZE )); then
-          log_info "[scale-test] Batch ${i}/${concurrency} submitted, pausing for API server..."
-          sleep 5
-          batch_count=0
-        fi
-      done
-
-      if [[ "${vm_create_failed}" == "true" ]]; then
-        log_error "[scale-test] VM creation failed for ${pool_name} — cleaning up"
-        for vm in "${vm_names[@]}"; do
-          delete_test_vm "${vm}" &
-        done
-        wait
-        continue
-      fi
-
-      log_info "[scale-test] All ${#vm_names[@]} VMs submitted for ${pool_name}, waiting for Running..."
-
-      # Wait for all VMs to be running
-      if ! wait_for_all_vms_running "${vm_names[@]}"; then
-        log_error "[scale-test] Not all VMs started for ${pool_name} — cleaning up"
-        for vm in "${vm_names[@]}"; do
-          delete_test_vm "${vm}" &
-        done
-        wait
-        continue
-      fi
-
-      # Wait for fio to complete
-      if ! wait_for_all_fio_complete "${vm_names[@]}"; then
-        log_warn "[scale-test] Some fio tests did not complete for ${pool_name}"
-      fi
-
-      # Collect results from all VMs
-      log_info "[scale-test] Collecting results from ${#vm_names[@]} VMs..."
-      local -a collect_pids=()
-      for vm in "${vm_names[@]}"; do
-        collect_vm_results "${vm}" "${test_results_dir}" &
-        collect_pids+=($!)
-      done
-      for pid in "${collect_pids[@]}"; do
-        wait "${pid}" || true
-      done
-
-      local phase_elapsed=$(( $(date +%s) - phase_start_time ))
-      log_info "[scale-test] ${pool_name} rate_iops=${rate_iops}: completed in $(_format_duration ${phase_elapsed})"
-
-      # If this is rate_iops=500 (first phase) and we have another phase, reuse VMs
-      if [[ "${rate_iops}" -eq 500 ]]; then
-        log_info "[scale-test] Reusing VMs for rate_iops=1000 phase..."
-
-        FIO_RATE_IOPS=1000
-        rendered_fio=$(render_fio_profile "${profile_path}" "4k")
-
-        # Replace fio job in all VMs (parallel, batched)
-        local replace_count=0
-        for vm in "${vm_names[@]}"; do
-          replace_fio_job "${vm}" "${rendered_fio}" &
-          ((replace_count += 1))
-          if (( replace_count % SCALE_VM_BATCH_SIZE == 0 )); then
-            wait
-          fi
-        done
-        wait
-
-        # Restart fio service in all VMs (parallel, batched)
-        local restart_count=0
-        for vm in "${vm_names[@]}"; do
-          restart_fio_service "${vm}" &
-          ((restart_count += 1))
-          if (( restart_count % SCALE_VM_BATCH_SIZE == 0 )); then
-            wait
-          fi
-        done
-        wait
-
-        # Wait for fio to complete (second phase)
-        local phase2_start_time
-        phase2_start_time=$(date +%s)
-        log_info ""
-        log_info "=== Scale Test: ${pool_name} — ${concurrency} VMs, rate_iops=1000 (reused VMs) ==="
-
-        if ! wait_for_all_fio_complete "${vm_names[@]}"; then
-          log_warn "[scale-test] Some fio tests did not complete for ${pool_name} (rate_iops=1000)"
-        fi
-
-        # Collect results for second phase
-        local test_results_dir_2="${RESULTS_DIR}/scale-test/${pool_name}/${concurrency}vm-rate1000/mixed-70-30-rated/4k"
-        mkdir -p "${test_results_dir_2}"
-        collect_pids=()
-        for vm in "${vm_names[@]}"; do
-          collect_vm_results "${vm}" "${test_results_dir_2}" &
-          collect_pids+=($!)
-        done
-        for pid in "${collect_pids[@]}"; do
-          wait "${pid}" || true
-        done
-
-        local phase2_elapsed=$(( $(date +%s) - phase2_start_time ))
-        log_info "[scale-test] ${pool_name} rate_iops=1000: completed in $(_format_duration ${phase2_elapsed})"
-
-        # Skip the rate_iops=1000 iteration since we already handled it via VM reuse
-        break
-      fi
-    done
-
-    # Cleanup VMs
-    log_info "[scale-test] Cleaning up ${#vm_names[@]} VMs for ${pool_name}..."
-    for vm in "${vm_names[@]}"; do
-      delete_test_vm "${vm}" &
-    done
-    wait
-
-    # Restore fio params
-    FIO_IODEPTH="${saved_iodepth}"
-    FIO_NUMJOBS="${saved_numjobs}"
-    FIO_TEST_FILE_SIZE="${saved_filesize}"
-    FIO_RATE_IOPS="${saved_rate_iops}"
-  }
-
-  # ─── Run Test #3: single VM, NFS tier sweep ───
-  run_scale_test_single_vm() {
-    local saved_iodepth="${FIO_IODEPTH}"
-    local saved_numjobs="${FIO_NUMJOBS}"
-    local saved_filesize="${FIO_TEST_FILE_SIZE}"
-    local saved_rate_iops="${FIO_RATE_IOPS}"
-
-    FIO_IODEPTH=4
-    FIO_NUMJOBS=1
-    FIO_TEST_FILE_SIZE=10G
-
-    local profile_path="${SCRIPT_DIR}/fio-profiles/mixed-70-30-rated.fio"
-
-    # Build test list: sc_name:rate_iops:label
-    local -a tier_tests=()
-
-    # Auto-discover dp2 IOPS tier SCs
-    local -a dp2_tiers=()
-    discover_dp2_tiers dp2_tiers
-    for tier_def in "${dp2_tiers[@]}"; do
-      IFS=':' read -r sc_name iops_num <<< "${tier_def}"
-      # dp2 tiers enforce IOPS at storage level — use rate_iops=0 (uncapped)
-      tier_tests+=("${sc_name}:0:dp2-${iops_num}")
-    done
-
-    if [[ ${#tier_tests[@]} -eq 0 ]]; then
-      log_warn "[scale-test] No dp2 IOPS tier SCs discovered — skipping single-VM tier sweep"
-    fi
-
-    # NFS Regional rfs — capped at 1000 + uncapped
-    local rfs_sc=""
-    rfs_sc=$(oc get sc -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-      | grep -E 'vpc-file.*regional' | head -1 || echo "")
-    if [[ -n "${rfs_sc}" ]]; then
-      tier_tests+=("${rfs_sc}:1000:rfs-capped-1000")
-      tier_tests+=("${rfs_sc}:0:rfs-uncapped")
-    else
-      log_warn "[scale-test] No NFS Regional SC found — skipping rfs in single-VM test"
-    fi
-
-    if [[ ${#tier_tests[@]} -eq 0 ]]; then
-      log_warn "[scale-test] No single-VM tests to run — skipping Test #3"
-      FIO_IODEPTH="${saved_iodepth}"
-      FIO_NUMJOBS="${saved_numjobs}"
-      FIO_TEST_FILE_SIZE="${saved_filesize}"
-      FIO_RATE_IOPS="${saved_rate_iops}"
+    if [[ "${file_count}" -eq 0 ]]; then
+      echo "${vm_count},${rate_iops},0,0,0,0,0,0,false"
       return
     fi
 
-    log_info ""
-    log_info "=== Scale Test #3: Single VM NFS Tier Sweep ==="
-    log_info "Tests: ${#tier_tests[@]} tiers, QD=4, numjobs=1, 10G file"
+    local avg_p50_ms avg_p95_ms max_p99_ms total_bw_mbs sla_pass
+    avg_p50_ms=$(echo "${sum_p50_ns} ${file_count}" | awk '{printf "%.2f", $1 / $2 / 1000000}')
+    avg_p95_ms=$(echo "${sum_p95_ns} ${file_count}" | awk '{printf "%.2f", $1 / $2 / 1000000}')
+    max_p99_ms=$(echo "${max_p99_ns}" | awk '{printf "%.2f", $1 / 1000000}')
+    total_bw_mbs=$(echo "${total_bw_kib}" | awk '{printf "%.2f", $1 / 1024}')
 
-    for tier_def in "${tier_tests[@]}"; do
-      IFS=':' read -r sc_name rate_iops test_label <<< "${tier_def}"
-      local test_start_time
-      test_start_time=$(date +%s)
+    sla_pass="true"
+    if (( $(echo "${max_p99_ms} ${sla_ms}" | awk '{print ($1 > $2)}') )); then
+      sla_pass="false"
+    fi
 
-      FIO_RATE_IOPS="${rate_iops}"
-      log_info ""
-      log_info "[scale-test] Single-VM test: ${test_label} (sc=${sc_name}, rate_iops=${rate_iops})"
+    echo "${vm_count},${rate_iops},${total_read_iops},${total_write_iops},${total_bw_mbs},${avg_p50_ms},${avg_p95_ms},${max_p99_ms},${sla_pass}"
+  }
 
-      local rendered_fio
-      rendered_fio=$(render_fio_profile "${profile_path}" "4k")
+  # ─── Run one ramp step: create N VMs, run fio, collect, delete ───
+  run_ramp_step() {
+    local pool_name="$1"
+    local sc_name="$2"
+    local vm_count="$3"
+    local rate_iops="$4"
+    local step_results_dir="$5"
 
-      local cloud_init_content
-      cloud_init_content=$(render_cloud_init \
-        "${SCRIPT_DIR}/cloud-init/fio-runner.yaml" \
-        "${rendered_fio}" \
-        "scale-1vm" \
-        "/mnt/data")
+    mkdir -p "${step_results_dir}"
 
-      local vm_name="scale-1vm-${test_label}"
+    # Save and override fio params
+    local saved_iodepth="${FIO_IODEPTH}" saved_numjobs="${FIO_NUMJOBS}"
+    local saved_filesize="${FIO_TEST_FILE_SIZE}" saved_rate_iops="${FIO_RATE_IOPS}"
+    FIO_IODEPTH=32
+    FIO_NUMJOBS=1
+    FIO_TEST_FILE_SIZE=10G
+    FIO_RATE_IOPS="${rate_iops}"
+
+    local profile_path="${SCRIPT_DIR}/fio-profiles/mixed-70-30-rated.fio"
+    local rendered_fio
+    rendered_fio=$(render_fio_profile "${profile_path}" "4k")
+
+    local cloud_init_content
+    cloud_init_content=$(render_cloud_init \
+      "${SCRIPT_DIR}/cloud-init/fio-runner.yaml" \
+      "${rendered_fio}" \
+      "scale-vm" \
+      "/mnt/data")
+
+    # Create VMs in batches
+    local -a vm_names=()
+    local vm_create_failed=false
+    local batch_count=0
+
+    for ((i=1; i<=vm_count; i++)); do
+      local vm_name="scale-${pool_name}-c${vm_count}-${i}"
       vm_name="${vm_name,,}"
       vm_name="${vm_name//[^a-z0-9-]/-}"
       vm_name="${vm_name:0:63}"
       vm_name="${vm_name%-}"
+      vm_names+=("${vm_name}")
 
       create_test_vm \
-        "${vm_name}" \
-        "${sc_name}" \
-        "150Gi" \
-        "2" \
-        "4Gi" \
-        "${cloud_init_content}" \
-        "${sc_name}" \
-        "small" \
+        "${vm_name}" "${sc_name}" "150Gi" "2" "4Gi" \
+        "${cloud_init_content}" "${pool_name}" "small" \
         "${SCRIPT_DIR}/vm-templates/vm-template.yaml" || {
-          log_error "[scale-test] Failed to create VM ${vm_name} — skipping ${test_label}"
-          continue
+          log_error "[ramp] Failed to create VM ${vm_name}"
+          vm_create_failed=true
+          break
         }
 
-      if ! wait_for_all_vms_running "${vm_name}"; then
-        log_error "[scale-test] VM ${vm_name} did not start — cleaning up"
-        delete_test_vm "${vm_name}"
-        continue
+      ((batch_count += 1))
+      if (( batch_count >= SCALE_VM_BATCH_SIZE )); then
+        log_info "[ramp] Batch ${i}/${vm_count} submitted, pausing..."
+        sleep 5
+        batch_count=0
       fi
-
-      if ! wait_for_all_fio_complete "${vm_name}"; then
-        log_warn "[scale-test] fio did not complete in VM ${vm_name}"
-      fi
-
-      local test_results_dir="${RESULTS_DIR}/scale-test/single-vm/${test_label}/mixed-70-30-rated/4k"
-      mkdir -p "${test_results_dir}"
-      collect_vm_results "${vm_name}" "${test_results_dir}"
-
-      delete_test_vm "${vm_name}"
-
-      local test_elapsed=$(( $(date +%s) - test_start_time ))
-      log_info "[scale-test] ${test_label}: completed in $(_format_duration ${test_elapsed})"
     done
 
-    # Restore fio params
-    FIO_IODEPTH="${saved_iodepth}"
-    FIO_NUMJOBS="${saved_numjobs}"
-    FIO_TEST_FILE_SIZE="${saved_filesize}"
-    FIO_RATE_IOPS="${saved_rate_iops}"
-  }
-
-  # ─── Dry-run for scale test ───
-  if [[ "${DRY_RUN}" == true ]]; then
-    log_info ""
-    log_info "=== DRY RUN — Scale Test Preview ==="
-    log_info ""
-
-    declare -a _dry_scale_pools=()
-    discover_scale_test_pools _dry_scale_pools
-
-    declare -a _dry_dp2_tiers=()
-    discover_dp2_tiers _dry_dp2_tiers
-
-    _dry_rfs_sc=""
-    _dry_rfs_sc=$(oc get sc -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
-      | grep -E 'vpc-file.*regional' | head -1 || echo "")
-
-    log_info "Test #1: ${SCALE_TEST_VMS} VMs × ${#_dry_scale_pools[@]} pools, mixed 70/30, rate_iops=500, 4k, QD32, numjobs=1, 10G"
-    log_info "Test #2: ${SCALE_TEST_VMS} VMs × ${#_dry_scale_pools[@]} pools, mixed 70/30, rate_iops=1000, 4k, QD32, numjobs=1, 10G"
-    log_info "  (VMs reused between Test #1 and #2 via fio job replacement)"
-    log_info ""
-
-    _dry_tier_count=${#_dry_dp2_tiers[@]}
-    [[ -n "${_dry_rfs_sc}" ]] && _dry_tier_count=$(( _dry_tier_count + 2 ))
-    log_info "Test #3: 1 VM × ${_dry_tier_count} tiers, mixed 70/30, QD4, numjobs=1, 10G"
-    for td in "${_dry_dp2_tiers[@]}"; do
-      IFS=':' read -r sc iops <<< "${td}"
-      log_info "  - dp2-${iops}: ${sc} (hardware-capped)"
-    done
-    if [[ -n "${_dry_rfs_sc}" ]]; then
-      log_info "  - rfs-capped-1000: ${_dry_rfs_sc} (rate_iops=1000)"
-      log_info "  - rfs-uncapped: ${_dry_rfs_sc} (no rate limit)"
+    # On create failure, clean up and signal caller
+    if [[ "${vm_create_failed}" == "true" ]]; then
+      log_error "[ramp] VM creation failed at ${#vm_names[@]}/${vm_count} — cleaning up"
+      for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done
+      wait
+      FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
+      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"
+      return 1
     fi
 
+    log_info "[ramp] All ${vm_count} VMs submitted, waiting for Running..."
+    if ! wait_for_all_vms_running "${vm_names[@]}"; then
+      log_error "[ramp] Not all VMs started — cleaning up"
+      for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done
+      wait
+      FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
+      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"
+      return 1
+    fi
+
+    # Wait for fio
+    if ! wait_for_all_fio_complete "${vm_names[@]}"; then
+      log_warn "[ramp] Some fio tests did not complete"
+    fi
+
+    # Collect results
+    log_info "[ramp] Collecting results from ${vm_count} VMs..."
+    local -a collect_pids=()
+    for vm in "${vm_names[@]}"; do
+      collect_vm_results "${vm}" "${step_results_dir}" &
+      collect_pids+=($!)
+    done
+    for pid in "${collect_pids[@]}"; do wait "${pid}" || true; done
+
+    # Cleanup VMs
+    log_info "[ramp] Cleaning up ${vm_count} VMs..."
+    for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done
+    wait
+
+    # Restore fio params
+    FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
+    FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"
+    return 0
+  }
+
+  # ─── Dry-run ───
+  if [[ "${DRY_RUN}" == true ]]; then
     log_info ""
-    _dry_total_vcpu=$(( SCALE_TEST_VMS * 2 ))
-    _dry_total_mem=$(( SCALE_TEST_VMS * 4 ))
-    _dry_total_pvc=$(( SCALE_TEST_VMS * 150 ))
-    log_info "Resource requirements (Tests #1 & #2):"
-    log_info "  ${SCALE_TEST_VMS} × small VMs = ${_dry_total_vcpu} vCPU, ${_dry_total_mem}Gi RAM"
-    log_info "  ${SCALE_TEST_VMS} × 150Gi data PVCs = ${_dry_total_pvc}Gi"
-    log_info "  VM batch size: ${SCALE_VM_BATCH_SIZE}"
+    log_info "=== DRY RUN — Scale Test Auto-Ramp Preview ==="
     log_info ""
-    log_info "Estimated wall time:"
-    log_info "  Tests #1+#2 per pool: ~$(( FIO_RUNTIME + FIO_RAMP_TIME + 120 + FIO_RUNTIME + FIO_RAMP_TIME + 60 ))s + VM boot/clone time"
-    log_info "  Test #3: ~$(( _dry_tier_count * (FIO_RUNTIME + FIO_RAMP_TIME + 120) ))s"
+    log_info "Pool:          ${pool_name} (sc: ${sc_name})"
+    log_info "Rate IOPS:     ${rate_iops} per VM"
+    log_info "Latency SLA:   p99 < ${sla_ms}ms"
+    log_info "Max VMs:       ${max_vms}"
+    log_info "fio profile:   mixed-70-30-rated, 4k, QD32, numjobs=1, 10G"
+    log_info "VM spec:       small (2 vCPU, 4Gi), 150Gi PVC"
+    log_info "VM batch size: ${SCALE_VM_BATCH_SIZE}"
+    log_info ""
+    log_info "Phase 1 (doubling): 1, 2, 4, 8, 16, 32, 64, 128, 256 VMs"
+    log_info "Phase 2 (backfill): linear steps between last pass and first fail"
+    log_info ""
+    log_info "Each step: create VMs → run fio (${FIO_RUNTIME}s + ${FIO_RAMP_TIME}s ramp) → collect p99 → delete VMs"
+    log_info "Estimated time per step: ~$(( FIO_RUNTIME + FIO_RAMP_TIME + 120 ))s + VM boot/clone time"
     log_info ""
     log_info "No resources will be created (dry run)."
     exit 0
   fi
 
-  # ─── Execute scale tests ───
+  # ─── Phase 1: Doubling ───
+  log_info ""
+  log_info "=========================================="
+  log_info "Scale Test Auto-Ramp: ${pool_name}"
+  log_info "Rate: ${rate_iops} IOPS/VM | SLA: p99 < ${sla_ms}ms"
+  log_info "=========================================="
+
   suite_start_time=$(date +%s)
-  declare -a scale_pools=()
-  discover_scale_test_pools scale_pools
 
-  log_info "Scale test: ${SCALE_TEST_VMS} VMs per pool"
+  # CSV header
+  echo "vm_count,rate_iops,total_read_iops,total_write_iops,total_bw_mbs,avg_p50_ms,avg_p95_ms,max_p99_ms,sla_pass" > "${ramp_csv}"
 
-  # Tests #1 & #2: N VMs per pool
-  for pool_name in "${scale_pools[@]}"; do
-    run_scale_test_multi_vm "${pool_name}"
+  last_pass_count=0
+  first_fail_count=0
+  resource_ceiling=false
+  vm_count=1
+
+  log_info ""
+  log_info "--- Phase 1: Doubling ---"
+
+  while [[ ${vm_count} -le ${max_vms} ]]; do
+    step_start_time=$(date +%s)
+    step_dir="${scale_results_dir}/step-$(printf '%03d' ${vm_count})-vms"
+
+    log_info ""
+    log_info "=== Ramp Step: ${vm_count} VMs (rate_iops=${rate_iops}) ==="
+
+    if ! run_ramp_step "${pool_name}" "${sc_name}" "${vm_count}" "${rate_iops}" "${step_dir}"; then
+      log_warn "[ramp] Resource ceiling hit at ${vm_count} VMs"
+      first_fail_count="${vm_count}"
+      resource_ceiling=true
+      break
+    fi
+
+    # Extract metrics and append to CSV
+    metrics_line=$(extract_step_metrics "${step_dir}" "${vm_count}" "${rate_iops}" "${sla_ms}")
+    echo "${metrics_line}" >> "${ramp_csv}"
+
+    step_p99_ms=$(echo "${metrics_line}" | awk -F',' '{print $8}')
+    sla_pass=$(echo "${metrics_line}" | awk -F',' '{print $9}')
+
+    step_elapsed=$(( $(date +%s) - step_start_time ))
+    log_info "[ramp] ${vm_count} VMs: p99=${step_p99_ms}ms (SLA=${sla_ms}ms) → ${sla_pass} [$(_format_duration ${step_elapsed})]"
+
+    if [[ "${sla_pass}" == "false" ]]; then
+      first_fail_count="${vm_count}"
+      break
+    fi
+
+    last_pass_count="${vm_count}"
+    vm_count=$(( vm_count * 2 ))
   done
 
-  # Test #3: Single VM tier sweep
-  run_scale_test_single_vm
+  # Handle no-breach case
+  if [[ ${first_fail_count} -eq 0 ]]; then
+    log_info ""
+    log_info "[ramp] No SLA breach through ${last_pass_count} VMs — backend not saturated at ${rate_iops} IOPS/VM"
+  fi
+
+  # ─── Phase 2: Linear Backfill ───
+  if [[ ${first_fail_count} -gt 0 && ${last_pass_count} -gt 0 ]]; then
+    gap=$(( first_fail_count - last_pass_count ))
+    step_size=$(( gap / 4 ))
+    [[ ${step_size} -lt 1 ]] && step_size=1
+
+    if [[ ${gap} -gt 1 ]]; then
+      log_info ""
+      log_info "--- Phase 2: Backfill (${last_pass_count}..${first_fail_count}, step=${step_size}) ---"
+
+      vm_count=$(( last_pass_count + step_size ))
+      while [[ ${vm_count} -lt ${first_fail_count} ]]; do
+        step_start_time=$(date +%s)
+        step_dir="${scale_results_dir}/step-$(printf '%03d' ${vm_count})-vms"
+
+        log_info ""
+        log_info "=== Backfill Step: ${vm_count} VMs (rate_iops=${rate_iops}) ==="
+
+        if ! run_ramp_step "${pool_name}" "${sc_name}" "${vm_count}" "${rate_iops}" "${step_dir}"; then
+          log_warn "[ramp] Resource ceiling hit at ${vm_count} VMs during backfill"
+          break
+        fi
+
+        metrics_line=$(extract_step_metrics "${step_dir}" "${vm_count}" "${rate_iops}" "${sla_ms}")
+        echo "${metrics_line}" >> "${ramp_csv}"
+
+        step_p99_ms=$(echo "${metrics_line}" | awk -F',' '{print $8}')
+        sla_pass=$(echo "${metrics_line}" | awk -F',' '{print $9}')
+
+        step_elapsed=$(( $(date +%s) - step_start_time ))
+        log_info "[ramp] ${vm_count} VMs: p99=${step_p99_ms}ms (SLA=${sla_ms}ms) → ${sla_pass} [$(_format_duration ${step_elapsed})]"
+
+        if [[ "${sla_pass}" == "false" ]]; then
+          break
+        fi
+
+        last_pass_count="${vm_count}"
+        vm_count=$(( vm_count + step_size ))
+      done
+    fi
+  fi
+
+  # ─── Generate summary JSON ───
+  capacity_vms="${last_pass_count}"
+  capacity_line=""
+  breach_line=""
+
+  if [[ ${capacity_vms} -gt 0 ]]; then
+    capacity_line=$(grep "^${capacity_vms}," "${ramp_csv}" | tail -1)
+  fi
+  if [[ ${first_fail_count} -gt 0 ]]; then
+    breach_line=$(grep "^${first_fail_count}," "${ramp_csv}" | tail -1)
+  fi
+
+  capacity_iops=0
+  capacity_p99="0"
+  if [[ -n "${capacity_line}" ]]; then
+    capacity_iops=$(echo "${capacity_line}" | awk -F',' '{print $3 + $4}')
+    capacity_p99=$(echo "${capacity_line}" | awk -F',' '{print $8}')
+  fi
+
+  breach_p99="0"
+  if [[ -n "${breach_line}" ]]; then
+    breach_p99=$(echo "${breach_line}" | awk -F',' '{print $8}')
+  fi
+
+  step_count=$(( $(wc -l < "${ramp_csv}") - 1 ))
+
+  cat > "${ramp_summary}" <<JSONEOF
+{
+  "pool": "${pool_name}",
+  "storage_class": "${sc_name}",
+  "rate_iops": ${rate_iops},
+  "latency_sla_ms": ${sla_ms},
+  "capacity_vms": ${capacity_vms},
+  "total_iops_at_capacity": ${capacity_iops},
+  "p99_at_capacity_ms": ${capacity_p99},
+  "breach_vms": ${first_fail_count},
+  "p99_at_breach_ms": ${breach_p99},
+  "resource_ceiling": ${resource_ceiling},
+  "steps": ${step_count},
+  "cluster_description": "${CLUSTER_DESCRIPTION}",
+  "run_id": "${RUN_ID}",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSONEOF
+
+  # ─── Generate reports ───
+  report_html="${REPORTS_DIR}/scale-test-${pool_name}-${rate_iops}iops-${RUN_ID}.html"
+  generate_scale_test_report "${ramp_csv}" "${ramp_summary}" "${report_html}"
 
   suite_elapsed=$(( $(date +%s) - suite_start_time ))
   log_info ""
-  log_info "=== Scale Test Complete ==="
-  log_info "Total time: $(_format_duration ${suite_elapsed})"
-  log_info "Results in: ${RESULTS_DIR}/scale-test/"
-  log_info ""
-  log_info "Next steps:"
-  log_info "  1. Run ./05-collect-results.sh to aggregate results"
-  log_info "  2. Run ./06-generate-report.sh to create reports"
+  log_info "=========================================="
+  log_info "Scale Test Complete"
+  log_info "=========================================="
+  log_info "Pool:     ${pool_name} (${sc_name})"
+  log_info "Capacity: ${capacity_vms} VMs at ${rate_iops} IOPS/VM (p99 < ${sla_ms}ms)"
+  if [[ ${first_fail_count} -gt 0 ]]; then
+    log_info "Breach:   ${first_fail_count} VMs (p99=${breach_p99}ms)"
+  fi
+  log_info "Steps:    ${step_count}"
+  log_info "Time:     $(_format_duration ${suite_elapsed})"
+  log_info "CSV:      ${ramp_csv}"
+  log_info "Report:   ${report_html}"
+  log_info "Summary:  ${ramp_summary}"
   exit 0
 fi
 
