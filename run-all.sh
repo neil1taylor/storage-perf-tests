@@ -3,7 +3,7 @@
 # run-all.sh — Run the full storage performance test pipeline
 #
 # Executes setup, tests, collection, and reporting in sequence.
-# Passes through test flags (--quick, --pool, --overview, --parallel) to
+# Passes through test flags (--quick, --pool, --overview, --scale-test, --parallel) to
 # 04-run-tests.sh and supports pipeline-level options for skipping setup,
 # skipping reports, and optional cleanup.
 #
@@ -45,6 +45,9 @@ while [[ $# -gt 0 ]]; do
       echo "  --pool <name>        Test single pool"
       echo "  --overview           Overview mode"
       echo "  --rank               Rank mode: 3 tests/pool with ranking report"
+      echo "  --scale-test         Auto-ramp: double VMs until p99 breaches SLA (requires --pool)"
+      echo "  --rate-iops <N>      Per-VM IOPS cap for scale-test (default: 500)"
+      echo "  --latency-sla <ms>   p99 latency SLA in ms for scale-test (default: 5)"
       echo "  --parallel [N]       Run pools in parallel"
       echo "  --resume <run-id>    Resume an interrupted run"
       echo "  --dry-run            Preview test matrix without running"
