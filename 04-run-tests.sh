@@ -148,6 +148,19 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
   ensure_ssh_key
   source "${SCRIPT_DIR}/lib/report-helpers.sh"
 
+  # Signal handler — clean up VMs on Ctrl+C (scale-test exits before the main trap)
+  cleanup_scale_test() {
+    trap 'exit 130' INT TERM
+    log_warn "Interrupted — cleaning up scale-test VMs..."
+    kill $(jobs -rp) 2>/dev/null || true
+    wait 2>/dev/null || true
+    oc delete vm -n "${TEST_NAMESPACE}" -l "app=vm-perf-test,perf-test/run-id=${RUN_ID}" --wait=false 2>/dev/null || true
+    oc delete secret -n "${TEST_NAMESPACE}" -l "perf-test/run-id=${RUN_ID}" --wait=false 2>/dev/null || true
+    oc delete pvc -n "${TEST_NAMESPACE}" -l "perf-test/run-id=${RUN_ID}" --wait=false 2>/dev/null || true
+    exit 130
+  }
+  trap cleanup_scale_test INT TERM
+
   pool_name="${FILTER_POOL}"
   sc_name=$(get_storage_class_for_pool "${pool_name}")
   rate_iops="${SCALE_RATE_IOPS}"
@@ -173,12 +186,12 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
     while read -r json_file; do
       local stats
       stats=$(jq -r '[
-        (.jobs[0].read.iops // 0),
-        (.jobs[0].write.iops // 0),
-        (.jobs[0].read.bw_bytes // 0) + (.jobs[0].write.bw_bytes // 0),
-        (.jobs[0].write.clat_ns.percentile["50.000000"] // 0),
-        (.jobs[0].write.clat_ns.percentile["95.000000"] // 0),
-        (.jobs[0].write.clat_ns.percentile["99.000000"] // 0)
+        (.jobs[0].read.iops // 0 | floor),
+        (.jobs[0].write.iops // 0 | floor),
+        ((.jobs[0].read.bw_bytes // 0) + (.jobs[0].write.bw_bytes // 0) | floor),
+        (.jobs[0].write.clat_ns.percentile["50.000000"] // 0 | floor),
+        (.jobs[0].write.clat_ns.percentile["95.000000"] // 0 | floor),
+        (.jobs[0].write.clat_ns.percentile["99.000000"] // 0 | floor)
       ] | @tsv' "${json_file}" 2>/dev/null || echo "0	0	0	0	0	0")
 
       IFS=$'\t' read -r r_iops w_iops bw_bytes p50_ns p95_ns p99_ns <<< "${stats}"

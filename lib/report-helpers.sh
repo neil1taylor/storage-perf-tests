@@ -1135,6 +1135,7 @@ html = f"""<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Scale Test: {pool} @ {rate} IOPS/VM</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f4f4f4; }}
   h1 {{ color: #161616; }}
@@ -1256,7 +1257,7 @@ new Chart(ctx, {{
             label: {{ content: 'SLA: {sla}ms', display: true, position: 'start' }}
           }},
           capacityLine: {{
-            type: 'line', xMin: {json.dumps(capacity) if capacity > 0 else 'null'}, xMax: {json.dumps(capacity) if capacity > 0 else 'null'},
+            type: 'line', xMin: {json.dumps(str(capacity)) if capacity > 0 else 'null'}, xMax: {json.dumps(str(capacity)) if capacity > 0 else 'null'},
             display: {'true' if capacity > 0 else 'false'},
             borderColor: '#198038', borderWidth: 2, borderDash: [10, 5],
             label: {{ content: '{capacity} VMs', display: {'true' if capacity > 0 else 'false'}, position: 'start', backgroundColor: '#198038' }}
@@ -1267,7 +1268,6 @@ new Chart(ctx, {{
   }}
 }});
 </script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
 </body>
 </html>"""
 
