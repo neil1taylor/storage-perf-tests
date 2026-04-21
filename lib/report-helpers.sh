@@ -1066,3 +1066,208 @@ RANK_HTML_EOF2
 
   log_info "Ranking report generated: ${output_html}"
 }
+
+# ---------------------------------------------------------------------------
+# Generate scale-test auto-ramp HTML report
+# ---------------------------------------------------------------------------
+generate_scale_test_report() {
+  local ramp_csv="$1"
+  local ramp_summary="$2"
+  local output_html="$3"
+
+  log_info "Generating scale-test report: ${output_html}"
+
+  (RAMP_CSV="${ramp_csv}" RAMP_SUMMARY="${ramp_summary}" \
+  CLUSTER_DESC="${CLUSTER_DESCRIPTION}" \
+  python3 << 'PYEOF_SCALE'
+import csv, json, sys, os
+
+csv_file = os.environ['RAMP_CSV']
+summary_file = os.environ['RAMP_SUMMARY']
+cluster_desc = os.environ.get('CLUSTER_DESC', '')
+
+with open(summary_file, 'r') as f:
+    summary = json.load(f)
+
+rows = []
+with open(csv_file, 'r') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        rows.append(row)
+
+# Sort by vm_count for chart ordering
+rows.sort(key=lambda r: int(r['vm_count']))
+
+pool = summary['pool']
+sc = summary['storage_class']
+rate = summary['rate_iops']
+sla = summary['latency_sla_ms']
+capacity = summary['capacity_vms']
+total_iops = summary['total_iops_at_capacity']
+cap_p99 = summary['p99_at_capacity_ms']
+breach_vms = summary['breach_vms']
+breach_p99 = summary['p99_at_breach_ms']
+run_id = summary['run_id']
+timestamp = summary['timestamp']
+resource_ceiling = summary.get('resource_ceiling', False)
+
+# Chart data
+vm_counts = [int(r['vm_count']) for r in rows]
+total_iops_series = [float(r['total_read_iops']) + float(r['total_write_iops']) for r in rows]
+p99_series = [float(r['max_p99_ms']) for r in rows]
+pass_fail = [r['sla_pass'] for r in rows]
+point_colors = ['#198038' if p == 'true' else '#da1e28' for p in pass_fail]
+
+# Capacity description
+if capacity == 0:
+    cap_text = f"Pool <b>{pool}</b> cannot meet p99 &lt; {sla}ms SLA at {rate} IOPS/VM (single VM breached)"
+elif breach_vms == 0:
+    cap_text = f"Pool <b>{pool}</b> sustains <b>{capacity} VMs</b> at {rate} IOPS/VM without SLA breach (not saturated)"
+else:
+    cap_text = f"Pool <b>{pool}</b> supports <b>{capacity} VMs</b> at {rate} IOPS/VM ({total_iops:,.0f} aggregate IOPS) before p99 exceeds {sla}ms"
+
+if resource_ceiling:
+    cap_text += " <em>(resource ceiling hit)</em>"
+
+html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scale Test: {pool} @ {rate} IOPS/VM</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f4f4f4; }}
+  h1 {{ color: #161616; }}
+  .meta {{ color: #525252; font-size: 0.9em; margin-bottom: 20px; }}
+  .capacity-box {{ background: #defbe6; border-left: 4px solid #198038; padding: 16px 20px; margin: 20px 0; font-size: 1.1em; border-radius: 4px; }}
+  .capacity-box.warn {{ background: #fff8e1; border-left-color: #f1c21b; }}
+  .capacity-box.fail {{ background: #fff1f1; border-left-color: #da1e28; }}
+  .chart-container {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+  table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+  th {{ background: #161616; color: white; padding: 10px 12px; text-align: right; font-size: 0.85em; }}
+  th:first-child {{ text-align: left; }}
+  td {{ padding: 8px 12px; text-align: right; border-bottom: 1px solid #e0e0e0; font-size: 0.9em; }}
+  td:first-child {{ text-align: left; }}
+  tr:hover {{ background: #f4f4f4; }}
+  .pass {{ color: #198038; font-weight: 600; }}
+  .fail {{ color: #da1e28; font-weight: 600; }}
+  .footer {{ color: #525252; font-size: 0.8em; margin-top: 30px; }}
+</style>
+</head>
+<body>
+<h1>Scale Test: {pool}</h1>
+<div class="meta">
+  <b>Storage Class:</b> {sc} &nbsp;|&nbsp;
+  <b>Rate:</b> {rate} IOPS/VM &nbsp;|&nbsp;
+  <b>SLA:</b> p99 &lt; {sla}ms<br>
+  <b>Cluster:</b> {cluster_desc}<br>
+  <b>Run:</b> {run_id} &nbsp;|&nbsp; <b>Date:</b> {timestamp}
+</div>
+
+<div class="capacity-box {'fail' if capacity == 0 else 'warn' if breach_vms == 0 else ''}">
+  {cap_text}
+</div>
+
+<div class="chart-container">
+  <canvas id="rampChart" height="100"></canvas>
+</div>
+
+<h2>Ramp Data</h2>
+<table>
+<tr>
+  <th>VMs</th><th>Target IOPS</th><th>Read IOPS</th><th>Write IOPS</th>
+  <th>BW (MB/s)</th><th>p50 (ms)</th><th>p95 (ms)</th><th>p99 (ms)</th><th>SLA</th>
+</tr>
+"""
+
+for r in rows:
+    sla_class = 'pass' if r['sla_pass'] == 'true' else 'fail'
+    sla_label = 'PASS' if r['sla_pass'] == 'true' else 'FAIL'
+    html += f"""<tr>
+  <td>{r['vm_count']}</td><td>{r['rate_iops']}</td>
+  <td>{float(r['total_read_iops']):,.0f}</td><td>{float(r['total_write_iops']):,.0f}</td>
+  <td>{float(r['total_bw_mbs']):,.1f}</td><td>{r['avg_p50_ms']}</td>
+  <td>{r['avg_p95_ms']}</td><td>{r['max_p99_ms']}</td>
+  <td class="{sla_class}">{sla_label}</td>
+</tr>
+"""
+
+html += f"""</table>
+
+<div class="footer">
+  CSV: {csv_file} &nbsp;|&nbsp; Summary: {summary_file}
+</div>
+
+<script>
+const ctx = document.getElementById('rampChart').getContext('2d');
+new Chart(ctx, {{
+  type: 'line',
+  data: {{
+    labels: {json.dumps(vm_counts)},
+    datasets: [
+      {{
+        label: 'Aggregate IOPS',
+        data: {json.dumps(total_iops_series)},
+        borderColor: '#0f62fe',
+        backgroundColor: 'rgba(15, 98, 254, 0.1)',
+        yAxisID: 'y-iops',
+        tension: 0.2,
+        pointBackgroundColor: {json.dumps(point_colors)},
+        pointRadius: 6,
+        pointHoverRadius: 8
+      }},
+      {{
+        label: 'p99 Latency (ms)',
+        data: {json.dumps(p99_series)},
+        borderColor: '#da1e28',
+        borderDash: [5, 5],
+        yAxisID: 'y-lat',
+        tension: 0.2,
+        pointBackgroundColor: {json.dumps(point_colors)},
+        pointRadius: 6,
+        pointHoverRadius: 8
+      }}
+    ]
+  }},
+  options: {{
+    responsive: true,
+    interaction: {{ mode: 'index', intersect: false }},
+    scales: {{
+      x: {{ title: {{ display: true, text: 'VM Count' }} }},
+      'y-iops': {{
+        type: 'linear', position: 'left',
+        title: {{ display: true, text: 'Aggregate IOPS' }},
+        beginAtZero: true
+      }},
+      'y-lat': {{
+        type: 'linear', position: 'right',
+        title: {{ display: true, text: 'p99 Latency (ms)' }},
+        beginAtZero: true,
+        grid: {{ drawOnChartArea: false }}
+      }}
+    }},
+    plugins: {{
+      annotation: {{
+        annotations: {{
+          slaLine: {{
+            type: 'line', yMin: {sla}, yMax: {sla},
+            yScaleID: 'y-lat',
+            borderColor: '#da1e28', borderWidth: 2, borderDash: [10, 5],
+            label: {{ content: 'SLA: {sla}ms', display: true, position: 'start' }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}});
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+</body>
+</html>"""
+
+print(html)
+PYEOF_SCALE
+) > "${output_html}"
+
+  log_info "Scale-test report generated: ${output_html}"
+}
