@@ -31,11 +31,14 @@ detect_cluster_type() {
 # Cluster zone topology detection
 # ---------------------------------------------------------------------------
 detect_cluster_zones() {
-  local zones
-  zones=$(oc get nodes -l node-role.kubernetes.io/worker= \
-    -o jsonpath='{.items[*].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null | \
-    tr ' ' '\n' | sort -u | grep -c . || echo "0")
-  echo "${zones}"
+  local zone_list
+  zone_list=$(oc get nodes -l node-role.kubernetes.io/worker= \
+    -o jsonpath='{.items[*].metadata.labels.topology\.kubernetes\.io/zone}' 2>/dev/null || echo "")
+  if [[ -z "${zone_list}" ]]; then
+    echo "0"
+    return
+  fi
+  echo "${zone_list}" | tr ' ' '\n' | sort -u | grep -c . || echo "0"
 }
 
 detect_cluster_region() {
@@ -175,6 +178,13 @@ export FIO_IODEPTH="${FIO_IODEPTH:-32}"
 export FIO_NUMJOBS="${FIO_NUMJOBS:-4}"
 export FIO_OUTPUT_FORMAT="json+"
 export FIO_TEST_FILE_SIZE="${FIO_TEST_FILE_SIZE:-4G}"
+export FIO_RATE_IOPS="${FIO_RATE_IOPS:-0}"               # 0 = unlimited; >0 = per-job IOPS cap (scale-test)
+
+# Scale-test mode settings
+export SCALE_VM_BATCH_SIZE="${SCALE_VM_BATCH_SIZE:-20}"   # VMs created per batch (avoids API server overload)
+export SCALE_RATE_IOPS="${SCALE_RATE_IOPS:-500}"          # Default per-VM IOPS cap for scale-test ramp
+export SCALE_LATENCY_SLA_MS="${SCALE_LATENCY_SLA_MS:-5}"  # p99 latency threshold (ms) — ramp stops on breach
+export SCALE_MAX_VMS="${SCALE_MAX_VMS:-256}"               # Hard ceiling for ramp (prevents runaway)
 
 # Block sizes to test
 declare -a FIO_BLOCK_SIZES=( "4k" "64k" "1M" )
