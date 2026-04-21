@@ -90,76 +90,7 @@ main() {
   log_info "=== Quick Overview ==="
   column -t -s',' "${summary_file}" 2>/dev/null || cat "${summary_file}"
 
-  # ─── Scale-test aggregate summary ───
-  if [[ -d "${RESULTS_DIR}/scale-test" ]]; then
-    log_info ""
-    log_info "=== Scale Test Aggregate Summary ==="
-    log_info ""
-    printf "%-35s %8s %12s %12s %14s %12s %12s %12s\n" \
-      "Test" "VMs" "Read IOPS" "Write IOPS" "Total IOPS" "BW (MB/s)" "Avg Lat" "P95 Lat"
-    printf "%-35s %8s %12s %12s %14s %12s %12s %12s\n" \
-      "---" "---" "---" "---" "---" "---" "---" "---"
-
-    while IFS= read -r test_dir; do
-      # Extract test label from directory path: scale-test/<pool>/200vm-rateN/... or scale-test/single-vm/<label>/...
-      local rel_path="${test_dir#"${RESULTS_DIR}"/scale-test/}"
-      local test_label="${rel_path%%/mixed-70-30-rated/*}"
-
-      local agg_read_iops=0 agg_write_iops=0
-      local agg_read_bw=0 agg_write_bw=0
-      local sum_read_lat=0 sum_write_lat=0
-      local sum_read_p95=0 sum_write_p95=0
-      local vm_count=0
-
-      while IFS= read -r json_file; do
-        # Validate JSON before parsing
-        if ! jq empty "${json_file}" 2>/dev/null; then
-          continue
-        fi
-        if [[ $(jq '.jobs | length' "${json_file}" 2>/dev/null || echo "0") -eq 0 ]]; then
-          continue
-        fi
-
-        local riops wiops rbw wbw rlat wlat rp95 wp95
-        riops=$(jq '[.jobs[].read.iops // 0] | add | floor' "${json_file}" 2>/dev/null || echo 0)
-        wiops=$(jq '[.jobs[].write.iops // 0] | add | floor' "${json_file}" 2>/dev/null || echo 0)
-        rbw=$(jq '[.jobs[].read.bw // 0] | add' "${json_file}" 2>/dev/null || echo 0)
-        wbw=$(jq '[.jobs[].write.bw // 0] | add' "${json_file}" 2>/dev/null || echo 0)
-        rlat=$(jq '[.jobs[].read.lat_ns.mean // 0] | add / length / 1000000' "${json_file}" 2>/dev/null || echo 0)
-        wlat=$(jq '[.jobs[].write.lat_ns.mean // 0] | add / length / 1000000' "${json_file}" 2>/dev/null || echo 0)
-        rp95=$(jq '[.jobs[].read.clat_ns.percentile["95.000000"] // 0] | add / length / 1000000' "${json_file}" 2>/dev/null || echo 0)
-        wp95=$(jq '[.jobs[].write.clat_ns.percentile["95.000000"] // 0] | add / length / 1000000' "${json_file}" 2>/dev/null || echo 0)
-
-        agg_read_iops=$(( agg_read_iops + riops ))
-        agg_write_iops=$(( agg_write_iops + wiops ))
-        agg_read_bw=$(awk "BEGIN{print ${agg_read_bw} + ${rbw}}")
-        agg_write_bw=$(awk "BEGIN{print ${agg_write_bw} + ${wbw}}")
-        sum_read_lat=$(awk "BEGIN{print ${sum_read_lat} + ${rlat}}")
-        sum_write_lat=$(awk "BEGIN{print ${sum_write_lat} + ${wlat}}")
-        sum_read_p95=$(awk "BEGIN{print ${sum_read_p95} + ${rp95}}")
-        sum_write_p95=$(awk "BEGIN{print ${sum_write_p95} + ${wp95}}")
-        ((vm_count += 1))
-      done < <(find "${test_dir}" -name "*-fio.json" -type f)
-
-      if [[ ${vm_count} -gt 0 ]]; then
-        local total_iops=$(( agg_read_iops + agg_write_iops ))
-        local total_bw
-        total_bw=$(awk "BEGIN{printf \"%.1f\", (${agg_read_bw} + ${agg_write_bw}) / 1024}")
-        local avg_lat
-        avg_lat=$(awk "BEGIN{printf \"%.2f\", (${sum_read_lat} + ${sum_write_lat}) / (2 * ${vm_count})}")
-        local avg_p95
-        avg_p95=$(awk "BEGIN{printf \"%.2f\", (${sum_read_p95} + ${sum_write_p95}) / (2 * ${vm_count})}")
-
-        printf "%-35s %8d %12d %12d %14d %12s %12s %12s\n" \
-          "${test_label}" "${vm_count}" "${agg_read_iops}" "${agg_write_iops}" \
-          "${total_iops}" "${total_bw}" "${avg_lat}ms" "${avg_p95}ms"
-      fi
-    done < <(find "${RESULTS_DIR}/scale-test" -mindepth 3 -maxdepth 3 -type d | sort)
-
-    log_info ""
-  fi
-
-  # Check for scale-test ramp results (separate from normal matrix)
+  # Check for scale-test ramp results
   local scale_test_dir="${RESULTS_DIR}/scale-test"
   if [[ -d "${scale_test_dir}" ]]; then
     log_info ""

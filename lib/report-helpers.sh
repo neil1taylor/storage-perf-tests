@@ -1254,6 +1254,12 @@ new Chart(ctx, {{
             yScaleID: 'y-lat',
             borderColor: '#da1e28', borderWidth: 2, borderDash: [10, 5],
             label: {{ content: 'SLA: {sla}ms', display: true, position: 'start' }}
+          }},
+          capacityLine: {{
+            type: 'line', xMin: {json.dumps(capacity) if capacity > 0 else 'null'}, xMax: {json.dumps(capacity) if capacity > 0 else 'null'},
+            display: {'true' if capacity > 0 else 'false'},
+            borderColor: '#198038', borderWidth: 2, borderDash: [10, 5],
+            label: {{ content: '{capacity} VMs', display: {'true' if capacity > 0 else 'false'}, position: 'start', backgroundColor: '#198038' }}
           }}
         }}
       }}
