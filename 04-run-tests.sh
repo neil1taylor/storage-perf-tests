@@ -444,6 +444,11 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
         log_info "[ramp] ${vm_count} VMs: p99=${step_p99_ms}ms (SLA=${sla_ms}ms) → ${sla_pass} [$(_format_duration ${step_elapsed})]"
 
         if [[ "${sla_pass}" == "false" ]]; then
+          # Backfill found the real SLA tipping point — record it as the
+          # breach, replacing any Phase 1 resource-ceiling count whose step
+          # produced no metrics row in the CSV.
+          first_fail_count="${vm_count}"
+          resource_ceiling=false
           break
         fi
 
@@ -458,11 +463,15 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
   capacity_line=""
   breach_line=""
 
+  # `|| true` keeps the assignment alive when grep finds no matching row.
+  # `first_fail_count` can be a step that exited before metrics were written
+  # (resource ceiling); without this, set -o pipefail propagates the grep
+  # failure out of the command substitution and set -e kills the script.
   if [[ ${capacity_vms} -gt 0 ]]; then
-    capacity_line=$(grep "^${capacity_vms}," "${ramp_csv}" | tail -1)
+    capacity_line=$(grep "^${capacity_vms}," "${ramp_csv}" | tail -1 || true)
   fi
   if [[ ${first_fail_count} -gt 0 ]]; then
-    breach_line=$(grep "^${first_fail_count}," "${ramp_csv}" | tail -1)
+    breach_line=$(grep "^${first_fail_count}," "${ramp_csv}" | tail -1 || true)
   fi
 
   capacity_iops=0
