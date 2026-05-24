@@ -225,6 +225,135 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
     echo "${vm_count},${rate_iops},${total_read_iops},${total_write_iops},${total_bw_mbs},${avg_p50_ms},${avg_p95_ms},${max_p99_ms},${sla_pass}"
   }
 
+  # ─── Capture Ceph + network diagnostics for the current step ───
+  # Called after fio completes, before VM teardown. Output lands in
+  # step-NNN-vms/diagnostics/. All failures degrade gracefully — never aborts.
+  capture_scale_diagnostics() {
+    local step_dir="$1"
+    local pool_name="$2"
+    local sc_name="$3"
+    shift 3
+    local -a vm_names=("$@")
+
+    local diag_dir="${step_dir}/diagnostics"
+    mkdir -p "${diag_dir}"
+
+    local tools_pod ceph_pool
+    tools_pod=$(oc get pod -n "${ODF_NAMESPACE}" -l app=rook-ceph-tools \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    ceph_pool=$(oc get sc "${sc_name}" -o jsonpath='{.parameters.pool}' 2>/dev/null || true)
+    [[ -z "${ceph_pool}" ]] && \
+      ceph_pool=$(oc get sc "${sc_name}" -o jsonpath='{.parameters.dataPool}' 2>/dev/null || true)
+
+    log_info "[ramp] Capturing diagnostics → step-$(printf '%03d' ${#vm_names[@]})-vms/diagnostics/ (tools_pod=${tools_pod:-none}, pool=${ceph_pool:-?})"
+
+    # 1. K8s placement snapshot (foreground — feeds worker-list discovery)
+    {
+      echo "=== VMI ==="
+      oc get vmi -n "${TEST_NAMESPACE}" -l app=vm-perf-test -o wide 2>&1
+      echo ""
+      echo "=== virt-launcher pods ==="
+      oc get pods -n "${TEST_NAMESPACE}" -l kubevirt.io=virt-launcher -o wide 2>&1
+      echo ""
+      echo "=== PVCs ==="
+      oc get pvc -n "${TEST_NAMESPACE}" -l app=vm-perf-test 2>&1
+    } > "${diag_dir}/k8s-placement.txt" 2>&1
+
+    # 2. Ceph state (parallel exec into tools pod)
+    if [[ -n "${tools_pod}" ]]; then
+      oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- ceph -s            > "${diag_dir}/ceph-status.txt"   2>&1 &
+      oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- ceph health detail > "${diag_dir}/ceph-health.txt"   2>&1 &
+      oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- ceph osd df tree   > "${diag_dir}/ceph-osd-df.txt"   2>&1 &
+      oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- ceph osd perf      > "${diag_dir}/ceph-osd-perf.txt" 2>&1 &
+      if [[ -n "${ceph_pool}" ]]; then
+        oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- \
+          ceph pg ls-by-pool "${ceph_pool}" > "${diag_dir}/ceph-pg-by-pool.txt" 2>&1 &
+      fi
+    else
+      echo "rook-ceph-tools pod not found in ${ODF_NAMESPACE}" > "${diag_dir}/ceph-unavailable.txt"
+    fi
+
+    # 3. VM → PVC → PV → RBD image → primary OSD mapping
+    if [[ -n "${tools_pod}" && -n "${ceph_pool}" ]]; then
+      {
+        # Pass 1: collect (vm, node, pvc, pv, image) using kubectl — fast
+        local -a rows=()
+        rows+=("vm_name,worker_node,pvc_name,pv_name,rbd_image,primary_osd,acting_set")
+        local -a images=()
+        local -a img_to_vm=()
+        for vm in "${vm_names[@]}"; do
+          local pvc="${vm}-data" node pv image
+          node=$(oc get vmi "${vm}" -n "${TEST_NAMESPACE}" -o jsonpath='{.status.nodeName}' 2>/dev/null || echo "")
+          pv=$(oc get pvc "${pvc}" -n "${TEST_NAMESPACE}" -o jsonpath='{.spec.volumeName}' 2>/dev/null || echo "")
+          image=""
+          if [[ -n "${pv}" ]]; then
+            image=$(oc get pv "${pv}" -o jsonpath='{.spec.csi.volumeAttributes.imageName}' 2>/dev/null || echo "")
+          fi
+          if [[ -n "${image}" ]]; then
+            images+=("${image}")
+            img_to_vm+=("${vm}|${node}|${pvc}|${pv}|${image}")
+          else
+            rows+=("${vm},${node},${pvc},${pv},,,")
+          fi
+        done
+
+        # Pass 2: one tools-pod exec resolves all images → OSD primary/acting.
+        # For each image, get block_name_prefix from rbd info, then map the first
+        # data object (.0000000000000000) to its PG/OSD set. Output one line per
+        # image: <image>|<primary>|<acting>
+        if [[ "${#images[@]}" -gt 0 ]]; then
+          local script
+          # acting set commas are replaced with ; so the CSV stays 7 columns.
+          script=$(printf 'set +e; for img in %s; do prefix=$(rbd info %s/$img --format json 2>/dev/null | jq -r .block_name_prefix); if [[ -n "$prefix" && "$prefix" != "null" ]]; then m=$(ceph osd map %s ${prefix}.0000000000000000 2>/dev/null); primary=$(echo "$m" | grep -oE "acting \\(\\[[0-9,]+\\], p[0-9]+\\)" | grep -oE "p[0-9]+" | tr -d p); acting=$(echo "$m" | grep -oE "acting \\(\\[[0-9,]+\\]" | grep -oE "[0-9,]+" | tr "," ";"); echo "$img|${primary:-?}|${acting:-?}"; else echo "$img|?|?"; fi; done' \
+            "${images[*]}" "${ceph_pool}" "${ceph_pool}")
+          local map_output
+          map_output=$(oc exec -n "${ODF_NAMESPACE}" "${tools_pod}" -- bash -c "${script}" 2>/dev/null || true)
+
+          # Index map_output by image for join
+          declare -A osd_map
+          while IFS='|' read -r img primary acting; do
+            [[ -n "${img}" ]] && osd_map["${img}"]="${primary}|${acting}"
+          done <<< "${map_output}"
+
+          for entry in "${img_to_vm[@]}"; do
+            IFS='|' read -r vm node pvc pv image <<< "${entry}"
+            local osd_info="${osd_map[${image}]:-?|?}"
+            local primary="${osd_info%|*}" acting="${osd_info#*|}"
+            rows+=("${vm},${node},${pvc},${pv},${image},${primary},${acting}")
+          done
+        fi
+
+        printf '%s\n' "${rows[@]}"
+      } > "${diag_dir}/vm-rbd-osd-map.csv" 2>"${diag_dir}/vm-rbd-osd-map.err" &
+    fi
+
+    # 4. Network counters per unique worker node (parallel via oc debug)
+    local -a workers=()
+    readarray -t workers < <(
+      oc get vmi -n "${TEST_NAMESPACE}" -l app=vm-perf-test \
+        -o jsonpath='{range .items[*]}{.status.nodeName}{"\n"}{end}' 2>/dev/null \
+        | sort -u | grep . || true
+    )
+    for w in "${workers[@]}"; do
+      {
+        timeout 60 oc debug node/"${w}" -q -- chroot /host bash -c '
+          echo "=== ip -s -h link ==="
+          ip -s -h link 2>/dev/null
+          echo ""
+          echo "=== nstat -a ==="
+          nstat -a 2>/dev/null | grep -E "^(Tcp|Ip)" || true
+          echo ""
+          echo "=== ss -s ==="
+          ss -s 2>/dev/null
+        ' > "${diag_dir}/network-${w}.txt" 2>&1 || \
+          echo "oc debug node/${w} failed or timed out" >> "${diag_dir}/network-${w}.txt"
+      } &
+    done
+
+    wait
+    log_info "[ramp] Diagnostics captured (${#vm_names[@]} VMs, ${#workers[@]} workers, $(ls -1 "${diag_dir}" 2>/dev/null | wc -l | tr -d ' ') files)"
+  }
+
   # ─── Run one ramp step: create N VMs, run fio, collect, delete ───
   run_ramp_step() {
     local pool_name="$1"
@@ -238,10 +367,18 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
     # Save and override fio params
     local saved_iodepth="${FIO_IODEPTH}" saved_numjobs="${FIO_NUMJOBS}"
     local saved_filesize="${FIO_TEST_FILE_SIZE}" saved_rate_iops="${FIO_RATE_IOPS}"
+    local saved_fio_start_epoch="${FIO_START_EPOCH:-0}"
     FIO_IODEPTH=32
     FIO_NUMJOBS=1
     FIO_TEST_FILE_SIZE=10G
     FIO_RATE_IOPS="${rate_iops}"
+
+    # Synchronized measurement start: all VMs in this step wait until this
+    # epoch before launching fio, eliminating first-mover penalty from boot +
+    # prefill variance. Budget: VM boot (~60s) + prefill (~30-60s for 10G) +
+    # buffer (~30s) = ~180s headroom from step start.
+    export FIO_START_EPOCH=$(( $(date +%s) + SCALE_SYNC_BARRIER_SECS ))
+    log_info "[ramp] Sync barrier: fio measurement starts at epoch ${FIO_START_EPOCH} (+${SCALE_SYNC_BARRIER_SECS}s)"
 
     local profile_path="${SCRIPT_DIR}/fio-profiles/mixed-70-30-rated.fio"
     local rendered_fio
@@ -290,7 +427,7 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
       for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done
       wait
       FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
-      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"
+      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"; FIO_START_EPOCH="${saved_fio_start_epoch}"
       return 1
     fi
 
@@ -300,7 +437,7 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
       for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done
       wait
       FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
-      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"
+      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"; FIO_START_EPOCH="${saved_fio_start_epoch}"
       return 1
     fi
 
@@ -308,6 +445,11 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
     if ! wait_for_all_fio_complete "${vm_names[@]}"; then
       log_warn "[ramp] Some fio tests did not complete"
     fi
+
+    # Capture diagnostics in background (parallel with result collection so we
+    # don't add wall time; both must finish before we tear down VMs).
+    capture_scale_diagnostics "${step_results_dir}" "${pool_name}" "${sc_name}" "${vm_names[@]}" &
+    local diag_pid=$!
 
     # Collect results
     log_info "[ramp] Collecting results from ${vm_count} VMs..."
@@ -317,6 +459,7 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
       collect_pids+=($!)
     done
     for pid in "${collect_pids[@]}"; do wait "${pid}" || true; done
+    wait "${diag_pid}" 2>/dev/null || true
 
     # Cleanup VMs
     log_info "[ramp] Cleaning up ${vm_count} VMs..."
@@ -325,7 +468,7 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
 
     # Restore fio params
     FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
-    FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"
+    FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"; FIO_START_EPOCH="${saved_fio_start_epoch}"
     return 0
   }
 

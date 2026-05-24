@@ -185,6 +185,7 @@ export SCALE_VM_BATCH_SIZE="${SCALE_VM_BATCH_SIZE:-20}"   # VMs created per batc
 export SCALE_RATE_IOPS="${SCALE_RATE_IOPS:-500}"          # Default per-VM IOPS cap for scale-test ramp
 export SCALE_LATENCY_SLA_MS="${SCALE_LATENCY_SLA_MS:-5}"  # p99 latency threshold (ms) — ramp stops on breach
 export SCALE_MAX_VMS="${SCALE_MAX_VMS:-256}"               # Hard ceiling for ramp (prevents runaway)
+export SCALE_SYNC_BARRIER_SECS="${SCALE_SYNC_BARRIER_SECS:-180}"  # Per-VM headroom (boot+prefill+buffer) before synchronized fio measurement start
 
 # Block sizes to test
 declare -a FIO_BLOCK_SIZES=( "4k" "64k" "1M" )

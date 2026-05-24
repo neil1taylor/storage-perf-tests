@@ -186,6 +186,7 @@ render_cloud_init() {
   rendered="${rendered//__FILE_SIZE__/${FIO_TEST_FILE_SIZE}}"
   rendered="${rendered//__SSH_PUB_KEY__/${SSH_PUB_KEY}}"
   rendered="${rendered//__FIO_TIMEOUT__/${FIO_COMPLETION_TIMEOUT}}"
+  rendered="${rendered//__FIO_START_EPOCH__/${FIO_START_EPOCH:-0}}"
 
   # Indent fio job content for YAML embedding (skip first line — it inherits
   # the placeholder's indentation from the template)

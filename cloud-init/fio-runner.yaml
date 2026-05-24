@@ -82,6 +82,38 @@ write_files:
       df -h "${TEST_DIR}" 2>/dev/null || true
       echo ""
 
+      # Prefill the test file when the job declares filename=fio-testfile.
+      # Sequential 4M writes allocate every Ceph object up-front so the
+      # measurement window doesn't conflate sparse-RBD first-write allocation
+      # cost with steady-state latency. Skipped when the profile doesn't opt in
+      # via filename=fio-testfile.
+      if grep -q '^filename=fio-testfile' /opt/perf-test/fio-job.fio; then
+        echo '--- Pre-filling fio-testfile (allocate Ceph objects) ---'
+        prefill_start=$(date +%s)
+        fio --name=prefill --filename="${TEST_DIR}/fio-testfile" \
+          --rw=write --bs=4M --size=__FILE_SIZE__ --direct=1 \
+          --ioengine=libaio --iodepth=8 --numjobs=1 \
+          --output=/dev/null 2>&1 || echo "WARN: prefill failed, continuing"
+        echo "Prefill complete in $(( $(date +%s) - prefill_start ))s"
+        echo ""
+      fi
+
+      # Synchronized fio measurement start. When __FIO_START_EPOCH__ > 0, sleep
+      # until that wall-clock epoch before launching fio. Eliminates first-mover
+      # penalty in concurrent runs: all VMs start measurement at the same instant
+      # regardless of boot/prefill variance. Set to 0 for single-VM tests.
+      FIO_START_EPOCH=__FIO_START_EPOCH__
+      if [[ "${FIO_START_EPOCH}" -gt 0 ]]; then
+        now=$(date +%s)
+        if [[ "${now}" -lt "${FIO_START_EPOCH}" ]]; then
+          wait_secs=$(( FIO_START_EPOCH - now ))
+          echo "--- Sync barrier: sleeping ${wait_secs}s until fio start epoch ${FIO_START_EPOCH} ---"
+          sleep "${wait_secs}"
+        else
+          echo "--- WARN: missed fio start epoch by $(( now - FIO_START_EPOCH ))s (still launching) ---"
+        fi
+      fi
+
       # Run fio
       echo '--- Running fio ---'
       fio /opt/perf-test/fio-job.fio \
