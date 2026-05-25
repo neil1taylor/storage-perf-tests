@@ -112,6 +112,9 @@ wait_for_all_fio_complete() {
   local fio_tick_interval=30
 
   while true; do
+    # Refresh oc token if needed (self-managed clusters with short-lived tokens)
+    ensure_oc_auth 2>/dev/null || true
+
     local now
     now=$(date +%s)
     local elapsed=$(( now - start_time ))
@@ -133,7 +136,7 @@ wait_for_all_fio_complete() {
       local svc_state
       svc_state=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
         --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-        --username=fedora --command="systemctl show perf-test.service -p ActiveState --value" \
+        --username="${VM_SSH_USER}" --command="systemctl show perf-test.service -p ActiveState --value" \
         "vm/${vm_name}" 2>/dev/null || echo "unknown")
 
       # Log state transitions (one-time per transition)
@@ -157,7 +160,7 @@ wait_for_all_fio_complete() {
         local svc_info
         svc_info=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
           --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-          --username=fedora --command="systemctl show perf-test.service -p ExecMainPID,ExecMainStatus --value" \
+          --username="${VM_SSH_USER}" --command="systemctl show perf-test.service -p ExecMainPID,ExecMainStatus --value" \
           "vm/${vm_name}" 2>/dev/null || echo "0
 1")
         local exec_pid exec_exit
@@ -180,7 +183,7 @@ wait_for_all_fio_complete() {
           local has_results
           has_results=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
             --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-            --username=fedora --command="find /opt/perf-test/results -name '*.json' -size +0c 2>/dev/null | grep -q . && echo READY || echo MISSING" \
+            --username="${VM_SSH_USER}" --command="find /opt/perf-test/results -name '*.json' -size +0c 2>/dev/null | grep -q . && echo READY || echo MISSING" \
             "vm/${vm_name}" 2>/dev/null || echo "MISSING")
           if [[ "${has_results}" == *"READY"* ]]; then
             log_info "fio completed in VM ${vm_name} ($(_format_duration "${elapsed}"))"

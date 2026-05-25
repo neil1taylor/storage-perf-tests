@@ -16,6 +16,30 @@ if ! command -v timeout &>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
+# OC token refresh — self-managed clusters with short-lived kubeadmin tokens
+# Call periodically in long-running loops to prevent Unauthorized errors.
+# Requires OC_LOGIN_CMD to be set (e.g., in .env or before running scripts).
+# ---------------------------------------------------------------------------
+_last_oc_refresh=0
+ensure_oc_auth() {
+  local now
+  now=$(date +%s)
+  # Refresh at most once every 120 seconds
+  if (( now - _last_oc_refresh < 120 )); then return 0; fi
+  # Quick check: can we reach the API?
+  if oc whoami &>/dev/null 2>&1; then
+    _last_oc_refresh=${now}
+    return 0
+  fi
+  # Token expired — re-login if OC_LOGIN_CMD is set
+  if [[ -n "${OC_LOGIN_CMD:-}" ]]; then
+    log_debug "Refreshing oc auth..."
+    eval "${OC_LOGIN_CMD}" &>/dev/null || log_warn "oc re-login failed"
+    _last_oc_refresh=${now}
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 _log() {
@@ -185,6 +209,7 @@ render_cloud_init() {
   rendered="${rendered//__NUMJOBS__/${FIO_NUMJOBS}}"
   rendered="${rendered//__FILE_SIZE__/${FIO_TEST_FILE_SIZE}}"
   rendered="${rendered//__SSH_PUB_KEY__/${SSH_PUB_KEY}}"
+  rendered="${rendered//__SSH_USER__/${VM_SSH_USER}}"
   rendered="${rendered//__FIO_TIMEOUT__/${FIO_COMPLETION_TIMEOUT}}"
   rendered="${rendered//__FIO_START_EPOCH__/${FIO_START_EPOCH:-0}}"
 
@@ -213,6 +238,13 @@ render_fio_profile() {
   content="${content//\$\{NUMJOBS\}/${FIO_NUMJOBS}}"
   content="${content//\$\{FILE_SIZE\}/${FIO_TEST_FILE_SIZE}}"
   content="${content//\$\{BLOCK_SIZE\}/${block_size}}"
+
+  # Rate IOPS support (scale-test mode) — full line replacement
+  local rate_iops_line=""
+  if [[ -n "${FIO_RATE_IOPS:-}" && "${FIO_RATE_IOPS:-0}" -gt 0 ]]; then
+    rate_iops_line="rate_iops=${FIO_RATE_IOPS}"
+  fi
+  content="${content//\$\{RATE_IOPS_LINE\}/${rate_iops_line}}"
 
   echo "${content}"
 }
@@ -374,6 +406,7 @@ wait_for_vm_running() {
   local dv_done=false
 
   while true; do
+    ensure_oc_auth 2>/dev/null || true
     local elapsed=$(( $(date +%s) - start_time ))
     if [[ ${elapsed} -ge ${timeout} ]]; then
       log_error "VM ${vm_name} did not reach Running state within ${timeout}s"
@@ -484,7 +517,7 @@ wait_for_fio_completion() {
       local svc_state
       svc_state=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
         --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-        --username=fedora --command="systemctl is-active perf-test.service" \
+        --username="${VM_SSH_USER}" --command="systemctl is-active perf-test.service" \
         "vm/${vm_name}" 2>/dev/null || echo "unknown")
 
       if [[ "${svc_state}" == "inactive" ]] || [[ "${svc_state}" == "active" ]]; then
@@ -492,7 +525,7 @@ wait_for_fio_completion() {
         local exit_status
         exit_status=$(timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
           --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-          --username=fedora --command="systemctl show perf-test.service -p ExecMainStatus --value" \
+          --username="${VM_SSH_USER}" --command="systemctl show perf-test.service -p ExecMainStatus --value" \
           "vm/${vm_name}" 2>/dev/null || echo "unknown")
 
         if [[ "${exit_status}" == "0" ]]; then
@@ -520,7 +553,7 @@ collect_vm_results() {
   local fio_out="${output_dir}/${vm_name}-fio.json"
   timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-    --username=fedora --command="cat /opt/perf-test/results/*.json" \
+    --username="${VM_SSH_USER}" --command="cat /opt/perf-test/results/*.json" \
     "vm/${vm_name}" > "${fio_out}" 2>/dev/null || {
     log_warn "Could not collect fio JSON from ${vm_name}, trying alternative method..."
     # Fallback: try via oc exec on the virt-launcher pod
@@ -540,7 +573,7 @@ collect_vm_results() {
     sleep 5
     timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \
       --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-      --username=fedora --command="cat /opt/perf-test/results/*.json" \
+      --username="${VM_SSH_USER}" --command="cat /opt/perf-test/results/*.json" \
       "vm/${vm_name}" > "${fio_out}" 2>/dev/null || true
   fi
 
@@ -551,7 +584,7 @@ collect_vm_results() {
   # Collect system info
   timeout 60 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-    --username=fedora --command="lscpu && echo '---' && free -h && echo '---' && lsblk" \
+    --username="${VM_SSH_USER}" --command="lscpu && echo '---' && free -h && echo '---' && lsblk" \
     "vm/${vm_name}" > "${output_dir}/${vm_name}-sysinfo.txt" 2>/dev/null || true
 }
 
@@ -570,7 +603,7 @@ replace_fio_job() {
 
   timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-    --username=fedora \
+    --username="${VM_SSH_USER}" \
     --command="printf '%s' '${encoded}' | base64 -d | sudo tee /opt/perf-test/fio-job.fio > /dev/null" \
     "vm/${vm_name}" 2>/dev/null
 }
@@ -588,7 +621,7 @@ restart_fio_service() {
   log_info "Restarting fio service in VM ${vm_name}"
   timeout 30 virtctl ssh --namespace="${TEST_NAMESPACE}" \
     --identity-file="${SSH_KEY_PATH}" -t "-o StrictHostKeyChecking=no" -t "-o IdentitiesOnly=yes" \
-    --username=fedora \
+    --username="${VM_SSH_USER}" \
     --command="sudo rm -f /opt/perf-test/results/*.json /mnt/data/* && sudo systemctl stop perf-test.service 2>/dev/null; sudo systemctl reset-failed perf-test.service 2>/dev/null; sudo systemctl start --no-block perf-test.service" \
     "vm/${vm_name}" 2>/dev/null
 }

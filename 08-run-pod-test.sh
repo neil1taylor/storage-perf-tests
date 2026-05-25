@@ -19,8 +19,8 @@ FIO_RUNTIME=60
 FIO_RAMP_TIME=10
 FIO_IODEPTH=32
 FIO_NUMJOBS=4
-FIO_TEST_FILE_SIZE=4G
-PVC_SIZE=150Gi
+FIO_TEST_FILE_SIZE="${FIO_TEST_FILE_SIZE:-4G}"
+PVC_SIZE="${PVC_SIZE:-150Gi}"
 
 # Profiles to run: profile:block_size
 declare -a RANK_TESTS=(
@@ -119,7 +119,7 @@ EOF
 # ---------------------------------------------------------------------------
 # Create Pod
 # ---------------------------------------------------------------------------
-log_info "Creating pod ${POD_NAME} (image=quay.io/cloud-bulldozer/fio:latest)"
+log_info "Creating pod ${POD_NAME} (image=quay.io/cloud-bulldozer/fio:latest)${POD_NODE_NAME:+ on ${POD_NODE_NAME}}"
 oc apply -f - <<EOF
 apiVersion: v1
 kind: Pod
@@ -131,6 +131,7 @@ metadata:
     perf-test/run-id: ${RUN_ID}
     perf-test/storage-pool: ${POOL_NAME}
 spec:
+${POD_NODE_NAME:+  nodeName: ${POD_NODE_NAME}}
   containers:
     - name: fio
       image: quay.io/cloud-bulldozer/fio:latest
@@ -150,7 +151,9 @@ EOF
 # ---------------------------------------------------------------------------
 log_info "Waiting for pod ${POD_NAME} to be Running..."
 start_time=$(date +%s)
-pod_timeout=300
+# Default 3600s — first-mount on szocp routinely takes 10-25 min
+# (rbd map ~4 min + mkfs.ext4 ~5-10 min + ext4lazyinit; see docs/szocp-cluster-baseline.md)
+pod_timeout="${POD_TIMEOUT:-3600}"
 
 while true; do
   elapsed=$(( $(date +%s) - start_time ))
@@ -171,6 +174,23 @@ while true; do
   log_debug "Pod phase: ${phase} (${elapsed}s elapsed)"
   sleep "${POLL_INTERVAL}"
 done
+
+# ---------------------------------------------------------------------------
+# Pre-warm: write data to allocate Ceph blocks in the RBD image
+#
+# First write to new Ceph blocks is slow (3-replica allocation per 4MB object).
+# This warmup does a single sequential write pass to allocate blocks across the
+# volume. Subsequent fio file layout then overwrites existing blocks (fast).
+# Uses numjobs=1 to keep it simple — one large sequential write.
+# ---------------------------------------------------------------------------
+log_info "Pre-warming volume (sequential write to allocate Ceph blocks)..."
+warmup_start=$(date +%s)
+oc exec -n "${TEST_NAMESPACE}" "${POD_NAME}" -- \
+  fio --name=warmup --rw=write --bs=1M --direct=1 --ioengine=libaio --iodepth=32 \
+      --numjobs=1 --size="${FIO_TEST_FILE_SIZE}" --directory=/mnt/data \
+      --group_reporting --minimal 2>/dev/null || true
+warmup_elapsed=$(( $(date +%s) - warmup_start ))
+log_info "Pre-warm done in $(_format_duration ${warmup_elapsed})"
 
 # ---------------------------------------------------------------------------
 # Run fio for each rank-mode profile
@@ -223,15 +243,34 @@ for test_spec in "${RANK_TESTS[@]}"; do
   test_elapsed=$(( $(date +%s) - test_start ))
   log_info "fio ${profile}/${bs} completed in $(_format_duration ${test_elapsed})"
 
-  # Copy results out
+  # Copy results out — wait for fio JSON to stabilise (size unchanged for ≥3s),
+  # then retry oc cp up to 3 times. fio --output writes synchronously but
+  # oc cp can transiently fail on a heavily-loaded node.
   result_file="${result_dir}/${POD_NAME}-fio.json"
-  oc cp "${TEST_NAMESPACE}/${POD_NAME}:/mnt/data/results.json" "${result_file}" 2>/dev/null || {
-    log_warn "Failed to copy results for ${profile}/${bs}"
-  }
+  prev_size=-1
+  for ((i=0; i<20; i++)); do
+    cur_size=$(oc exec -n "${TEST_NAMESPACE}" "${POD_NAME}" -- \
+      stat -c '%s' /mnt/data/results.json 2>/dev/null || echo "-1")
+    if [[ "${cur_size}" != "-1" ]] && [[ "${cur_size}" == "${prev_size}" ]] && [[ "${cur_size}" -gt 0 ]]; then
+      break
+    fi
+    prev_size="${cur_size}"
+    sleep 3
+  done
+  copy_ok=false
+  for attempt in 1 2 3; do
+    if oc cp "${TEST_NAMESPACE}/${POD_NAME}:/mnt/data/results.json" "${result_file}" 2>/dev/null; then
+      copy_ok=true
+      break
+    fi
+    log_warn "oc cp attempt ${attempt} failed for ${profile}/${bs}, retrying..."
+    sleep 5
+  done
+  [[ "${copy_ok}" != true ]] && log_warn "Failed to copy results for ${profile}/${bs} after 3 attempts"
 
-  # Clean up test files in the pod for next run
+  # Clean up results file only — keep fio data files so next profile reuses pre-warmed blocks
   oc exec -n "${TEST_NAMESPACE}" "${POD_NAME}" -- \
-    sh -c 'rm -f /mnt/data/results.json; find /mnt/data -maxdepth 1 -type f -name "*.0" -delete' 2>/dev/null || true
+    rm -f /mnt/data/results.json 2>/dev/null || true
 
   # Parse and display inline summary
   if [[ -f "${result_file}" ]] && jq -e '.jobs | length > 0' "${result_file}" &>/dev/null; then

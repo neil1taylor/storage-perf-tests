@@ -6,6 +6,12 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Ensure local project binaries (virtctl, timeout wrapper) are on PATH
+# ---------------------------------------------------------------------------
+SCRIPT_DIR_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="${SCRIPT_DIR_CONFIG}:${PATH}"
+
+# ---------------------------------------------------------------------------
 # Cluster connectivity check
 # ---------------------------------------------------------------------------
 if ! oc cluster-info &>/dev/null; then
@@ -85,9 +91,10 @@ export ODF_NAMESPACE="${ODF_NAMESPACE:-openshift-storage}"
 # ---------------------------------------------------------------------------
 # VM guest image (cloned from built-in OpenShift Virtualization DataSource)
 # ---------------------------------------------------------------------------
-export DATASOURCE_NAME="${DATASOURCE_NAME:-fedora}"
+export DATASOURCE_NAME="${DATASOURCE_NAME:-centos-stream9}"
 export DATASOURCE_NAMESPACE="${DATASOURCE_NAMESPACE:-openshift-virtualization-os-images}"
-export VM_IMAGE_NAME="fedora-cloud"
+export VM_IMAGE_NAME="centos-cloud"
+export VM_SSH_USER="${VM_SSH_USER:-cloud-user}"
 
 # ---------------------------------------------------------------------------
 # VM sizes  (name  vCPU  memory)
@@ -211,7 +218,7 @@ export FIO_PROFILES
 # ---------------------------------------------------------------------------
 # Timeouts / polling
 # ---------------------------------------------------------------------------
-export VM_READY_TIMEOUT=600       # seconds to wait for VM to become Ready
+export VM_READY_TIMEOUT="${VM_READY_TIMEOUT:-900}"  # seconds to wait for VM to become Ready
 export VM_SSH_TIMEOUT=300         # seconds to wait for SSH inside VM
 export FIO_COMPLETION_TIMEOUT=1800 # max wait for a single fio run (30min; multi-job profiles with stonewall can exceed 15min at high concurrency on slow pools)
 export POLL_INTERVAL=10           # seconds between status checks

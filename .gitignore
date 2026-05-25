@@ -28,3 +28,8 @@ __pycache__/
 
 # Git worktrees
 .worktrees/
+
+# Local credentials and large local binaries — never commit
+.env
+virtctl
+virtctl-*

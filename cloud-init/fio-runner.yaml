@@ -9,13 +9,25 @@
 hostname: __VM_NAME__
 
 users:
-  - name: fedora
+  - name: __SSH_USER__
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - __SSH_PUB_KEY__
 
+ssh_pwauth: false
+
+bootcmd:
+  # Stop firewalld AND flush all nftables/iptables rules to immediately open all ports
+  - [ "systemctl", "stop", "firewalld" ]
+  - [ "systemctl", "disable", "firewalld" ]
+  - [ "nft", "flush", "ruleset" ]
+  - [ "iptables", "-F" ]
+  - [ "iptables", "-P", "INPUT", "ACCEPT" ]
+
 package_update: true
 packages:
+  - openssh-server
+  - openssh-clients
   - fio
   - jq
   - sysstat
@@ -34,6 +46,13 @@ mounts:
   - [/dev/vdb, __TEST_DIR__, xfs, "defaults,noatime", "0", "0"]
 
 write_files:
+  # Ensure sshd does not hang on reverse DNS lookups
+  - path: /etc/ssh/sshd_config.d/99-perf-test.conf
+    permissions: '0644'
+    content: |
+      UseDNS no
+      GSSAPIAuthentication no
+
   # Main fio job file (injected at runtime)
   - path: /opt/perf-test/fio-job.fio
     permissions: '0644'
@@ -154,6 +173,10 @@ write_files:
       WantedBy=multi-user.target
 
 runcmd:
+  # Disable firewall (CentOS/RHEL enable firewalld by default, blocking SSH)
+  - systemctl disable --now firewalld || true
+  # Ensure SSH is running (Fedora 43+ may not enable sshd by default)
+  - systemctl enable --now sshd
   # Enable and start the benchmark service
   - systemctl daemon-reload
   - systemctl enable perf-test.service
