@@ -194,6 +194,10 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
         (.jobs[0].write.clat_ns.percentile["99.000000"] // 0 | floor)
       ] | @tsv' "${json_file}" 2>/dev/null || echo "0	0	0	0	0	0")
 
+      # jq returns "" (not the fallback) when input is a 0-byte file; backfill zeros so
+      # the arithmetic below doesn't blow up on empty operands.
+      [[ -z "${stats}" ]] && stats=$'0\t0\t0\t0\t0\t0'
+
       IFS=$'\t' read -r r_iops w_iops bw_bytes p50_ns p95_ns p99_ns <<< "${stats}"
       total_read_iops=$(( total_read_iops + ${r_iops%.*} ))
       total_write_iops=$(( total_write_iops + ${w_iops%.*} ))
@@ -510,7 +514,9 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
   last_pass_count=0
   first_fail_count=0
   resource_ceiling=false
-  vm_count=1
+  # SCALE_PHASE1_START: skip ahead to this VM count for phase-1 doubling. Useful
+  # when re-running to pin a ceiling after earlier steps already passed. Default 1.
+  vm_count="${SCALE_PHASE1_START:-1}"
 
   log_info ""
   log_info "--- Phase 1: Doubling ---"
