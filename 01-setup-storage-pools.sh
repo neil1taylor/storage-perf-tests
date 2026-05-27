@@ -226,15 +226,22 @@ update_cephfs_csi_caps() {
     return 0
   fi
 
-  # Get provisioner and node user IDs from the K8s secrets
+  # Get provisioner and node user IDs from the K8s secrets.
+  # Modern Rook stores the user ID under .data.userID (not .data.adminID — that
+  # key was used in much older Rook releases and silently returns empty today).
+  # Fall back to .data.adminID for compatibility with very old clusters.
   local prov_user node_user
   prov_user=$(oc get secret rook-csi-cephfs-provisioner -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.data.userID}' 2>/dev/null | base64 -d)
+  [[ -z "${prov_user}" ]] && prov_user=$(oc get secret rook-csi-cephfs-provisioner -n "${ODF_NAMESPACE}" \
     -o jsonpath='{.data.adminID}' 2>/dev/null | base64 -d)
   node_user=$(oc get secret rook-csi-cephfs-node -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.data.userID}' 2>/dev/null | base64 -d)
+  [[ -z "${node_user}" ]] && node_user=$(oc get secret rook-csi-cephfs-node -n "${ODF_NAMESPACE}" \
     -o jsonpath='{.data.adminID}' 2>/dev/null | base64 -d)
 
   if [[ -z "${prov_user}" || -z "${node_user}" ]]; then
-    log_warn "CephFS CSI secrets not found — cannot update auth caps"
+    log_warn "CephFS CSI secrets not found or missing userID/adminID — cannot update auth caps"
     return 0
   fi
 
@@ -452,13 +459,21 @@ ensure_kms_token() {
 
   log_info "Creating ceph-csi-kms-token secret in ${TEST_NAMESPACE}..."
 
-  # Retrieve the IBM Key Protect API key from the ODF namespace
+  # The KMS secret name lives in the ocs-kms-connection-details configmap.
+  # Older clusters used a hardcoded ibm-kp-secret name; newer ones name the
+  # secret per-cluster (e.g. ocp-virt-420-v2-odf-kms). Read the name from the
+  # configmap so this works on both.
+  local kms_secret
+  kms_secret=$(oc get cm ocs-kms-connection-details -n "${ODF_NAMESPACE}" \
+    -o jsonpath='{.data.IBM_KP_SECRET_NAME}' 2>/dev/null)
+  [[ -z "${kms_secret}" ]] && kms_secret="ibm-kp-secret"
+
   local api_key
-  api_key=$(oc get secret ibm-kp-secret -n "${ODF_NAMESPACE}" \
+  api_key=$(oc get secret "${kms_secret}" -n "${ODF_NAMESPACE}" \
     -o jsonpath='{.data.IBM_KP_SERVICE_API_KEY}' 2>/dev/null || echo "")
 
   if [[ -z "${api_key}" ]]; then
-    log_warn "ibm-kp-secret not found in ${ODF_NAMESPACE} — encrypted pool tests will fail"
+    log_warn "${kms_secret} not found in ${ODF_NAMESPACE} or missing IBM_KP_SERVICE_API_KEY — encrypted pool tests will fail"
     log_warn "Create it manually: oc create secret generic ceph-csi-kms-token --from-literal=token=<API_KEY> -n ${TEST_NAMESPACE}"
     return 0
   fi

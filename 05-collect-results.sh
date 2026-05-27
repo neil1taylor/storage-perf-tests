@@ -56,29 +56,53 @@ main() {
   # $6=block_size $7=job_name $8=read_iops $9=read_bw_kib
   # $10=read_lat_avg_ms $11=read_lat_p99_ms $12=write_iops $13=write_bw_kib
   # $14=write_lat_avg_ms $15=write_lat_p99_ms
+  #
+  # Aggregation note: profiles with multiple [job] sections joined by `stonewall`
+  # (random-rw, sequential-rw) emit ONE row per job, so a single test produces
+  # 2 rows — one with reads only, one with writes only. Aggregating by row would
+  # halve every metric for those profiles. Group by test instead, sum within
+  # the test (the non-active job contributes 0 to the sum), then average
+  # across tests per pool. Latency is taken as MAX within a test so we keep
+  # the meaningful value from the job that actually did that op type.
   tail -n +2 "${csv_file}" | awk -F',' '
   {
     gsub(/"/, "")
     pool = $1
-    count[pool]++
-    riops[pool] += $8
-    wiops[pool] += $12
-    rbw[pool] += $9
-    wbw[pool] += $13
-    rlat[pool] += $10
-    wlat[pool] += $14
-    rp99[pool] += $11
-    wp99[pool] += $15
+    test_key = $1 SUBSEP $2 SUBSEP $3 SUBSEP $4 SUBSEP $5 SUBSEP $6
+    if (!(test_key in test_seen)) {
+      test_seen[test_key] = 1
+      test_pool[test_key] = pool
+      test_count[pool]++
+    }
+    riops[test_key] += $8
+    wiops[test_key] += $12
+    rbw[test_key]   += $9
+    wbw[test_key]   += $13
+    if ($10+0 > rlat[test_key]+0) rlat[test_key] = $10
+    if ($14+0 > wlat[test_key]+0) wlat[test_key] = $14
+    if ($11+0 > rp99[test_key]+0) rp99[test_key] = $11
+    if ($15+0 > wp99[test_key]+0) wp99[test_key] = $15
   }
   END {
-    for (p in count) {
-      n = count[p]
+    for (tk in test_seen) {
+      p = test_pool[tk]
+      sum_riops[p] += riops[tk]
+      sum_wiops[p] += wiops[tk]
+      sum_rbw[p]   += rbw[tk]
+      sum_wbw[p]   += wbw[tk]
+      sum_rlat[p]  += rlat[tk]
+      sum_wlat[p]  += wlat[tk]
+      sum_rp99[p]  += rp99[tk]
+      sum_wp99[p]  += wp99[tk]
+    }
+    for (p in test_count) {
+      n = test_count[p]
       printf "\"%s\",%.0f,%.0f,%.1f,%.1f,%.2f,%.2f,%.2f,%.2f,%d\n",
         p,
-        riops[p]/n, wiops[p]/n,
-        rbw[p]/n/1024, wbw[p]/n/1024,
-        rlat[p]/n, wlat[p]/n,
-        rp99[p]/n, wp99[p]/n,
+        sum_riops[p]/n, sum_wiops[p]/n,
+        sum_rbw[p]/n/1024, sum_wbw[p]/n/1024,
+        sum_rlat[p]/n, sum_wlat[p]/n,
+        sum_rp99[p]/n, sum_wp99[p]/n,
         n
     }
   }' | sort -t',' -k2,2 -nr >> "${summary_file}"
