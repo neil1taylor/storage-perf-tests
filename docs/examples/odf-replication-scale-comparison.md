@@ -20,12 +20,14 @@ The reversal comes from the IOPS cap on each File CSI share (3000 IOPS hard limi
 | **ODF rep3-virt (performance profile)** | **48** | **47,904** | **4.55 ms** | Same rep3 redundancy, +50% capacity from doubling OSD CPU/memory |
 | ODF rep2 (balanced) | 40 | 39,920 | 4.23 ms | Two-replica RBD, +25% capacity over rep3-balanced |
 | ODF rep1 (balanced) | 64 | 63,872 | 2.54 ms | Single replica, +100% capacity over rep3-balanced — **no redundancy** |
+| ODF rep3-virt at 100 IOPS/VM (realistic-load) | 64 | 12,672 | 3.00 ms | Same pool, 5× lighter per-VM load — only 2× the VM density (see "per-VM overhead" finding below) |
 | IBM Cloud File CSI (3000 IOPS profile) | 96+ | 47,904+ | 0.63 ms | Network-attached NFS, never reaches a storage ceiling — capped by provisioning quota |
 
 The ODF rows tell a clean story:
 
 1. **Replica count is a real, measurable cost.** Going from rep3 to rep2 buys ~25% more capacity at the balanced profile. Going from rep2 to rep1 buys *another* ~60% — disproportionately large because removing the *last* replica eliminates the "wait for the slowest of N OSDs" tail-latency contributor entirely.
 2. **OSD resource budget is just as important as replica count.** Switching ODF's `resourceProfile` from `balanced` to `performance` (each OSD goes from 2 vCPU / 5 GiB → 4 vCPU / 8 GiB) lifts the rep3-virt ceiling from 32 → 48 VMs (+50%) — matching what rep2-balanced delivers without sacrificing redundancy. The lift is largely invisible at low load (OSDs aren't CPU-bound) but enormous under load: at 64 VMs, balanced rep3 collapses to 851 ms p99 while performance rep3 stays at 6.06 ms.
+3. **Per-VM overhead caps VM density, separate from per-VM IOPS.** Halving the per-VM rate (500 → 100 IOPS) only doubles the VM ceiling (32 → 64), not 5×. Aggregate-IOPS capacity at the lighter rate is actually *lower* (12.7k vs 31.9k). Each VM imposes a fixed tax on the cluster — RBD image overhead, krbd client connection, watch/notify traffic, pod-scheduling cost — that scales with VM count regardless of IO intensity. **Don't plan "lighter VMs = linearly more VMs"** on a small cluster.
 
 For redundancy-required workloads, **rep3-virt on the `performance` profile** is the sweet spot — full three-way durability with rep2-class capacity. Plain rep3-virt on `balanced` remains the safe default if cluster CPU is constrained. rep2 is a viable trade-off if you accept reduced fault tolerance during a node-out window. rep1 is **benchmarking-only** — useful for establishing the hardware/software ceiling without replication overhead, but unsafe for any real data.
 
@@ -221,6 +223,41 @@ Notes:
 - `rep1` is not in the table — the pool was deleted between the scale-test and the ranking re-run so that Rook's `ok-to-stop` check would allow OSD restarts during a `resourceProfile` change (rep1 has size=1 so stopping any OSD would risk data loss). Rep1's scale-test results above are still valid.
 - `random-rw` and `sequential-rw` profiles have two `[job]` sections joined with `stonewall`. fio runs them sequentially, so the per-job results live in `jobs[0]` (read) and `jobs[1]` (write) in the output JSON. The aggregator script's default of reading only `jobs[0]` understates write performance in these profiles — the numbers above are extracted from both job slots.
 
+### ODF rep3-virt re-run at 100 IOPS/VM (realistic-concurrency curve)
+
+Same pool, same methodology, but at a per-VM rate cap of **100 IOPS/VM** instead of 500. Closer to typical real-world VM IO intensity (a busy app server, not a saturated database).
+
+Run `2026-05-27` with `SCALE_SYNC_BARRIER_SECS=500 SCALE_PHASE1_START=32 ./04-run-tests.sh --scale-test --pool rep3-virt --rate-iops 100`.
+
+| VMs | Total IOPS | avg p50 | avg p95 | max p99 | SLA pass |
+|----:|-----------:|--------:|--------:|--------:|:--------:|
+| 32  | 6,336      | 1.04 ms | 1.32 ms | 2.64 ms | ✅ |
+| **64** | **12,672** | **0.99 ms** | **1.26 ms** | **3.00 ms** | ✅ |
+| 80  | 15,840     | 1.05 ms | 44.78 ms | 316.67 ms | ❌ (cliff) |
+| (128) | n/a | n/a | n/a | n/a | ❌ (Kubernetes resource ceiling — same as 500 IOPS/VM) |
+
+Storage ceiling: **64 VMs / 12,672 IOPS / 3.00 ms p99** (`resource_ceiling: false` → real Ceph saturation at 80 VMs). The 128-VM step hit the same Kubernetes-side limit as the 500 IOPS/VM run — node CPU/memory budget for VM scheduling caps the cluster around 120-ish VMs regardless of per-VM IO intensity.
+
+**Counter-intuitive finding: halving the per-VM rate (500 → 100) did NOT 5× the VM density.**
+
+| Test | VMs @ ceiling | Aggregate IOPS @ ceiling | p99 @ ceiling | Cliff at next step |
+|------|--------------:|-------------------------:|--------------:|-------------------:|
+| 500 IOPS/VM, balanced | 32 | 31,936 | 3.49 ms | 851 ms @ 64 VMs |
+| 500 IOPS/VM, performance | 48 | 47,904 | 4.55 ms | 5.41 ms @ 56 VMs (graceful) |
+| **100 IOPS/VM, balanced** | **64** | **12,672** | **3.00 ms** | 316 ms @ 80 VMs |
+
+Going from 500 → 100 IOPS/VM only doubled the VM ceiling (32 → 64), and the **aggregate IOPS ceiling actually dropped** from 32k to 12.7k. The 80-VM cliff at 100 IOPS/VM occurs at only 16k aggregate IOPS — well below what the cluster handled at 32 VMs × 500.
+
+**Interpretation:** the bottleneck isn't aggregate IOPS — it's **per-VM overhead at the storage layer.** Each additional VM adds:
+- An RBD image (with its own PG-primary set, RADOS watch/notify traffic, image metadata)
+- A krbd client connection per host
+- Independent fio queue + cloud-init + sshd processes inside the VM
+- Pod scheduling overhead in Kubernetes (which compounds with the storage layer)
+
+The per-VM tax scales with VM count regardless of how lightly each VM uses storage. At ~64-80 VMs on this 3-node cluster, the cumulative tax overwhelms the cluster faster than the aggregate-IOPS load would suggest. **Scaling VM count is harder than scaling IOPS-per-VM on this hardware.**
+
+The practical takeaway for capacity planning: **don't extrapolate "lighter VMs = proportionally more VMs."** A 5× lighter workload doesn't buy 5× more VMs. Plan VM density and per-VM IOPS as two semi-independent constraints. If you want a 200-VM cluster, you likely need 6+ worker nodes regardless of per-VM intensity.
+
 ### IBM Cloud File CSI 3000-IOPS profile (`ibmc-vpc-file-3000-iops`)
 
 | VMs | Total IOPS | avg p50 | avg p95 | max p99 | SLA pass |
@@ -360,9 +397,10 @@ oc delete cephblockpool perf-test-rep1 -n openshift-storage
 3. **OSD resource budget is a first-class lever.** Switching `resourceProfile` from `balanced` to `performance` (2→4 vCPU and 5→8 GiB per OSD) lifts the rep3-virt ceiling by 50% (32 → 48 VMs) without touching replica count, and drastically softens the post-saturation collapse (851 ms → 6 ms at 64 VMs). On NVMe hardware where OSD CPU is usually the bottleneck, this is the single highest-leverage tuning change for VM density.
 4. **Replica count is the other major lever.** At balanced profile: rep3 → rep2 buys +25% capacity; rep3 → rep1 buys +100%. The biggest jump is removing the last sync ack (rep2 → rep1) because it eliminates the "wait for slowest replica" tail-latency contributor entirely.
 5. **rep3-virt on `performance` profile delivers rep2-class capacity without sacrificing redundancy.** This is likely the right default for production VM workloads on a CPU-rich cluster.
-6. **For single-VM uncapped workloads, ODF outperforms IBM Cloud File CSI by 14–34×.** rep2 delivers 61k random read IOPS vs File CSI 3000's 3k IOPS at the same VM count of 1. The "ODF write p99 of 193–354 ms" cited in earlier reports was the prefill artifact — real uncapped single-VM write p99 on replicated pools is 13–33 ms.
-7. **The scale-test ↔ ranking flip is architectural, not a bug.** File CSI's off-host async replication wins per-op latency at moderate per-VM load; ODF's in-cluster Ceph stack wins per-VM throughput because one client can saturate many OSDs. Pick the test that matches the workload's actual concurrency and intensity profile — neither pool is universally faster.
-8. **Recommended defaults for a 3-node bare-metal ROKS cluster running VMs on RBD:**
+6. **Per-VM overhead is a separate, non-obvious capacity dimension.** A scale-test at 100 IOPS/VM caps at 64 VMs / 12.7k IOPS — only 2× the VM ceiling of the 500 IOPS/VM run, not 5×. The bottleneck isn't aggregate IOPS but per-VM tax (RBD image + krbd client + pod scheduling) that scales with VM count regardless of per-VM intensity. To host more VMs, **add worker nodes** — lowering per-VM IO won't get you there on a small cluster.
+7. **For single-VM uncapped workloads, ODF outperforms IBM Cloud File CSI by 14–34×.** rep2 delivers 61k random read IOPS vs File CSI 3000's 3k IOPS at the same VM count of 1. The "ODF write p99 of 193–354 ms" cited in earlier reports was the prefill artifact — real uncapped single-VM write p99 on replicated pools is 13–33 ms.
+8. **The scale-test ↔ ranking flip is architectural, not a bug.** File CSI's off-host async replication wins per-op latency at moderate per-VM load; ODF's in-cluster Ceph stack wins per-VM throughput because one client can saturate many OSDs. Pick the test that matches the workload's actual concurrency and intensity profile — neither pool is universally faster.
+9. **Recommended defaults for a 3-node bare-metal ROKS cluster running VMs on RBD:**
    - If cluster CPU headroom allows: rep3-virt with `resourceProfile: performance` (48 VMs / 48k IOPS / 4.55 ms p99 ceiling at scale; 52k single-VM random read IOPS uncapped)
    - If CPU-constrained: rep3-virt with `resourceProfile: balanced` (32 VMs / 32k IOPS / 3.49 ms ceiling)
    - For benchmarking the hardware ceiling only: rep1 (64 VMs / 64k IOPS / 2.54 ms — no redundancy)
