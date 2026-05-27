@@ -134,6 +134,7 @@ declare -a ODF_POOLS=(
   "rep3-enc:replicated:3"
   "cephfs-rep3:cephfs:3"
   "rep2:replicated:2"
+  "rep1:replicated:1"
   "cephfs-rep2:cephfs:2"
   "ec-2-1:erasurecoded:2:1"
   "ec-3-1:erasurecoded:3:1"

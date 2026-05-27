@@ -368,6 +368,9 @@ create_ceph_block_pool() {
 
   if [[ "${pool_type}" == "replicated" ]]; then
     local rep_size="$1"
+    # size=1 has no redundancy; Ceph requires requireSafeReplicaSize=false to accept it.
+    local require_safe="true"
+    [[ "${rep_size}" -le 1 ]] && require_safe="false"
     cat <<EOF | oc apply -f -
 apiVersion: ceph.rook.io/v1
 kind: CephBlockPool
@@ -381,7 +384,7 @@ spec:
   enableRBDStats: true
   replicated:
     size: ${rep_size}
-    requireSafeReplicaSize: true
+    requireSafeReplicaSize: ${require_safe}
     targetSizeRatio: 0.1
 EOF
 
