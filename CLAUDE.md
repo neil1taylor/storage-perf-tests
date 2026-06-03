@@ -45,6 +45,21 @@ VM storage performance benchmarking suite for IBM Cloud ROKS with OpenShift Virt
 ./04-run-tests.sh --resume <id>    # Resume an interrupted run
 ./04-run-tests.sh --filter "rep2:*:*:*:random-rw:4k"  # Test selection
 ./04-run-tests.sh --exclude "ec-*:*:*:*:*:*"          # Skip matching tests
+
+# Tune sweep (OSD resource overrides + cstate × QD-sweep, multi-config report):
+./09-run-tune-sweep.sh --pool rep3-virt \
+   --configs default,big-osd --fixed-vms 200 --qd-list 1,2,4,8,16,32,64
+./09-run-tune-sweep.sh --pool rep3-virt --dry-run     # Preview plan
+./09-run-tune-sweep.sh --restore-from <run-id>        # Rerun restore only
+./09-run-tune-sweep.sh --pool rep3-virt --resume <run-id>
+
+# Standalone QD sweep (no cluster mutation; characterise pool at fixed N):
+./04-run-tests.sh --qd-sweep --pool rep3-virt \
+   --fixed-vms 200 --qd-list 1,2,4,8,16,32,64
+
+# Multi-config tune-sweep report:
+./06-generate-report.sh --compare-tuning --run <run-id> --pool rep3-virt
+
 ./05-collect-results.sh            # Aggregate fio JSON → CSV
 ./06-generate-report.sh            # Generate HTML/Markdown/XLSX reports
 ./06-generate-report.sh --compare <id1> <id2>  # Compare two runs
@@ -181,6 +196,10 @@ Each step creates all VMs fresh, runs `mixed-70-30-rated.fio` at the configured 
 Settings: small VM (2 vCPU, 4Gi), 150Gi PVC, QD32, numjobs=1, 10G file, mixed 70/30 read/write at 4k. Hard ceiling at 256 VMs (`SCALE_MAX_VMS`).
 
 Results: `results/<run-id>/scale-test/<pool>/ramp.csv` + `ramp-summary.json`. HTML report: `reports/scale-test-<pool>-<rate>iops-<run-id>.html` with dual-axis ramp chart (IOPS + p99 latency vs VM count).
+
+### Tune Sweep Auto-Orchestration (`09-run-tune-sweep.sh`)
+
+A multi-configuration tuning sweep that measures how OSD resource overrides and C-state power management affect storage pool performance across a range of queue depths. Three components work together: `lib/tune-helpers.sh` (snapshot/restore/apply primitives), `09-run-tune-sweep.sh` (orchestrator), and `--qd-sweep` mode in `04-run-tests.sh`. The suite defines tuning variants in `TUNE_CONFIGS` array in `00-config.sh` (`default`, `cstate-off`, `big-osd`, `big-osd+cstate-off`). For safety, a snapshot is captured before any mutation; an EXIT trap restores the cluster on every exit path (completion, error, Ctrl+C); `--restore-from <run-id>` allows manual re-entry if the trap missed. Results live in `results/<run>/qd-sweep/<pool>/<cfg>/{qd.csv,qd-summary.json,tuning-applied.yaml,raw/qd<N>/}` with cluster snapshot at `results/<run>/cluster-snapshot.yaml`. A companion `--compare-tuning` report mode in `06-generate-report.sh` generates `reports/tune-sweep-<pool>-<run>.html` with capacity scorecard, bar charts at the headline QD (default: max), and per-config QD-axis line chart showing performance scaling.
 
 ### Completion Notification (`--notify`)
 
