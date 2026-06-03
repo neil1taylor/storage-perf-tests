@@ -173,6 +173,33 @@ test_tune_sweep_unknown_config() {
 }
 
 # -----------------------------------------------------------------------------
+test_tune_sweep_report_html() {
+  echo "test_tune_sweep_report_html:"
+  OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
+  source lib/vm-helpers.sh
+  source lib/report-helpers.sh
+
+  local tmp
+  tmp=$(mktemp -t tune-report-XXXXXX.html)
+  trap "rm -f '${tmp}'" RETURN
+
+  if ! generate_tune_sweep_report \
+       "tests/fixtures/tune-sweep-3cfg/qd-sweep/rep3-virt" \
+       "rep3-virt" "default" "64" "${tmp}"; then
+    _fail "generate_tune_sweep_report returned non-zero"
+    return
+  fi
+
+  [[ -s "${tmp}" ]] || { _fail "report HTML empty"; return; }
+  grep -q "<title>" "${tmp}" || { _fail "missing <title>"; return; }
+  grep -q "rampChart" "${tmp}" || grep -q "qdChart" "${tmp}" || { _fail "missing QD chart canvas"; return; }
+  grep -q "headlineIops" "${tmp}" || { _fail "missing headline IOPS canvas"; return; }
+  grep -q "default" "${tmp}"   || { _fail "missing default config"; return; }
+  grep -q "big-osd" "${tmp}"   || { _fail "missing big-osd config"; return; }
+  _pass "tune-sweep report HTML generated"
+}
+
+# -----------------------------------------------------------------------------
 test_tune_configs_parse
 test_parse_tune_config_valid
 test_parse_tune_config_unknown_name
@@ -181,6 +208,7 @@ test_render_cstate_machineconfig
 test_qd_sweep_dry_run
 test_tune_sweep_dry_run
 test_tune_sweep_unknown_config
+test_tune_sweep_report_html
 
 echo
 echo "===== ${PASS} passed, ${FAIL} failed ====="
