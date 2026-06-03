@@ -1438,7 +1438,8 @@ import csv, json, os, datetime
 cfg_root  = os.environ['CFG_ROOT']
 pool      = os.environ['POOL']
 baseline  = os.environ['BASELINE']
-headline_qd = int(os.environ['HEADLINE_QD'])
+headline_qd_raw = os.environ.get('HEADLINE_QD', '0').strip()
+headline_qd = int(headline_qd_raw) if headline_qd_raw else 0
 cluster_desc = os.environ.get('CLUSTER_DESC', '')
 
 # Auto-discover configs under cfg_root

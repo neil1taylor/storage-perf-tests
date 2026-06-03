@@ -529,6 +529,10 @@ main() {
       headline_qd=$(awk -F',' 'NR>1{print $2}' \
         "${cfg_root}/${baseline}/qd.csv" | sort -n | tail -1)
     fi
+    if [[ -z "${headline_qd}" ]]; then
+      log_warn "Could not resolve headline QD from baseline '${baseline}' (qd.csv has no data rows — likely resource ceiling). Defaulting to 0; report headline panel will be empty."
+      headline_qd=0
+    fi
 
     local output="${COMPARE_TUNING_OUTPUT}"
     [[ -z "${output}" ]] && output="${REPORTS_DIR}/tune-sweep-${COMPARE_TUNING_POOL}-${COMPARE_TUNING_RUN}.html"

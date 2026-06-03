@@ -51,7 +51,7 @@ Lifecycle:
   --resume <run-id>       Resume a partial sweep
   --restore-from <run-id> Restore cluster from a saved snapshot (no workload)
   --force                 Override the .tune-sweep.lock file
-  --auto, --yes           Skip interactive confirmations (multi-AZ, NTO conflict)
+  --auto, --yes           Skip interactive confirmations (multi-AZ proceed prompt)
 USAGE
       exit 0
       ;;
