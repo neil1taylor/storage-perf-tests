@@ -116,6 +116,21 @@ test_render_cstate_machineconfig() {
     return
   fi
 
+  # If oc is present, sanity-check the YAML structure with client-side dry-run.
+  # NOTE: this errors with "no matches for kind" when the local oc client cache
+  # doesn't know about the MachineConfig CRD (common offline). Treat that case
+  # as "can't validate" and proceed; only fail on other oc errors.
+  if command -v oc &>/dev/null; then
+    local oc_out
+    if ! oc_out=$(oc apply --dry-run=client -f "${tmp}" 2>&1); then
+      if ! echo "${oc_out}" | grep -q "no matches for kind"; then
+        _fail "oc client-side validation failed: ${oc_out}"
+        rm -f "${tmp}"
+        return
+      fi
+    fi
+  fi
+
   rm -f "${tmp}"
   _pass "rendered MC has expected kernel args and labels"
 }
