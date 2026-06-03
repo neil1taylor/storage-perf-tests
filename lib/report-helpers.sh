@@ -1689,3 +1689,419 @@ PYEOF_SCALE_COMPARE
 
   log_info "Scale-test comparison report generated: ${output_html}"
 }
+
+# ---------------------------------------------------------------------------
+# aggregate_qd_step <raw_dir> <vm_count> <qd> <rate_iops> <sla_ms>
+#   Reads all *-fio.json files in raw_dir and emits one CSV row matching the
+#   qd.csv schema. Skips empty/malformed JSON; if all VMs failed, emits a NaN
+#   row with sla_pass=false.
+# ---------------------------------------------------------------------------
+aggregate_qd_step() {
+  local raw_dir="$1" vm_count="$2" qd="$3" rate="$4" sla="$5"
+
+  python3 - "${raw_dir}" "${vm_count}" "${qd}" "${rate}" "${sla}" <<'PYEOF'
+import json, os, sys, glob
+
+raw_dir, vm_count, qd, rate, sla = sys.argv[1:]
+vm_count, qd, rate = int(vm_count), int(qd), int(rate)
+sla = float(sla)
+
+read_iops_sum = write_iops_sum = bw_mbs_sum = 0.0
+p50_r=[]; p95_r=[]; p99_r=[]
+p50_w=[]; p95_w=[]; p99_w=[]
+ok = 0
+for path in glob.glob(os.path.join(raw_dir, "*-fio.json")):
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        jobs = d.get("jobs") or []
+        if not jobs: continue
+        j = jobs[0]
+        r = j.get("read", {})
+        w = j.get("write", {})
+        read_iops_sum  += r.get("iops", 0.0)
+        write_iops_sum += w.get("iops", 0.0)
+        bw_mbs_sum += (r.get("bw", 0.0) + w.get("bw", 0.0)) / 1024.0
+        rcl = r.get("clat_ns", {}).get("percentile", {})
+        wcl = w.get("clat_ns", {}).get("percentile", {})
+        if rcl:
+            p50_r.append(rcl.get("50.000000", 0) / 1e6)
+            p95_r.append(rcl.get("95.000000", 0) / 1e6)
+            p99_r.append(rcl.get("99.000000", 0) / 1e6)
+        if wcl:
+            p50_w.append(wcl.get("50.000000", 0) / 1e6)
+            p95_w.append(wcl.get("95.000000", 0) / 1e6)
+            p99_w.append(wcl.get("99.000000", 0) / 1e6)
+        ok += 1
+    except Exception:
+        continue
+
+def avg(xs): return sum(xs)/len(xs) if xs else float("nan")
+def mx(xs):  return max(xs) if xs else float("nan")
+
+if ok == 0:
+    print(f"{vm_count},{qd},{rate},nan,nan,nan,nan,nan,nan,nan,nan,nan,false")
+    sys.exit(0)
+
+avg_p50_r = avg(p50_r); avg_p95_r = avg(p95_r); max_p99_r = mx(p99_r)
+avg_p50_w = avg(p50_w); avg_p95_w = avg(p95_w); max_p99_w = mx(p99_w)
+sla_pass = "true" if (max_p99_w == max_p99_w and max_p99_w < sla) else "false"
+fail_pct = (vm_count - ok) / vm_count * 100
+if fail_pct > 10:
+    sla_pass = "false"
+
+print(f"{vm_count},{qd},{rate},"
+      f"{read_iops_sum:.0f},{write_iops_sum:.0f},{bw_mbs_sum:.1f},"
+      f"{avg_p50_r:.3f},{avg_p95_r:.3f},{max_p99_r:.3f},"
+      f"{avg_p50_w:.3f},{avg_p95_w:.3f},{max_p99_w:.3f},"
+      f"{sla_pass}")
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# generate_qd_summary <qd_csv> <out_json> <pool> <cfg> <vm_count> <rate> <sla>
+# ---------------------------------------------------------------------------
+generate_qd_summary() {
+  local csv="$1" out="$2" pool="$3" cfg="$4" vm_count="$5" rate="$6" sla="$7"
+
+  python3 - "${csv}" "${out}" "${pool}" "${cfg}" "${vm_count}" "${rate}" "${sla}" \
+           "${RUN_ID}" "${CLUSTER_DESCRIPTION:-}" <<'PYEOF'
+import csv, json, sys, datetime, subprocess
+
+csv_path, out_path, pool, cfg, vm_count, rate, sla, run_id, cluster_desc = sys.argv[1:]
+vm_count, rate, sla = int(vm_count), int(rate), float(sla)
+
+rows = []
+with open(csv_path) as f:
+    for row in csv.DictReader(f):
+        try:
+            rows.append({
+                "qd": int(row["qd"]),
+                "total_iops": float(row["total_read_iops"]) + float(row["total_write_iops"]),
+                "p99_r": float(row["max_p99_read_ms"]),
+                "p99_w": float(row["max_p99_write_ms"]),
+                "sla_pass": row["sla_pass"] == "true",
+            })
+        except (ValueError, KeyError):
+            continue
+
+if not rows:
+    open(out_path, "w").write(json.dumps({"error": "no qd rows"}))
+    sys.exit(0)
+
+passing = [r for r in rows if r["sla_pass"]]
+hi = max((r["qd"] for r in passing), default=0)
+iops_at_hi = next((r["total_iops"] for r in rows if r["qd"] == hi), 0) if hi else 0
+peak = max(rows, key=lambda r: r["total_iops"])
+
+ocs_version = ""
+try:
+    ocs_version = subprocess.run(
+        ["oc", "get", "csv", "-n", "openshift-storage",
+         "-o", "jsonpath={.items[?(@.spec.displayName==\"OpenShift Data Foundation\")].spec.version}"],
+        capture_output=True, text=True, timeout=10).stdout.strip()
+except Exception:
+    pass
+
+summary = {
+    "pool": pool, "tune_cfg_name": cfg,
+    "vm_count": vm_count, "rate_iops_per_vm": rate,
+    "qd_list": [r["qd"] for r in rows],
+    "latency_sla_ms": sla,
+    "highest_qd_within_sla": hi,
+    "iops_at_highest_qd_within_sla": int(iops_at_hi),
+    "qd_with_peak_iops": peak["qd"],
+    "peak_total_iops": int(peak["total_iops"]),
+    "p99_write_at_peak_qd_ms": peak["p99_w"],
+    "p99_read_at_peak_qd_ms": peak["p99_r"],
+    "resource_ceiling": False,
+    "ocs_version": ocs_version,
+    "cluster_description": cluster_desc,
+    "run_id": run_id,
+    "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+open(out_path, "w").write(json.dumps(summary, indent=2))
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# generate_tune_sweep_report <cfg_root> <pool> <baseline> <headline_qd> <out_html>
+#   Generates an HTML comparison report for an ODF tune sweep.
+#   cfg_root:     results/.../qd-sweep/<pool>  (directory with per-config subdirs)
+#   pool:         storage pool name (display)
+#   baseline:     name of the baseline config (e.g. "default")
+#   headline_qd:  QD value to use for the headline bar charts
+#   out_html:     output HTML file path
+# ---------------------------------------------------------------------------
+generate_tune_sweep_report() {
+  local cfg_root="$1"      # results/.../qd-sweep/<pool>
+  local pool="$2"
+  local baseline="$3"
+  local headline_qd="$4"
+  local out_html="$5"
+
+  log_info "Generating tune-sweep report: ${out_html}"
+
+  CFG_ROOT="${cfg_root}" POOL="${pool}" BASELINE="${baseline}" \
+   HEADLINE_QD="${headline_qd}" \
+   CLUSTER_DESC="${CLUSTER_DESCRIPTION:-}" \
+   python3 << 'PYEOF_TUNE_REPORT' > "${out_html}"
+import csv, json, os, datetime
+cfg_root  = os.environ['CFG_ROOT']
+pool      = os.environ['POOL']
+baseline  = os.environ['BASELINE']
+headline_qd_raw = os.environ.get('HEADLINE_QD', '0').strip()
+headline_qd = int(headline_qd_raw) if headline_qd_raw else 0
+cluster_desc = os.environ.get('CLUSTER_DESC', '')
+
+# Auto-discover configs under cfg_root
+configs = []
+for d in sorted(os.listdir(cfg_root)):
+    cdir = os.path.join(cfg_root, d)
+    csv_path = os.path.join(cdir, 'qd.csv')
+    sum_path = os.path.join(cdir, 'qd-summary.json')
+    if not (os.path.isfile(csv_path) and os.path.isfile(sum_path)):
+        continue
+    rows = []
+    with open(csv_path) as f:
+        for row in csv.DictReader(f):
+            try:
+                rows.append({
+                    'qd': int(row['qd']),
+                    'iops_r': float(row['total_read_iops']),
+                    'iops_w': float(row['total_write_iops']),
+                    'bw':    float(row['total_bw_mbs']),
+                    'p99_r': float(row['max_p99_read_ms']),
+                    'p99_w': float(row['max_p99_write_ms']),
+                    'sla_pass': row['sla_pass'] == 'true',
+                })
+            except ValueError:
+                continue
+    summary = json.load(open(sum_path))
+    configs.append({'name': d, 'rows': rows, 'summary': summary})
+
+# Resolve baseline
+baseline_cfg = next((c for c in configs if c['name'] == baseline), configs[0] if configs else None)
+baseline_peak = baseline_cfg['summary'].get('peak_total_iops', 0) if baseline_cfg else 0
+
+# Comparability check
+slas    = {c['summary'].get('latency_sla_ms', 0) for c in configs}
+rates   = {c['summary'].get('rate_iops_per_vm', 0) for c in configs}
+nvms    = {c['summary'].get('vm_count', 0) for c in configs}
+qdsets  = {tuple(c['summary'].get('qd_list', [])) for c in configs}
+mismatch = (len(slas) > 1 or len(rates) > 1 or len(nvms) > 1 or len(qdsets) > 1)
+
+# Carbon-ish palette, deterministic by config order
+palette = ['#0f62fe', '#007d79', '#6929c4', '#1192e8', '#fa4d56', '#161616']
+
+# QD-axis chart datasets
+datasets = []
+for i, c in enumerate(configs):
+    color = palette[i % len(palette)]
+    iops = [{'x': r['qd'], 'y': r['iops_r'] + r['iops_w']} for r in c['rows']]
+    p99w = [{'x': r['qd'], 'y': r['p99_w']} for r in c['rows']]
+    pt_colors = ['#198038' if r['sla_pass'] else '#da1e28' for r in c['rows']]
+    datasets.append({
+        'label': f"{c['name']} — Total IOPS",
+        'data': iops, 'borderColor': color, 'backgroundColor': color + '20',
+        'yAxisID': 'y-iops', 'tension': 0.2,
+        'pointBackgroundColor': pt_colors, 'pointBorderColor': color,
+        'pointRadius': 5, 'borderWidth': 2.5,
+    })
+    datasets.append({
+        'label': f"{c['name']} — Write p99 (ms)",
+        'data': p99w, 'borderColor': color, 'borderDash': [6, 4],
+        'yAxisID': 'y-lat', 'tension': 0.2,
+        'pointBackgroundColor': pt_colors, 'pointBorderColor': color,
+        'pointRadius': 5, 'borderWidth': 2,
+    })
+
+sla_value = list(slas)[0] if len(slas) == 1 else None
+sla_annot = ''
+if sla_value is not None:
+    sla_annot = (f"slaLine:{{type:'line',yMin:{sla_value},yMax:{sla_value},"
+                 f"yScaleID:'y-lat',borderColor:'#da1e28',borderWidth:2,"
+                 f"borderDash:[10,5],label:{{content:'SLA: {sla_value}ms',"
+                 f"display:true,position:'start'}}}}")
+
+# Headline-QD bar charts (4 metrics × N configs)
+def row_at(c, qd):
+    return next((r for r in c['rows'] if r['qd'] == qd), None)
+labels = [c['name'] for c in configs]
+def bar_dataset(metric, color_arr):
+    data = []
+    for c in configs:
+        r = row_at(c, headline_qd)
+        if not r:
+            data.append(None); continue
+        if metric == 'iops':  data.append(r['iops_r'] + r['iops_w'])
+        elif metric == 'bw':  data.append(r['bw'])
+        elif metric == 'p99_r': data.append(r['p99_r'])
+        elif metric == 'p99_w': data.append(r['p99_w'])
+    return {'data': data, 'backgroundColor': color_arr, 'borderColor': color_arr, 'borderWidth': 1}
+colors = [palette[i % len(palette)] for i in range(len(configs))]
+
+# Scorecard
+def fmt_int(n): return f"{int(n):,}"
+def fmt_pct(x): return f"{x:+.1f}%" if x is not None else "—"
+scorecard_rows = []
+for c in configs:
+    s = c['summary']
+    peak = s.get('peak_total_iops', 0)
+    delta = (peak - baseline_peak) / baseline_peak * 100 if baseline_peak else None
+    delta_cell = '<span class="muted">—</span>' if c['name'] == baseline_cfg['name'] else fmt_pct(delta)
+    row_h = row_at(c, headline_qd)
+    sla_hdq = 'PASS' if (row_h and row_h['sla_pass']) else 'FAIL'
+    sla_class = 'pass' if sla_hdq == 'PASS' else 'fail'
+    res_ceiling = 'yes' if s.get('resource_ceiling') else 'no'
+    cstate_yaml = ''
+    try:
+        ta_path = os.path.join(cfg_root, c['name'], 'tuning-applied.yaml')
+        cstate_yaml = open(ta_path).read()
+    except Exception:
+        pass
+    osd_summary = 'inherit'
+    for line in cstate_yaml.splitlines():
+        if line.startswith('realised_osd_resources:'):
+            osd_summary = line.split(': ', 1)[1].strip().strip('"')
+    scorecard_rows.append(
+        f"<tr><td><b>{c['name']}</b></td>"
+        f"<td>{fmt_int(peak)}</td><td>{delta_cell}</td>"
+        f"<td>{s.get('p99_read_at_peak_qd_ms', 0):.2f}</td>"
+        f"<td>{s.get('p99_write_at_peak_qd_ms', 0):.2f}</td>"
+        f"<td class='{sla_class}'>{sla_hdq}</td>"
+        f"<td>{res_ceiling}</td>"
+        f"<td><code>{osd_summary[:60]}</code></td></tr>"
+    )
+
+# Per-config detail tables
+detail_blocks = []
+for c in configs:
+    rows_html = []
+    for r in c['rows']:
+        sla_cls = 'pass' if r['sla_pass'] else 'fail'
+        rows_html.append(
+            f"<tr><td>{r['qd']}</td>"
+            f"<td>{int(r['iops_r']):,}</td><td>{int(r['iops_w']):,}</td>"
+            f"<td>{r['bw']:,.1f}</td>"
+            f"<td>{r['p99_r']:.3f}</td><td>{r['p99_w']:.3f}</td>"
+            f"<td class='{sla_cls}'>{'PASS' if r['sla_pass'] else 'FAIL'}</td></tr>"
+        )
+    detail_blocks.append(
+        f"<details><summary><b>{c['name']}</b></summary>"
+        f"<table><tr><th>QD</th><th>Read IOPS</th><th>Write IOPS</th><th>BW MB/s</th>"
+        f"<th>p99 R (ms)</th><th>p99 W (ms)</th><th>SLA</th></tr>"
+        + ''.join(rows_html) + "</table></details>"
+    )
+
+banner_class = 'warn' if mismatch else 'ok'
+banner_text = ('Workload params differ across configs — comparison is approximate.'
+               if mismatch else
+               f'All configs tested at {list(rates)[0]} IOPS/VM × {list(nvms)[0]} VMs '
+               f'× SLA={sla_value}ms. Apples-to-apples.')
+
+generated_at = datetime.datetime.utcnow().isoformat(timespec='seconds')
+
+print(f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ODF Tune Sweep: {pool}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f4f4; color: #161616; }}
+  h1 {{ margin-bottom: 4px; }}
+  .meta {{ color: #525252; font-size: 0.9em; margin-bottom: 20px; }}
+  .banner {{ padding: 14px 18px; margin: 18px 0; border-radius: 4px; }}
+  .banner.ok {{ background: #defbe6; border-left: 4px solid #198038; }}
+  .banner.warn {{ background: #fff8e1; border-left: 4px solid #f1c21b; }}
+  .chart-container {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+  .bar-row {{ display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; }}
+  table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-top: 8px; }}
+  th {{ background: #161616; color: white; padding: 10px 12px; text-align: right; font-size: 0.85em; }}
+  th:first-child, th:nth-child(2) {{ text-align: left; }}
+  td {{ padding: 8px 12px; text-align: right; border-bottom: 1px solid #e0e0e0; font-size: 0.9em; }}
+  td:first-child, td:nth-child(8) {{ text-align: left; }}
+  .pass {{ color: #198038; font-weight: 600; }}
+  .fail {{ color: #da1e28; font-weight: 600; }}
+  .muted {{ color: #8d8d8d; }}
+  details {{ background: white; padding: 12px 16px; border-radius: 8px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  details summary {{ cursor: pointer; padding: 4px 0; }}
+  code {{ background: #f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }}
+</style>
+</head>
+<body>
+<h1>ODF Tune Sweep: {pool}</h1>
+<div class="meta">
+  <b>Cluster:</b> {cluster_desc or 'n/a'}<br>
+  <b>Baseline:</b> {baseline_cfg['name']}<br>
+  <b>Headline QD:</b> {headline_qd}<br>
+  <b>Generated:</b> {generated_at}
+</div>
+
+<div class="banner {banner_class}">{banner_text}</div>
+
+<h2>Capacity scorecard</h2>
+<table>
+<tr>
+  <th>Config</th><th>Peak IOPS</th><th>Δ vs baseline</th>
+  <th>p99 R @ peak (ms)</th><th>p99 W @ peak (ms)</th>
+  <th>SLA @ QD={headline_qd}</th><th>Resource ceiling</th><th>Tuning</th>
+</tr>
+{''.join(scorecard_rows)}
+</table>
+
+<h2>Headline @ QD={headline_qd}</h2>
+<div class="bar-row">
+  <div class="chart-container"><canvas id="headlineIops"></canvas></div>
+  <div class="chart-container"><canvas id="headlineBw"></canvas></div>
+  <div class="chart-container"><canvas id="headlineP99R"></canvas></div>
+  <div class="chart-container"><canvas id="headlineP99W"></canvas></div>
+</div>
+
+<h2>QD-axis behaviour</h2>
+<div class="chart-container">
+  <canvas id="qdChart" height="100"></canvas>
+</div>
+
+<h2>Per-config data</h2>
+{''.join(detail_blocks)}
+
+<script>
+const ctx = document.getElementById('qdChart').getContext('2d');
+new Chart(ctx, {{
+  type: 'line',
+  data: {{ datasets: {json.dumps(datasets)} }},
+  options: {{
+    responsive: true, parsing: false,
+    interaction: {{ mode: 'nearest', intersect: false }},
+    scales: {{
+      x: {{ type: 'linear', title: {{ display: true, text: 'Queue depth' }} }},
+      'y-iops': {{ type: 'linear', position: 'left', title: {{ display: true, text: 'Aggregate IOPS' }}, beginAtZero: true }},
+      'y-lat':  {{ type: 'linear', position: 'right', title: {{ display: true, text: 'Write p99 (ms)' }}, beginAtZero: true, grid: {{ drawOnChartArea: false }} }}
+    }},
+    plugins: {{ legend: {{ position: 'top' }},
+      annotation: {{ annotations: {{ {sla_annot} }} }} }}
+  }}
+}});
+
+const labels = {json.dumps(labels)};
+const colors = {json.dumps(colors)};
+const bar = (id, data, label, lowerBetter) => new Chart(document.getElementById(id), {{
+  type: 'bar',
+  data: {{ labels, datasets: [{{ label, data, backgroundColor: colors, borderColor: colors, borderWidth: 1 }}] }},
+  options: {{ plugins: {{ legend: {{ display: false }}, title: {{ display: true, text: label + (lowerBetter ? ' (lower is better)' : ' (higher is better)') }} }}, scales: {{ y: {{ beginAtZero: true }} }} }}
+}});
+
+bar('headlineIops',  {json.dumps(bar_dataset('iops', colors)['data'])}, 'IOPS @ QD={headline_qd}', false);
+bar('headlineBw',    {json.dumps(bar_dataset('bw', colors)['data'])},   'Throughput MB/s @ QD={headline_qd}', false);
+bar('headlineP99R',  {json.dumps(bar_dataset('p99_r', colors)['data'])},'Read p99 ms @ QD={headline_qd}', true);
+bar('headlineP99W',  {json.dumps(bar_dataset('p99_w', colors)['data'])},'Write p99 ms @ QD={headline_qd}', true);
+</script>
+</body>
+</html>""")
+PYEOF_TUNE_REPORT
+
+  log_info "Tune-sweep report generated: ${out_html}"
+}

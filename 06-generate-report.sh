@@ -19,6 +19,13 @@ COMPARE_SCALE_ROKS=""
 COMPARE_SCALE_VSAN_REF=""
 COMPARE_SCALE_OUTPUT=""
 
+COMPARE_TUNING_MODE=false
+COMPARE_TUNING_RUN=""
+COMPARE_TUNING_POOL=""
+COMPARE_TUNING_BASELINE=""
+COMPARE_TUNING_HEADLINE_QD=""
+COMPARE_TUNING_OUTPUT=""
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --compare)
@@ -41,15 +48,36 @@ while [[ $# -gt 0 ]]; do
     --output)
       COMPARE_SCALE_OUTPUT="$2"; shift 2
       ;;
+    --compare-tuning)
+      COMPARE_TUNING_MODE=true; shift
+      ;;
+    --run)
+      COMPARE_TUNING_RUN="$2"; shift 2
+      ;;
+    --pool)
+      COMPARE_TUNING_POOL="$2"; shift 2
+      ;;
+    --baseline)
+      COMPARE_TUNING_BASELINE="$2"; shift 2
+      ;;
+    --headline-qd)
+      COMPARE_TUNING_HEADLINE_QD="$2"; shift 2
+      ;;
     --help)
       echo "Usage: $0 [--compare <run-id-1> <run-id-2>] [--rank]"
       echo "       $0 --compare-scale --roks <pool[,pool...]> --vsan-ref <dir> [--output <html>]"
+      echo "       $0 --compare-tuning --run <id> --pool <name> [--baseline <name>] [--headline-qd <qd>]"
       echo "  --compare <id1> <id2>   Compare two runs side-by-side with delta analysis"
       echo "  --rank                  Generate StorageClass ranking report"
       echo "  --compare-scale         Overlay ROKS scale-test ramps with a vSAN reference ramp"
       echo "    --roks <pools>        Comma-separated pool names; each resolves to results/scale-test/<pool>/"
       echo "    --vsan-ref <dir>      Directory containing vSAN ramp.csv + ramp-summary.json"
       echo "    --output <html>       Output HTML path (default: reports/scale-test-comparison-...html)"
+      echo "  --compare-tuning        Generate tune-sweep multi-config comparison report"
+      echo "    --run <id>            Run ID containing qd-sweep results"
+      echo "    --pool <name>         Storage pool name"
+      echo "    --baseline <name>     Baseline config (default: 'default' or first alphabetically)"
+      echo "    --headline-qd <qd>    Headline QD (default: max QD from baseline)"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -562,6 +590,48 @@ main() {
     log_info ""
     log_info "=== Scale-Test Comparison Report Generated ==="
     log_info "  HTML: ${output}"
+    return 0
+  fi
+
+  # Handle tune-sweep multi-config comparison mode
+  if [[ "${COMPARE_TUNING_MODE}" == true ]]; then
+    log_info "=== Generating Tune-Sweep Report ==="
+
+    [[ -z "${COMPARE_TUNING_RUN}" ]]  && { log_error "--compare-tuning requires --run <run-id>"; exit 1; }
+    [[ -z "${COMPARE_TUNING_POOL}" ]] && { log_error "--compare-tuning requires --pool <name>"; exit 1; }
+
+    local cfg_root="${RESULTS_DIR}/${COMPARE_TUNING_RUN}/qd-sweep/${COMPARE_TUNING_POOL}"
+    [[ -d "${cfg_root}" ]] || { log_error "no qd-sweep results at ${cfg_root}"; exit 1; }
+
+    # Resolve baseline
+    local baseline="${COMPARE_TUNING_BASELINE}"
+    if [[ -z "${baseline}" ]]; then
+      if [[ -d "${cfg_root}/default" ]]; then
+        baseline="default"
+      else
+        baseline=$(ls -1 "${cfg_root}" | head -1)
+      fi
+    fi
+
+    # Resolve headline QD
+    local headline_qd="${COMPARE_TUNING_HEADLINE_QD}"
+    if [[ -z "${headline_qd}" ]]; then
+      headline_qd=$(awk -F',' 'NR>1{print $2}' \
+        "${cfg_root}/${baseline}/qd.csv" | sort -n | tail -1)
+    fi
+    if [[ -z "${headline_qd}" ]]; then
+      log_warn "Could not resolve headline QD from baseline '${baseline}' (qd.csv has no data rows — likely resource ceiling). Defaulting to 0; report headline panel will be empty."
+      headline_qd=0
+    fi
+
+    local output="${COMPARE_TUNING_OUTPUT}"
+    [[ -z "${output}" ]] && output="${REPORTS_DIR}/tune-sweep-${COMPARE_TUNING_POOL}-${COMPARE_TUNING_RUN}.html"
+    mkdir -p "$(dirname "${output}")"
+
+    generate_tune_sweep_report "${cfg_root}" "${COMPARE_TUNING_POOL}" \
+      "${baseline}" "${headline_qd}" "${output}"
+
+    log_info "Tune-sweep report: ${output}"
     return 0
   fi
 

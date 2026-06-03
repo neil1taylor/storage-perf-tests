@@ -58,7 +58,9 @@ test_tune_configs_parse() {
   # does not call `oc cluster-info`.
   OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
 
-  [[ -v TUNE_CONFIGS ]] || { _fail "TUNE_CONFIGS is not declared"; return; }
+  # NOTE: `[[ -v TUNE_CONFIGS ]]` is intentionally NOT used here — bash's -v on
+  # the bare name of an associative array tests NAME[0], which is unset for
+  # string-keyed arrays. The array-length check below is the canonical check.
   (( ${#TUNE_CONFIGS[@]} >= 4 )) || { _fail "expected >=4 named configs, got ${#TUNE_CONFIGS[@]}"; return; }
   for name in default cstate-off big-osd big-osd+cstate-off; do
     [[ -v 'TUNE_CONFIGS[$name]' ]] || { _fail "TUNE_CONFIGS[$name] missing"; return; }

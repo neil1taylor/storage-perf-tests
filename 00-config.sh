@@ -14,9 +14,11 @@ export PATH="${SCRIPT_DIR_CONFIG}:${PATH}"
 # ---------------------------------------------------------------------------
 # Cluster connectivity check
 # ---------------------------------------------------------------------------
-if ! oc cluster-info &>/dev/null; then
-  echo "[FATAL] oc CLI not authenticated or cluster unreachable. Run 'oc login' first." >&2
-  exit 1
+if [[ "${OC_SKIP_CLUSTER_CHECK:-false}" != "true" ]]; then
+  if ! oc cluster-info &>/dev/null; then
+    echo "[FATAL] oc CLI not authenticated or cluster unreachable. Run 'oc login' first." >&2
+    exit 1
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -287,6 +289,37 @@ export POOL_RESOURCE_GROUP="${POOL_RESOURCE_GROUP:-}"
 # ---------------------------------------------------------------------------
 declare -a EXTRA_STORAGE_CLASSES=()
 export EXTRA_STORAGE_CLASSES
+
+# =============================================================================
+# Tune-sweep configuration matrix (ODF OSD resources + host C-state)
+# =============================================================================
+# Each value is a space-separated list of key=value pairs. Recognised keys:
+#   profile   → balanced | performance (StorageCluster.spec.resourceProfile)
+#   osd_cpu   → integer CPU cores (overrides profile defaults)
+#   osd_mem   → memory quantity, e.g. 64Gi
+#   cstate    → on | off
+#                 on  = remove the tune-sweep MachineConfig if present
+#                 off = apply MC with kernelArgs
+#                       intel_idle.max_cstate=0 processor.max_cstate=0
+# =============================================================================
+declare -A TUNE_CONFIGS
+TUNE_CONFIGS[default]='profile=balanced cstate=on'
+TUNE_CONFIGS[cstate-off]='profile=balanced cstate=off'
+TUNE_CONFIGS[big-osd]='osd_cpu=8 osd_mem=64Gi cstate=on'
+TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=8 osd_mem=64Gi cstate=off'
+export TUNE_CONFIGS
+
+TUNE_DEFAULT_CONFIGS="${TUNE_DEFAULT_CONFIGS:-default,cstate-off,big-osd,big-osd+cstate-off}"
+TUNE_QD_LIST="${TUNE_QD_LIST:-1,2,4,8,16,32,64}"
+TUNE_FIXED_VMS="${TUNE_FIXED_VMS:-200}"
+TUNE_MC_NAME="${TUNE_MC_NAME:-99-perf-test-cstate-off}"
+TUNE_MCP_TIMEOUT="${TUNE_MCP_TIMEOUT:-1800}"   # 30 min for full MCP rollout
+TUNE_OSD_TIMEOUT="${TUNE_OSD_TIMEOUT:-1200}"   # 20 min for OSD restart
+TUNE_RATE_IOPS="${TUNE_RATE_IOPS:-500}"
+TUNE_LATENCY_SLA_MS="${TUNE_LATENCY_SLA_MS:-5}"
+
+export TUNE_DEFAULT_CONFIGS TUNE_QD_LIST TUNE_FIXED_VMS TUNE_MC_NAME
+export TUNE_MCP_TIMEOUT TUNE_OSD_TIMEOUT TUNE_RATE_IOPS TUNE_LATENCY_SLA_MS
 
 # ---------------------------------------------------------------------------
 # Logging

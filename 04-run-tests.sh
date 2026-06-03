@@ -31,6 +31,10 @@ QUICK_MODE=false
 OVERVIEW_MODE=false
 RANK_MODE=false
 SCALE_TEST_MODE=false
+QD_SWEEP_MODE=false
+FIXED_VMS=""
+QD_LIST=""
+TUNE_CFG_NAME="untagged"
 SCALE_RATE_IOPS_CLI=""
 SCALE_LATENCY_SLA_CLI=""
 PARALLEL_POOLS=1
@@ -58,25 +62,34 @@ while [[ $# -gt 0 ]]; do
     --exclude)  EXCLUDE_PATTERN="$2"; shift 2 ;;
     --extra-sc) EXTRA_STORAGE_CLASSES+=("$2"); shift 2 ;;
     --scale-test)    SCALE_TEST_MODE=true; shift ;;
+    --qd-sweep)      QD_SWEEP_MODE=true; shift ;;
+    --fixed-vms)     FIXED_VMS="$2"; shift 2 ;;
+    --qd-list)       QD_LIST="$2"; shift 2 ;;
+    --tune-cfg-name) TUNE_CFG_NAME="$2"; shift 2 ;;
     --rate-iops)     SCALE_RATE_IOPS_CLI="$2"; shift 2 ;;
     --latency-sla)   SCALE_LATENCY_SLA_CLI="$2"; shift 2 ;;
     --help)
       echo "Usage: $0 [--pool <name>] [--quick] [--overview] [--rank] [--scale-test --pool <name> [--rate-iops N] [--latency-sla N]] [--parallel [N]]"
+      echo "         [--qd-sweep --pool <name> [--fixed-vms N] [--qd-list QDs] [--rate-iops N] [--latency-sla N] [--tune-cfg-name NAME]]"
       echo "         [--resume <run-id>] [--dry-run] [--filter <pattern>] [--exclude <pattern>]"
       echo "         [--extra-sc <name>]"
-      echo "  --pool <name>    Test only a specific storage pool"
-      echo "  --quick          Quick mode: small VM, 150Gi PVC, concurrency=1 only"
-      echo "  --overview       Overview mode: 2 tests/pool (random 4k + sequential 1M) across all pools"
-      echo "  --rank           Rank mode: 3 tests/pool (random 4k + sequential 1M + mixed 4k), 60s runtime"
-      echo "  --scale-test     Auto-ramp: double VMs until p99 latency breaches SLA (requires --pool)"
-      echo "  --rate-iops <N>  Per-VM IOPS cap for scale-test (default: ${SCALE_RATE_IOPS})"
-      echo "  --latency-sla <ms>  p99 latency SLA in ms for scale-test (default: ${SCALE_LATENCY_SLA_MS})"
-      echo "  --parallel [N]   Run pools in parallel (auto-scale to cluster capacity, or specify N)"
-      echo "  --resume <id>    Resume an interrupted run, skipping completed tests"
-      echo "  --dry-run        Preview test matrix without creating any resources"
-      echo "  --filter <pat>   Only run tests matching pattern (pool:size:pvc:conc:profile:bs, * = wildcard)"
-      echo "  --exclude <pat>  Skip tests matching pattern (same format as --filter)"
-      echo "  --extra-sc <sc>  Include a pre-existing StorageClass in the test matrix (repeatable)"
+      echo "  --pool <name>        Test only a specific storage pool"
+      echo "  --quick              Quick mode: small VM, 150Gi PVC, concurrency=1 only"
+      echo "  --overview           Overview mode: 2 tests/pool (random 4k + sequential 1M) across all pools"
+      echo "  --rank               Rank mode: 3 tests/pool (random 4k + sequential 1M + mixed 4k), 60s runtime"
+      echo "  --scale-test         Auto-ramp: double VMs until p99 latency breaches SLA (requires --pool)"
+      echo "  --qd-sweep           QD-sweep: fix VM count, sweep queue depths (requires --pool)"
+      echo "  --fixed-vms <N>      Number of VMs to hold fixed during qd-sweep (default: \${TUNE_FIXED_VMS})"
+      echo "  --qd-list <QDs>      Comma-separated queue depths to sweep, e.g. 1,2,4,8,16,32 (default: \${TUNE_QD_LIST})"
+      echo "  --tune-cfg-name <n>  Label for this tuning configuration, used in output paths (default: untagged)"
+      echo "  --rate-iops <N>      Per-VM IOPS cap for scale-test / qd-sweep (default: ${SCALE_RATE_IOPS})"
+      echo "  --latency-sla <ms>   p99 latency SLA in ms for scale-test / qd-sweep (default: ${SCALE_LATENCY_SLA_MS})"
+      echo "  --parallel [N]       Run pools in parallel (auto-scale to cluster capacity, or specify N)"
+      echo "  --resume <id>        Resume an interrupted run, skipping completed tests"
+      echo "  --dry-run            Preview test matrix without creating any resources"
+      echo "  --filter <pat>       Only run tests matching pattern (pool:size:pvc:conc:profile:bs, * = wildcard)"
+      echo "  --exclude <pat>      Skip tests matching pattern (same format as --filter)"
+      echo "  --extra-sc <sc>      Include a pre-existing StorageClass in the test matrix (repeatable)"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -89,8 +102,9 @@ _mode_count=0
 [[ "${OVERVIEW_MODE}" == true ]] && ((_mode_count += 1))
 [[ "${RANK_MODE}" == true ]] && ((_mode_count += 1))
 [[ "${SCALE_TEST_MODE}" == true ]] && ((_mode_count += 1))
+[[ "${QD_SWEEP_MODE}" == true ]] && ((_mode_count += 1))
 if [[ ${_mode_count} -gt 1 ]]; then
-  echo "Error: --quick, --overview, --rank, and --scale-test are mutually exclusive" >&2
+  echo "Error: --quick, --overview, --rank, --scale-test, and --qd-sweep are mutually exclusive" >&2
   exit 1
 fi
 
@@ -102,6 +116,20 @@ if [[ "${SCALE_TEST_MODE}" == true ]]; then
   # Apply CLI overrides to config defaults
   [[ -n "${SCALE_RATE_IOPS_CLI}" ]] && SCALE_RATE_IOPS="${SCALE_RATE_IOPS_CLI}"
   [[ -n "${SCALE_LATENCY_SLA_CLI}" ]] && SCALE_LATENCY_SLA_MS="${SCALE_LATENCY_SLA_CLI}"
+fi
+
+if [[ "${QD_SWEEP_MODE}" == true ]]; then
+  if [[ -z "${FILTER_POOL}" ]]; then
+    echo "Error: --qd-sweep requires --pool <name>" >&2
+    exit 1
+  fi
+  # Apply defaults from TUNE_* config vars, then allow CLI rate/sla overrides
+  : "${FIXED_VMS:=${TUNE_FIXED_VMS}}"
+  : "${QD_LIST:=${TUNE_QD_LIST}}"
+  RATE_IOPS="${TUNE_RATE_IOPS}"
+  LATENCY_SLA="${TUNE_LATENCY_SLA_MS}"
+  [[ -n "${SCALE_RATE_IOPS_CLI}" ]] && RATE_IOPS="${SCALE_RATE_IOPS_CLI}"
+  [[ -n "${SCALE_LATENCY_SLA_CLI}" ]] && LATENCY_SLA="${SCALE_LATENCY_SLA_CLI}"
 fi
 
 # Override for quick mode
@@ -676,6 +704,225 @@ JSONEOF
   log_info "Report:   ${report_html}"
   log_info "Summary:  ${ramp_summary}"
   exit 0
+fi
+
+# ===========================================================================
+# QD-Sweep mode
+#
+# Fixes VM count at N, then sweeps a list of queue depths to characterise
+# how latency and throughput respond to increasing QD under a rated workload.
+# VMs are created once, then fio jobs are replaced for each QD step —
+# avoiding repeated VM lifecycle overhead.
+#
+# Requires --pool. VM count defaults to TUNE_FIXED_VMS; QD list defaults to
+# TUNE_QD_LIST; per-VM IOPS rate defaults to TUNE_RATE_IOPS.
+# ===========================================================================
+if [[ "${QD_SWEEP_MODE}" == true ]]; then
+  mkdir -p "${RESULTS_DIR}" "${REPORTS_DIR}"
+  ensure_ssh_key
+  source "${SCRIPT_DIR}/lib/report-helpers.sh"
+
+  # Signal handler — clean up VMs on Ctrl+C
+  cleanup_qd_sweep() {
+    trap 'exit 130' INT TERM
+    log_warn "Interrupted — cleaning up qd-sweep VMs..."
+    kill $(jobs -rp) 2>/dev/null || true
+    wait 2>/dev/null || true
+    oc delete vm -n "${TEST_NAMESPACE}" -l "app=vm-perf-test,perf-test/run-id=${RUN_ID}" --wait=false 2>/dev/null || true
+    oc delete secret -n "${TEST_NAMESPACE}" -l "perf-test/run-id=${RUN_ID}" --wait=false 2>/dev/null || true
+    oc delete pvc -n "${TEST_NAMESPACE}" -l "perf-test/run-id=${RUN_ID}" --wait=false 2>/dev/null || true
+    exit 130
+  }
+  trap cleanup_qd_sweep INT TERM
+
+  # ─── Dry-run ───
+  if [[ "${DRY_RUN}" == true ]]; then
+    log_info ""
+    log_info "=== DRY RUN — qd-sweep Preview ==="
+    log_info ""
+    log_info "pool:        ${FILTER_POOL}"
+    log_info "fixed-vms:   ${FIXED_VMS}"
+    log_info "qd-list:     ${QD_LIST}"
+    log_info "rate-iops:   ${RATE_IOPS} per VM"
+    log_info "latency-sla: ${LATENCY_SLA} ms"
+    log_info "tune-cfg:    ${TUNE_CFG_NAME}"
+    _qd_count=$(echo "${QD_LIST}" | awk -F',' '{print NF}')
+    log_info "permutations: 1 (population reused across QDs) × ${_qd_count} QD steps"
+    log_info ""
+    log_info "VMs created once, fio replaced for each QD — no repeated VM lifecycle."
+    log_info "fio profile:  mixed-70-30-rated, 4k, numjobs=1, 10G file"
+    log_info "VM spec:      small (2 vCPU, 4Gi), 150Gi PVC"
+    log_info ""
+    log_info "No resources will be created (dry run)."
+    exit 0
+  fi
+
+  # ─── qd_sweep_main ───
+  qd_sweep_main() {
+    local pool="${FILTER_POOL}"
+    local cfg="${TUNE_CFG_NAME}"
+    local n="${FIXED_VMS}"
+    local rate_iops="${RATE_IOPS}"
+    local sla="${LATENCY_SLA}"
+
+    local out_dir="${RESULTS_DIR}/${RUN_ID}/qd-sweep/${pool}/${cfg}"
+    local raw_root="${out_dir}/raw"
+    local qd_csv="${out_dir}/qd.csv"
+    local qd_summary="${out_dir}/qd-summary.json"
+    mkdir -p "${raw_root}"
+
+    log_info "=== qd-sweep: pool=${pool} cfg=${cfg} n=${n} qds=${QD_LIST} ==="
+
+    # CSV header (only write if file is new)
+    if [[ ! -f "${qd_csv}" ]]; then
+      echo "vm_count,qd,rate_iops,total_read_iops,total_write_iops,total_bw_mbs,avg_p50_read_ms,avg_p95_read_ms,max_p99_read_ms,avg_p50_write_ms,avg_p95_write_ms,max_p99_write_ms,sla_pass" > "${qd_csv}"
+    fi
+
+    # Resolve StorageClass for the pool
+    local sc_name
+    sc_name=$(get_storage_class_for_pool "${pool}") || { log_error "No SC for pool ${pool}"; return 1; }
+
+    # Save and override fio params
+    local saved_iodepth="${FIO_IODEPTH}" saved_numjobs="${FIO_NUMJOBS}"
+    local saved_filesize="${FIO_TEST_FILE_SIZE}" saved_rate_iops="${FIO_RATE_IOPS}"
+    local saved_fio_start_epoch="${FIO_START_EPOCH:-0}"
+    FIO_NUMJOBS=1
+    FIO_TEST_FILE_SIZE=10G
+    FIO_RATE_IOPS="${rate_iops}"
+
+    local profile_path="${SCRIPT_DIR}/fio-profiles/mixed-70-30-rated.fio"
+
+    # Parse QD list into array
+    local IFS_save="${IFS}"
+    IFS=','; read -r -a qd_arr <<< "${QD_LIST}"; IFS="${IFS_save}"
+
+    local first_qd="${qd_arr[0]}"
+    FIO_IODEPTH="${first_qd}"
+
+    # Sync barrier: budget for full VM boot + prefill + buffer
+    export FIO_START_EPOCH=$(( $(date +%s) + SCALE_SYNC_BARRIER_SECS ))
+    log_info "[qd-sweep] Sync barrier: fio measurement starts at epoch ${FIO_START_EPOCH} (+${SCALE_SYNC_BARRIER_SECS}s)"
+
+    # Render initial fio + cloud-init for the first QD
+    local rendered_fio
+    rendered_fio=$(render_fio_profile "${profile_path}" "4k")
+    local cloud_init_content
+    cloud_init_content=$(render_cloud_init \
+      "${SCRIPT_DIR}/cloud-init/fio-runner.yaml" \
+      "${rendered_fio}" \
+      "qd-sweep-vm" \
+      "/mnt/data")
+
+    # ─── Phase 1: Create VMs in batches ─────────────────────────────────────
+    local -a vm_names=()
+    local vm_create_failed=false batch_count=0 i
+    for ((i=1; i<=n; i++)); do
+      local vm_name="qdsw-${pool}-${cfg}-$(printf '%03d' "${i}")"
+      vm_name="${vm_name,,}"
+      vm_name="${vm_name//[^a-z0-9-]/-}"
+      vm_name="${vm_name:0:63}"
+      vm_name="${vm_name%-}"
+      vm_names+=("${vm_name}")
+
+      create_test_vm "${vm_name}" "${sc_name}" "150Gi" "2" "4Gi" \
+        "${cloud_init_content}" "${pool}" "small" \
+        "${SCRIPT_DIR}/vm-templates/vm-template.yaml" || {
+          log_error "[qd-sweep] Failed to create VM ${vm_name}"
+          vm_create_failed=true
+          break
+        }
+
+      ((batch_count += 1))
+      if (( batch_count >= SCALE_VM_BATCH_SIZE )); then
+        log_info "[qd-sweep] Batch ${i}/${n} submitted, pausing..."
+        sleep 5
+        batch_count=0
+      fi
+    done
+
+    # On creation ceiling, clean up and write a minimal summary
+    if [[ "${vm_create_failed}" == "true" ]] || (( ${#vm_names[@]} < n )); then
+      log_warn "[qd-sweep] VM creation ceiling: ${#vm_names[@]}/${n}; cleaning up and recording resource_ceiling"
+      for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done; wait
+      cat > "${qd_summary}" <<EOF
+{"pool":"${pool}","tune_cfg_name":"${cfg}","vm_count_requested":${n},"vm_count_created":${#vm_names[@]},"resource_ceiling":true,"run_id":"${RUN_ID}","timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+EOF
+      FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
+      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"; FIO_START_EPOCH="${saved_fio_start_epoch}"
+      return 0
+    fi
+
+    log_info "[qd-sweep] All ${n} VMs created, waiting for Running..."
+    if ! wait_for_all_vms_running "${vm_names[@]}"; then
+      log_error "[qd-sweep] Not all VMs started — cleaning up"
+      for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done; wait
+      FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
+      FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"; FIO_START_EPOCH="${saved_fio_start_epoch}"
+      return 1
+    fi
+
+    # ─── Phase 2: Sweep QDs ─────────────────────────────────────────────────
+    local qd
+    for qd in "${qd_arr[@]}"; do
+      local cp_key="qd-sweep:${pool}:${cfg}:${qd}"
+      if grep -qF "${cp_key}" "${RESULTS_DIR}/${RUN_ID}.checkpoint" 2>/dev/null; then
+        log_info "  QD=${qd}: already checkpointed, skipping"
+        continue
+      fi
+
+      log_info "--- QD=${qd} ---"
+      FIO_IODEPTH="${qd}"
+      export FIO_START_EPOCH=$(( $(date +%s) + SCALE_SYNC_BARRIER_SECS ))
+      log_info "[qd-sweep] QD=${qd}: sync barrier epoch ${FIO_START_EPOCH} (+${SCALE_SYNC_BARRIER_SECS}s)"
+
+      # Re-render fio for the new QD and push to all VMs
+      local fio_for_qd
+      fio_for_qd=$(render_fio_profile "${profile_path}" "4k")
+      for vm in "${vm_names[@]}"; do
+        replace_fio_job "${vm}" "${fio_for_qd}" || log_warn "  replace_fio_job failed on ${vm}"
+      done
+      for vm in "${vm_names[@]}"; do
+        restart_fio_service "${vm}" || log_warn "  restart_fio_service failed on ${vm}"
+      done
+
+      if ! wait_for_all_fio_complete "${vm_names[@]}"; then
+        log_warn "[qd-sweep] Some fio tests did not complete for QD=${qd}"
+      fi
+
+      # Collect results into per-QD directory
+      local qd_raw="${raw_root}/qd${qd}"
+      mkdir -p "${qd_raw}"
+      local -a collect_pids=()
+      for vm in "${vm_names[@]}"; do
+        collect_vm_results "${vm}" "${qd_raw}" &
+        collect_pids+=($!)
+      done
+      for pid in "${collect_pids[@]}"; do wait "${pid}" || true; done
+
+      # Aggregate one CSV row for this QD step
+      aggregate_qd_step "${qd_raw}" "${n}" "${qd}" "${rate_iops}" "${sla}" >> "${qd_csv}"
+
+      # Checkpoint this QD step
+      mkdir -p "$(dirname "${RESULTS_DIR}/${RUN_ID}.checkpoint")"
+      echo "${cp_key}" >> "${RESULTS_DIR}/${RUN_ID}.checkpoint"
+    done
+
+    # ─── Phase 3: Cleanup + summary ─────────────────────────────────────────
+    log_info "[qd-sweep] Sweep complete; deleting ${#vm_names[@]} VMs"
+    for vm in "${vm_names[@]}"; do delete_test_vm "${vm}" & done; wait
+
+    generate_qd_summary "${qd_csv}" "${qd_summary}" \
+      "${pool}" "${cfg}" "${n}" "${rate_iops}" "${sla}"
+
+    # Restore fio params
+    FIO_IODEPTH="${saved_iodepth}"; FIO_NUMJOBS="${saved_numjobs}"
+    FIO_TEST_FILE_SIZE="${saved_filesize}"; FIO_RATE_IOPS="${saved_rate_iops}"; FIO_START_EPOCH="${saved_fio_start_epoch}"
+
+    log_info "=== qd-sweep complete: ${qd_csv} ==="
+  }
+
+  qd_sweep_main
+  exit $?
 fi
 
 # ---------------------------------------------------------------------------
