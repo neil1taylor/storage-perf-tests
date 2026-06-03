@@ -242,3 +242,114 @@ wait_for_mcp_updated() {
   log_error "wait_for_mcp_updated timed out after ${timeout}s"
   return 1
 }
+
+# ---------------------------------------------------------------------------
+# apply_tuning_config <name>
+#   Mutates the cluster to match the named TUNE_CONFIGS entry. Idempotent.
+#   Emits a tuning-applied.yaml summary on stdout describing the realised
+#   state after mutation.
+#
+#   Steps:
+#     1. Parse + validate the named config.
+#     2. Patch StorageCluster: resourceProfile, .spec.resources.osd.
+#     3. Apply or delete the cstate MachineConfig as required.
+#     4. Wait for OSDs ready (always).
+#     5. Wait for MCP worker updated (only if cstate flipped).
+#   Returns 0 on success, 1 on any failure (caller's trap should restore).
+# ---------------------------------------------------------------------------
+apply_tuning_config() {
+  local name="$1"
+  local ns="openshift-storage"
+
+  local -A cfg=()
+  local line key value
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    cfg["${key}"]="${value}"
+  done < <(parse_tune_config "${name}") || return 1
+
+  local sc_name
+  sc_name=$(oc get storagecluster -n "${ns}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  [[ -z "${sc_name}" ]] && { log_error "no StorageCluster found"; return 1; }
+
+  # Track whether we touched the MC (so we know whether to wait for MCP).
+  local mc_changed=false
+
+  # --- 1. resourceProfile patch -----------------------------------------------
+  local current_profile
+  current_profile=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o jsonpath='{.spec.resourceProfile}' 2>/dev/null)
+  if [[ -n "${cfg[profile]:-}" && "${cfg[profile]}" != "${current_profile}" ]]; then
+    log_info "Patching StorageCluster.spec.resourceProfile: ${current_profile:-<unset>} → ${cfg[profile]}"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge \
+      -p "{\"spec\":{\"resourceProfile\":\"${cfg[profile]}\"}}" \
+      || { log_error "resourceProfile patch failed"; return 1; }
+  fi
+
+  # --- 2. OSD resource override -----------------------------------------------
+  local osd_patch
+  if [[ -n "${cfg[osd_cpu]:-}" || -n "${cfg[osd_mem]:-}" ]]; then
+    local cpu="${cfg[osd_cpu]:-}"
+    local mem="${cfg[osd_mem]:-}"
+    local req='{'
+    [[ -n "${cpu}" ]] && req+="\"cpu\":\"${cpu}\","
+    [[ -n "${mem}" ]] && req+="\"memory\":\"${mem}\","
+    req="${req%,}"
+    req+='}'
+    osd_patch="{\"spec\":{\"resources\":{\"osd\":{\"requests\":${req},\"limits\":${req}}}}}"
+    log_info "Patching StorageCluster.spec.resources.osd: cpu=${cpu} memory=${mem}"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge -p "${osd_patch}" \
+      || { log_error "osd resources patch failed"; return 1; }
+  else
+    # Restore to inherit if no override requested.
+    local osd_present
+    osd_present=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o jsonpath='{.spec.resources.osd}' 2>/dev/null)
+    if [[ -n "${osd_present}" && "${osd_present}" != "{}" ]]; then
+      log_info "Removing StorageCluster.spec.resources.osd override (back to profile defaults)"
+      oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+        -p='[{"op":"remove","path":"/spec/resources/osd"}]' \
+        || { log_error "osd resources removal failed"; return 1; }
+    fi
+  fi
+
+  # --- 3. cstate MachineConfig ------------------------------------------------
+  local mc_present="false"
+  oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null && mc_present="true"
+
+  if [[ "${cfg[cstate]}" == "off" && "${mc_present}" == "false" ]]; then
+    log_info "Applying cstate-off MachineConfig (${TUNE_MC_NAME})"
+    local mc_tmp
+    mc_tmp=$(mktemp -t tune-mc-XXXXXX.yaml)
+    render_cstate_machineconfig "${mc_tmp}"
+    oc apply -f "${mc_tmp}" || { rm -f "${mc_tmp}"; log_error "MC apply failed"; return 1; }
+    rm -f "${mc_tmp}"
+    mc_changed=true
+  elif [[ "${cfg[cstate]}" == "on" && "${mc_present}" == "true" ]]; then
+    log_info "Deleting cstate-off MachineConfig (${TUNE_MC_NAME})"
+    oc delete machineconfig "${TUNE_MC_NAME}" --ignore-not-found \
+      || { log_error "MC delete failed"; return 1; }
+    mc_changed=true
+  fi
+
+  # --- 4. Wait for convergence ------------------------------------------------
+  wait_for_osd_ready "${TUNE_OSD_TIMEOUT}" || return 1
+  if [[ "${mc_changed}" == "true" ]]; then
+    wait_for_mcp_updated worker "${TUNE_MCP_TIMEOUT}" || return 1
+  fi
+
+  # --- 5. Emit realised state -------------------------------------------------
+  local realised_profile realised_osd
+  realised_profile=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o jsonpath='{.spec.resourceProfile}' 2>/dev/null)
+  realised_osd=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o json | jq -c '.spec.resources.osd // "inherit"')
+  cat <<EOF
+config_name: ${name}
+realised_profile: ${realised_profile:-null}
+realised_osd_resources: ${realised_osd}
+cstate_mc_present: $(oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null && echo true || echo false)
+applied_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+}
