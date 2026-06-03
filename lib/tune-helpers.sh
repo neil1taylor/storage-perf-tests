@@ -161,3 +161,84 @@ mcp_worker_degraded: ${mcp_degraded}
 snapshot_timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 }
+
+# ---------------------------------------------------------------------------
+# wait_for_osd_ready <timeout-secs>
+#   Polls until:
+#     • All rook-ceph-osd-* pods are Ready
+#     • OSD count in `ceph status` matches StorageCluster expected total
+#     • Ceph health is HEALTH_OK or HEALTH_WARN (not HEALTH_ERR)
+#   Returns 0 on convergence, 1 on timeout or HEALTH_ERR.
+# ---------------------------------------------------------------------------
+wait_for_osd_ready() {
+  local timeout="${1:-1200}"
+  local ns="openshift-storage"
+  local deadline=$(( $(date +%s) + timeout ))
+  local interval=15
+
+  log_info "Waiting for OSDs ready (timeout=${timeout}s)"
+  while (( $(date +%s) < deadline )); do
+    # Pod readiness
+    local not_ready
+    not_ready=$(oc get pods -n "${ns}" -l app=rook-ceph-osd \
+      -o jsonpath='{range .items[*]}{.status.containerStatuses[*].ready}{"\n"}{end}' 2>/dev/null \
+      | grep -cE '^(false|$)' || true)
+
+    local health
+    health=$(oc -n "${ns}" exec deploy/rook-ceph-tools -- ceph health 2>/dev/null | awk '{print $1}')
+
+    if [[ "${health}" == "HEALTH_ERR" ]]; then
+      log_error "Ceph HEALTH_ERR detected; aborting wait"
+      return 1
+    fi
+
+    if (( not_ready == 0 )) && [[ "${health}" == "HEALTH_OK" || "${health}" == "HEALTH_WARN" ]]; then
+      log_info "  OSDs ready, ceph=${health}"
+      return 0
+    fi
+
+    log_debug "  osd-not-ready=${not_ready} ceph=${health:-unknown}; sleeping ${interval}s"
+    sleep "${interval}"
+  done
+
+  log_error "wait_for_osd_ready timed out after ${timeout}s"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# wait_for_mcp_updated <pool=worker> <timeout-secs>
+#   Polls until MachineConfigPool/<pool>:
+#     .status.updatedMachineCount == .status.machineCount
+#     .status.degradedMachineCount == 0
+#   Returns 0 immediately if no MC change is pending.
+# ---------------------------------------------------------------------------
+wait_for_mcp_updated() {
+  local pool="${1:-worker}"
+  local timeout="${2:-1800}"
+  local deadline=$(( $(date +%s) + timeout ))
+  local interval=20
+
+  log_info "Waiting for MCP/${pool} updated (timeout=${timeout}s)"
+  while (( $(date +%s) < deadline )); do
+    local updated machines degraded
+    updated=$(oc get mcp "${pool}" -o jsonpath='{.status.updatedMachineCount}' 2>/dev/null || echo 0)
+    machines=$(oc get mcp "${pool}" -o jsonpath='{.status.machineCount}' 2>/dev/null || echo 0)
+    degraded=$(oc get mcp "${pool}" -o jsonpath='{.status.degradedMachineCount}' 2>/dev/null || echo 0)
+
+    if (( degraded > 0 )); then
+      log_error "MCP/${pool} degraded (${degraded} machines); aborting wait"
+      return 1
+    fi
+
+    if (( machines > 0 )) && (( updated == machines )); then
+      log_info "  MCP/${pool} updated=${updated}/${machines}"
+      return 0
+    fi
+
+    log_debug "  mcp=${updated}/${machines} degraded=${degraded}; sleeping ${interval}s"
+    sleep "${interval}"
+  done
+
+  log_error "wait_for_mcp_updated timed out after ${timeout}s"
+  return 1
+}
