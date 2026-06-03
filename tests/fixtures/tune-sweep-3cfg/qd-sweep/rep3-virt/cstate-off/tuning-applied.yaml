@@ -1,0 +1,5 @@
+config_name: cstate-off
+realised_profile: balanced
+realised_osd_resources: "inherit"
+cstate_mc_present: true
+applied_at: 2026-06-01T00:30:00Z

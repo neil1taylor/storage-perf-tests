@@ -1,0 +1,5 @@
+config_name: default
+realised_profile: balanced
+realised_osd_resources: "inherit"
+cstate_mc_present: false
+applied_at: 2026-06-01T00:00:00Z

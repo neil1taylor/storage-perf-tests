@@ -1,0 +1,5 @@
+config_name: big-osd
+realised_profile: balanced
+realised_osd_resources: '{"requests":{"cpu":"8","memory":"64Gi"},"limits":{"cpu":"8","memory":"64Gi"}}'
+cstate_mc_present: false
+applied_at: 2026-06-01T01:00:00Z

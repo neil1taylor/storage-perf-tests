@@ -1,0 +1,19 @@
+{
+  "pool": "rep3-virt",
+  "tune_cfg_name": "big-osd",
+  "vm_count": 200,
+  "rate_iops_per_vm": 500,
+  "qd_list": [1, 2, 4, 8, 16, 32, 64],
+  "latency_sla_ms": 5,
+  "highest_qd_within_sla": 64,
+  "iops_at_highest_qd_within_sla": 100000,
+  "qd_with_peak_iops": 64,
+  "peak_total_iops": 100000,
+  "p99_write_at_peak_qd_ms": 1.92,
+  "p99_read_at_peak_qd_ms": 0.71,
+  "resource_ceiling": false,
+  "ocs_version": "4.18.0",
+  "cluster_description": "test-fixture-3wkr",
+  "run_id": "tune-fixture",
+  "timestamp": "2026-06-01T01:00:00Z"
+}
