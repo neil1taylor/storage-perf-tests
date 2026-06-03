@@ -11,6 +11,31 @@ _pass() { PASS=$((PASS+1)); echo "  PASS  $1"; }
 _fail() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; }
 
 # -----------------------------------------------------------------------------
+test_compare_tuning_cli() {
+  echo "test_compare_tuning_cli:"
+  # Build a fake results tree under a tmpdir pointing at the fixture.
+  local tmp
+  tmp=$(mktemp -d -t tune-compare-XXXXXX)
+  trap "rm -rf '${tmp}'" RETURN
+  mkdir -p "${tmp}/results/tune-fixture"
+  ln -s "$(pwd)/tests/fixtures/tune-sweep-3cfg/qd-sweep" "${tmp}/results/tune-fixture/qd-sweep"
+  mkdir -p "${tmp}/reports"
+
+  if ! OC_SKIP_CLUSTER_CHECK=true \
+       RESULTS_DIR="${tmp}/results" REPORTS_DIR="${tmp}/reports" \
+       ./06-generate-report.sh --compare-tuning \
+       --run tune-fixture --pool rep3-virt 2>&1 \
+       | tee /tmp/tune-cli.log; then
+    _fail "06 --compare-tuning exited non-zero"
+    return
+  fi
+
+  ls "${tmp}/reports"/tune-sweep-rep3-virt-*.html >/dev/null 2>&1 \
+    || { _fail "no tune-sweep HTML produced"; return; }
+  _pass "06 --compare-tuning produces a report"
+}
+
+# -----------------------------------------------------------------------------
 test_tune_configs_parse() {
   echo "test_tune_configs_parse:"
   # Skip live cluster validation: set OC_SKIP_CLUSTER_CHECK so 00-config.sh
@@ -200,6 +225,7 @@ test_tune_sweep_report_html() {
 }
 
 # -----------------------------------------------------------------------------
+test_compare_tuning_cli
 test_tune_configs_parse
 test_parse_tune_config_valid
 test_parse_tune_config_unknown_name
