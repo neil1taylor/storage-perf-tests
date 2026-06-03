@@ -1277,3 +1277,137 @@ PYEOF_SCALE
 
   log_info "Scale-test report generated: ${output_html}"
 }
+
+# ---------------------------------------------------------------------------
+# aggregate_qd_step <raw_dir> <vm_count> <qd> <rate_iops> <sla_ms>
+#   Reads all *-fio.json files in raw_dir and emits one CSV row matching the
+#   qd.csv schema. Skips empty/malformed JSON; if all VMs failed, emits a NaN
+#   row with sla_pass=false.
+# ---------------------------------------------------------------------------
+aggregate_qd_step() {
+  local raw_dir="$1" vm_count="$2" qd="$3" rate="$4" sla="$5"
+
+  python3 - "${raw_dir}" "${vm_count}" "${qd}" "${rate}" "${sla}" <<'PYEOF'
+import json, os, sys, glob
+
+raw_dir, vm_count, qd, rate, sla = sys.argv[1:]
+vm_count, qd, rate = int(vm_count), int(qd), int(rate)
+sla = float(sla)
+
+read_iops_sum = write_iops_sum = bw_mbs_sum = 0.0
+p50_r=[]; p95_r=[]; p99_r=[]
+p50_w=[]; p95_w=[]; p99_w=[]
+ok = 0
+for path in glob.glob(os.path.join(raw_dir, "*-fio.json")):
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        jobs = d.get("jobs") or []
+        if not jobs: continue
+        j = jobs[0]
+        r = j.get("read", {})
+        w = j.get("write", {})
+        read_iops_sum  += r.get("iops", 0.0)
+        write_iops_sum += w.get("iops", 0.0)
+        bw_mbs_sum += (r.get("bw", 0.0) + w.get("bw", 0.0)) / 1024.0
+        rcl = r.get("clat_ns", {}).get("percentile", {})
+        wcl = w.get("clat_ns", {}).get("percentile", {})
+        if rcl:
+            p50_r.append(rcl.get("50.000000", 0) / 1e6)
+            p95_r.append(rcl.get("95.000000", 0) / 1e6)
+            p99_r.append(rcl.get("99.000000", 0) / 1e6)
+        if wcl:
+            p50_w.append(wcl.get("50.000000", 0) / 1e6)
+            p95_w.append(wcl.get("95.000000", 0) / 1e6)
+            p99_w.append(wcl.get("99.000000", 0) / 1e6)
+        ok += 1
+    except Exception:
+        continue
+
+def avg(xs): return sum(xs)/len(xs) if xs else float("nan")
+def mx(xs):  return max(xs) if xs else float("nan")
+
+if ok == 0:
+    print(f"{vm_count},{qd},{rate},nan,nan,nan,nan,nan,nan,nan,nan,nan,false")
+    sys.exit(0)
+
+avg_p50_r = avg(p50_r); avg_p95_r = avg(p95_r); max_p99_r = mx(p99_r)
+avg_p50_w = avg(p50_w); avg_p95_w = avg(p95_w); max_p99_w = mx(p99_w)
+sla_pass = "true" if (max_p99_w == max_p99_w and max_p99_w < sla) else "false"
+fail_pct = (vm_count - ok) / vm_count * 100
+if fail_pct > 10:
+    sla_pass = "false"
+
+print(f"{vm_count},{qd},{rate},"
+      f"{read_iops_sum:.0f},{write_iops_sum:.0f},{bw_mbs_sum:.1f},"
+      f"{avg_p50_r:.3f},{avg_p95_r:.3f},{max_p99_r:.3f},"
+      f"{avg_p50_w:.3f},{avg_p95_w:.3f},{max_p99_w:.3f},"
+      f"{sla_pass}")
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# generate_qd_summary <qd_csv> <out_json> <pool> <cfg> <vm_count> <rate> <sla>
+# ---------------------------------------------------------------------------
+generate_qd_summary() {
+  local csv="$1" out="$2" pool="$3" cfg="$4" vm_count="$5" rate="$6" sla="$7"
+
+  python3 - "${csv}" "${out}" "${pool}" "${cfg}" "${vm_count}" "${rate}" "${sla}" \
+           "${RUN_ID}" "${CLUSTER_DESCRIPTION:-}" <<'PYEOF'
+import csv, json, sys, datetime, subprocess
+
+csv_path, out_path, pool, cfg, vm_count, rate, sla, run_id, cluster_desc = sys.argv[1:]
+vm_count, rate, sla = int(vm_count), int(rate), float(sla)
+
+rows = []
+with open(csv_path) as f:
+    for row in csv.DictReader(f):
+        try:
+            rows.append({
+                "qd": int(row["qd"]),
+                "total_iops": float(row["total_read_iops"]) + float(row["total_write_iops"]),
+                "p99_r": float(row["max_p99_read_ms"]),
+                "p99_w": float(row["max_p99_write_ms"]),
+                "sla_pass": row["sla_pass"] == "true",
+            })
+        except (ValueError, KeyError):
+            continue
+
+if not rows:
+    open(out_path, "w").write(json.dumps({"error": "no qd rows"}))
+    sys.exit(0)
+
+passing = [r for r in rows if r["sla_pass"]]
+hi = max((r["qd"] for r in passing), default=0)
+iops_at_hi = next((r["total_iops"] for r in rows if r["qd"] == hi), 0) if hi else 0
+peak = max(rows, key=lambda r: r["total_iops"])
+
+ocs_version = ""
+try:
+    ocs_version = subprocess.run(
+        ["oc", "get", "csv", "-n", "openshift-storage",
+         "-o", "jsonpath={.items[?(@.spec.displayName==\"OpenShift Data Foundation\")].spec.version}"],
+        capture_output=True, text=True, timeout=10).stdout.strip()
+except Exception:
+    pass
+
+summary = {
+    "pool": pool, "tune_cfg_name": cfg,
+    "vm_count": vm_count, "rate_iops_per_vm": rate,
+    "qd_list": [r["qd"] for r in rows],
+    "latency_sla_ms": sla,
+    "highest_qd_within_sla": hi,
+    "iops_at_highest_qd_within_sla": int(iops_at_hi),
+    "qd_with_peak_iops": peak["qd"],
+    "peak_total_iops": int(peak["total_iops"]),
+    "p99_write_at_peak_qd_ms": peak["p99_w"],
+    "p99_read_at_peak_qd_ms": peak["p99_r"],
+    "resource_ceiling": False,
+    "ocs_version": ocs_version,
+    "cluster_description": cluster_desc,
+    "run_id": run_id,
+    "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+open(out_path, "w").write(json.dumps(summary, indent=2))
+PYEOF
+}

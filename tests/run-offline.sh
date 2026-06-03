@@ -136,11 +136,26 @@ test_render_cstate_machineconfig() {
 }
 
 # -----------------------------------------------------------------------------
+test_qd_sweep_dry_run() {
+  echo "test_qd_sweep_dry_run:"
+  local out
+  out=$(OC_SKIP_CLUSTER_CHECK=true ./04-run-tests.sh --qd-sweep \
+    --pool rep3-virt --fixed-vms 4 --qd-list 1,4 --rate-iops 250 \
+    --latency-sla 5 --dry-run 2>&1) || true
+
+  echo "${out}" | grep -q "qd-sweep" || { _fail "no qd-sweep mention in dry-run"; return; }
+  echo "${out}" | grep -q "fixed-vms:   4" || { _fail "missing fixed-vms in plan"; return; }
+  echo "${out}" | grep -q "qd-list:     1,4" || { _fail "missing qd-list in plan"; return; }
+  _pass "qd-sweep dry-run prints expected plan"
+}
+
+# -----------------------------------------------------------------------------
 test_tune_configs_parse
 test_parse_tune_config_valid
 test_parse_tune_config_unknown_name
 test_parse_tune_config_unknown_key
 test_render_cstate_machineconfig
+test_qd_sweep_dry_run
 
 echo
 echo "===== ${PASS} passed, ${FAIL} failed ====="
