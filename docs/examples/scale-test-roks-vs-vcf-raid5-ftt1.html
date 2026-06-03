@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scale Test Comparison: ROKS vs vSAN</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f4f4; color: #161616; }
+  h1 { color: #161616; margin-bottom: 4px; }
+  h2 { color: #161616; margin-top: 32px; }
+  .meta { color: #525252; font-size: 0.9em; margin-bottom: 20px; }
+  .banner { padding: 14px 18px; margin: 18px 0; border-radius: 4px; font-size: 0.95em; line-height: 1.5; }
+  .banner.ok { background: #defbe6; border-left: 4px solid #198038; }
+  .banner.warn { background: #fff8e1; border-left: 4px solid #f1c21b; }
+  .intro { background: #edf5ff; border-left: 4px solid #0f62fe; padding: 14px 18px; margin: 18px 0; border-radius: 4px; line-height: 1.55; }
+  .intro p { margin: 0 0 10px 0; }
+  .intro p:last-child { margin-bottom: 0; }
+  .howto, .methodology { background: white; padding: 12px 18px; border-radius: 8px; margin: 14px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .howto > summary, .methodology > summary { cursor: pointer; font-size: 1em; padding: 4px 0; }
+  .howto[open] > summary, .methodology[open] > summary { margin-bottom: 10px; }
+  .howto ol, .howto ul, .methodology ol, .methodology ul { margin: 8px 0 8px 22px; padding: 0; line-height: 1.55; }
+  .howto li, .methodology li { margin-bottom: 6px; }
+  .methodology h3 { margin: 14px 0 4px 0; font-size: 1em; color: #161616; }
+  .methodology p { margin: 4px 0 8px 0; line-height: 1.55; }
+  .chart-container { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-top: 8px; }
+  th { background: #161616; color: white; padding: 10px 12px; text-align: right; font-size: 0.85em; }
+  th:first-child, th:nth-child(2) { text-align: left; }
+  td { padding: 8px 12px; text-align: right; border-bottom: 1px solid #e0e0e0; font-size: 0.9em; }
+  td:first-child, td:nth-child(2) { text-align: left; }
+  tr:hover { background: #f4f4f4; }
+  .pass { color: #198038; font-weight: 600; }
+  .fail { color: #da1e28; font-weight: 600; }
+  .muted { color: #8d8d8d; }
+  .src { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75em; font-weight: 600; color: white; }
+  .src.roks { background: #0f62fe; }
+  .src.vsan { background: #525252; }
+  details { background: white; padding: 12px 16px; border-radius: 8px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  details > summary { cursor: pointer; padding: 4px 0; font-size: 0.95em; }
+  details[open] > summary { margin-bottom: 8px; }
+  details table { box-shadow: none; }
+  code { background: #f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+  .footer { color: #525252; font-size: 0.8em; margin-top: 30px; }
+</style>
+</head>
+<body>
+<h1>Scale Test Comparison: ROKS vs vSAN</h1>
+<div class="meta">
+  <b>ROKS cluster:</b> IBM Cloud ROKS (bx2d.metal.96x384 bare metal, NVMe, 3 workers)<br>
+  <b>Generated:</b> 2026-05-28T15:51:13
+</div>
+
+<div class="intro">
+  <p><b>What this report shows.</b> How many virtual machines each storage configuration can host before its writes get too slow.</p>
+  <p>Each VM runs an identical workload — a steady stream of small random reads and writes, with each VM driving <b>500 IOPS</b>. We add more VMs in steps; at each step we measure write latency across every VM and check the <b>p99 write latency</b>: the time taken by the <em>slowest 1 %</em> of writes (a number much more sensitive to real-world slowdowns than an average, because the slow tail is what users actually notice).</p>
+  <p>The <b>capacity ceiling</b> is the largest VM count where that p99 still stays under <b>5 ms</b>. Push past it and some writes start taking many milliseconds longer than they should — which in production shows up as application slowdowns and timeouts.</p>
+  <p><b>3 configurations across 2 platforms:</b> <span class="src roks">ROKS</span>&nbsp;<b>rep3-virt</b>, <span class="src roks">ROKS</span>&nbsp;<b>rep2</b>, <span class="src vsan">vSAN</span>&nbsp;<b>raid5-ftt1</b>.</p>
+</div>
+
+<div class="banner ok">All ramps tested at the same offered load (<b>500 IOPS/VM</b>) and the same SLA threshold (<b>p99 &lt; 5.0ms</b>). Comparison is apples-to-apples.</div>
+
+<details class="howto" open>
+  <summary><b>How to read this report</b></summary>
+  <ol>
+    <li><b>Comparability banner</b> (above) — green when all ramps used the same offered load and SLA threshold (apples-to-apples); amber when any disagree (numbers may not be directly comparable).</li>
+    <li><b>Capacity scorecard</b> — one row per tier. <em>Capacity</em> is the last VM count that stayed under SLA. <em>Breach</em> is the first VM count that didn't. <em>Resource ceiling</em> = yes means the ramp stopped because the platform ran out of room to schedule more VMs, not because storage saturated.</li>
+    <li><b>Ramp overlay chart</b> — each pool has one color. <b>Solid</b> lines are aggregate IOPS (left axis); <b>dashed</b> lines are write-p99 latency (right axis). Dots are <span style="color:#198038;font-weight:600">green</span> when the step passed SLA, <span style="color:#da1e28;font-weight:600">red</span> when it failed. The horizontal red dashed line marks the SLA threshold (drawn only when all ramps share one); thin vertical dashed lines mark each pool's capacity ceiling.</li>
+    <li><b>Per-ramp data</b> — full step-by-step data for each ramp, collapsed by default. Click to expand.</li>
+  </ol>
+</details>
+
+<details class="methodology">
+  <summary><b>Methodology</b></summary>
+  <h3>Workload</h3>
+  <p><code>mixed-70-30-rated.fio</code> — 70 % random read / 30 % random write, 4 KiB blocks, queue depth 32, one fio job per VM, rate-capped to the offered IOPS shown in the scorecard. Each VM runs against a 10 GiB test file on its own dedicated PVC/VMDK.</p>
+  <h3>Ramp strategy</h3>
+  <ul>
+    <li><b>Phase 1 (doubling):</b> 1 &rarr; 2 &rarr; 4 &rarr; 8 &rarr; ... VMs until write-p99 breaches the SLA, or the platform runs out of capacity to schedule more VMs.</li>
+    <li><b>Phase 2 (backfill):</b> linear steps between the last passing and first failing VM counts to pin the capacity ceiling precisely.</li>
+  </ul>
+  <h3>Per-step methodology fixes</h3>
+  <ul>
+    <li><b>Prefill:</b> every VM sequentially writes the full test file before measurement starts, allocating all RBD / VMDK / NFS-share objects up front. Without this, first-write allocation cost (4 MiB object allocation on thin RBD; block allocation on vSAN) gets counted as steady-state IO latency.</li>
+    <li><b>Wall-clock sync barrier:</b> all VMs in a step wait on a shared epoch before launching their measurement window. Eliminates first-mover penalty where an early-starting VM measures alone for tens of seconds during other VMs' boot/prefill.</li>
+  </ul>
+  <p>Both ROKS and vSAN use the same workload, ramp strategy, and methodology fixes. The only intentional difference is the storage backend under test.</p>
+</details>
+
+<h2>Capacity scorecard</h2>
+<table>
+<tr>
+  <th>Source</th><th>Pool</th><th>Rate (IOPS/VM)</th><th>SLA (ms)</th>
+  <th>Capacity (VMs)</th><th>IOPS @ Cap</th><th>p99 @ Cap (ms)</th>
+  <th>Breach (VMs)</th><th>p99 @ Breach (ms)</th><th>Resource ceiling</th>
+</tr>
+<tr><td><span class="src roks">ROKS</span></td><td><b>rep3-virt</b></td><td>500</td><td>5</td><td>16</td><td>15,968</td><td>2.51</td><td>20</td><td>38.01</td><td>no</td></tr><tr><td><span class="src roks">ROKS</span></td><td><b>rep2</b></td><td>500</td><td>5</td><td>20</td><td>19,960</td><td>2.04</td><td>24</td><td>175.11</td><td>no</td></tr><tr><td><span class="src vsan">vSAN</span></td><td><b>raid5-ftt1</b></td><td>500</td><td>5</td><td>21</td><td>20,958</td><td>4.29</td><td>26</td><td>36.96</td><td>no</td></tr>
+</table>
+
+<h2>Ramp overlay</h2>
+<div class="chart-container">
+  <canvas id="rampChart" height="110"></canvas>
+</div>
+
+<h2>Per-ramp data</h2>
+<details><summary><b>rep3-virt</b> &nbsp;—&nbsp; SC: <code>ocs-storagecluster-ceph-rbd-virtualization</code> &nbsp;|&nbsp; Rate: 500 IOPS/VM &nbsp;|&nbsp; SLA: p99 &lt; 5ms &nbsp;|&nbsp; Run: <code>perf-20260528-105803</code> &nbsp;|&nbsp; 2026-05-28T10:44:30Z</summary><table><tr><th>VMs</th><th>Target IOPS</th><th>Read IOPS</th><th>Write IOPS</th><th>BW (MB/s)</th><th>p50 (ms)</th><th>p95 (ms)</th><th>p99 (ms)</th><th>SLA</th></tr><tr><td>1</td><td>500</td><td>499</td><td>499</td><td>3.9</td><td>1.48</td><td>1.99</td><td>3.46</td><td class="pass">PASS</td></tr><tr><td>2</td><td>500</td><td>998</td><td>998</td><td>7.8</td><td>1.21</td><td>1.64</td><td>2.83</td><td class="pass">PASS</td></tr><tr><td>4</td><td>500</td><td>1,996</td><td>1,996</td><td>15.6</td><td>1.08</td><td>1.41</td><td>2.44</td><td class="pass">PASS</td></tr><tr><td>8</td><td>500</td><td>3,992</td><td>3,992</td><td>31.2</td><td>0.96</td><td>1.25</td><td>2.41</td><td class="pass">PASS</td></tr><tr><td>16</td><td>500</td><td>7,984</td><td>7,984</td><td>62.5</td><td>0.91</td><td>1.16</td><td>2.51</td><td class="pass">PASS</td></tr><tr><td>20</td><td>500</td><td>9,980</td><td>9,980</td><td>78.1</td><td>0.93</td><td>2.00</td><td>38.01</td><td class="fail">FAIL</td></tr><tr><td>32</td><td>500</td><td>15,968</td><td>15,968</td><td>125.0</td><td>1.06</td><td>18.88</td><td>149.95</td><td class="fail">FAIL</td></tr></table></details><details><summary><b>rep2</b> &nbsp;—&nbsp; SC: <code>perf-test-sc-rep2</code> &nbsp;|&nbsp; Rate: 500 IOPS/VM &nbsp;|&nbsp; SLA: p99 &lt; 5ms &nbsp;|&nbsp; Run: <code>perf-20260528-120456</code> &nbsp;|&nbsp; 2026-05-28T11:59:10Z</summary><table><tr><th>VMs</th><th>Target IOPS</th><th>Read IOPS</th><th>Write IOPS</th><th>BW (MB/s)</th><th>p50 (ms)</th><th>p95 (ms)</th><th>p99 (ms)</th><th>SLA</th></tr><tr><td>1</td><td>500</td><td>499</td><td>499</td><td>3.9</td><td>1.45</td><td>2.04</td><td>2.51</td><td class="pass">PASS</td></tr><tr><td>2</td><td>500</td><td>998</td><td>998</td><td>7.8</td><td>1.24</td><td>1.73</td><td>2.24</td><td class="pass">PASS</td></tr><tr><td>4</td><td>500</td><td>1,996</td><td>1,996</td><td>15.6</td><td>1.06</td><td>1.45</td><td>2.06</td><td class="pass">PASS</td></tr><tr><td>8</td><td>500</td><td>3,992</td><td>3,992</td><td>31.2</td><td>0.91</td><td>1.25</td><td>1.94</td><td class="pass">PASS</td></tr><tr><td>16</td><td>500</td><td>7,984</td><td>7,984</td><td>62.5</td><td>0.85</td><td>1.12</td><td>1.96</td><td class="pass">PASS</td></tr><tr><td>20</td><td>500</td><td>9,980</td><td>9,980</td><td>78.1</td><td>0.84</td><td>1.09</td><td>2.04</td><td class="pass">PASS</td></tr><tr><td>24</td><td>500</td><td>11,976</td><td>11,976</td><td>93.7</td><td>0.88</td><td>7.66</td><td>175.11</td><td class="fail">FAIL</td></tr><tr><td>32</td><td>500</td><td>15,968</td><td>15,968</td><td>125.0</td><td>0.90</td><td>1.40</td><td>13.70</td><td class="fail">FAIL</td></tr></table></details><details><summary><b>vSAN raid5-ftt1</b> &nbsp;—&nbsp; Rate: 500 IOPS/VM &nbsp;|&nbsp; SLA: p99 &lt; 5ms &nbsp;|&nbsp; Run: <code>odf-parity-20260528-101735</code> &nbsp;|&nbsp; 2026-05-28T10:06:19Z</summary><table><tr><th>VMs</th><th>Target IOPS</th><th>Read IOPS</th><th>Write IOPS</th><th>BW (MB/s)</th><th>p50 (ms)</th><th>p95 (ms)</th><th>p99 (ms)</th><th>SLA</th></tr><tr><td>1</td><td>500</td><td>499</td><td>499</td><td>3.9</td><td>0.96</td><td>1.29</td><td>2.11</td><td class="pass">PASS</td></tr><tr><td>2</td><td>500</td><td>998</td><td>998</td><td>7.8</td><td>0.96</td><td>1.35</td><td>2.31</td><td class="pass">PASS</td></tr><tr><td>4</td><td>500</td><td>1,996</td><td>1,996</td><td>15.6</td><td>0.99</td><td>1.38</td><td>2.47</td><td class="pass">PASS</td></tr><tr><td>8</td><td>500</td><td>3,992</td><td>3,992</td><td>31.2</td><td>1.06</td><td>1.68</td><td>3.00</td><td class="pass">PASS</td></tr><tr><td>16</td><td>500</td><td>7,984</td><td>7,984</td><td>62.5</td><td>1.31</td><td>2.42</td><td>3.56</td><td class="pass">PASS</td></tr><tr><td>21</td><td>500</td><td>10,479</td><td>10,479</td><td>82.0</td><td>1.81</td><td>3.08</td><td>4.29</td><td class="pass">PASS</td></tr><tr><td>26</td><td>500</td><td>12,974</td><td>12,974</td><td>101.6</td><td>1.75</td><td>4.19</td><td>36.96</td><td class="fail">FAIL</td></tr><tr><td>32</td><td>500</td><td>15,968</td><td>15,551</td><td>123.3</td><td>14.75</td><td>50.74</td><td>200.28</td><td class="fail">FAIL</td></tr></table></details>
+
+<div class="footer">
+  vSAN reference: <code>docs/examples/vsan-reference/raid5-ftt1/ramp.csv</code> / <code>docs/examples/vsan-reference/raid5-ftt1/ramp-summary.json</code>
+</div>
+
+<script>
+const ctx = document.getElementById('rampChart').getContext('2d');
+new Chart(ctx, {
+  type: 'line',
+  data: {
+    datasets: [{"label": "rep3-virt \u2014 Aggregate IOPS", "data": [{"x": 1, "y": 998.0}, {"x": 2, "y": 1996.0}, {"x": 4, "y": 3992.0}, {"x": 8, "y": 7984.0}, {"x": 16, "y": 15968.0}, {"x": 20, "y": 19960.0}, {"x": 32, "y": 31936.0}], "borderColor": "#0f62fe", "backgroundColor": "#0f62fe20", "yAxisID": "y-iops", "tension": 0.2, "pointBackgroundColor": ["#198038", "#198038", "#198038", "#198038", "#198038", "#da1e28", "#da1e28"], "pointBorderColor": "#0f62fe", "pointRadius": 5, "pointHoverRadius": 7, "borderWidth": 2.5}, {"label": "rep3-virt \u2014 Write p99 (ms)", "data": [{"x": 1, "y": 3.46}, {"x": 2, "y": 2.83}, {"x": 4, "y": 2.44}, {"x": 8, "y": 2.41}, {"x": 16, "y": 2.51}, {"x": 20, "y": 38.01}, {"x": 32, "y": 149.95}], "borderColor": "#0f62fe", "borderDash": [6, 4], "yAxisID": "y-lat", "tension": 0.2, "pointBackgroundColor": ["#198038", "#198038", "#198038", "#198038", "#198038", "#da1e28", "#da1e28"], "pointBorderColor": "#0f62fe", "pointRadius": 5, "pointHoverRadius": 7, "borderWidth": 2}, {"label": "rep2 \u2014 Aggregate IOPS", "data": [{"x": 1, "y": 998.0}, {"x": 2, "y": 1996.0}, {"x": 4, "y": 3992.0}, {"x": 8, "y": 7984.0}, {"x": 16, "y": 15968.0}, {"x": 20, "y": 19960.0}, {"x": 24, "y": 23952.0}, {"x": 32, "y": 31936.0}], "borderColor": "#007d79", "backgroundColor": "#007d7920", "yAxisID": "y-iops", "tension": 0.2, "pointBackgroundColor": ["#198038", "#198038", "#198038", "#198038", "#198038", "#198038", "#da1e28", "#da1e28"], "pointBorderColor": "#007d79", "pointRadius": 5, "pointHoverRadius": 7, "borderWidth": 2.5}, {"label": "rep2 \u2014 Write p99 (ms)", "data": [{"x": 1, "y": 2.51}, {"x": 2, "y": 2.24}, {"x": 4, "y": 2.06}, {"x": 8, "y": 1.94}, {"x": 16, "y": 1.96}, {"x": 20, "y": 2.04}, {"x": 24, "y": 175.11}, {"x": 32, "y": 13.7}], "borderColor": "#007d79", "borderDash": [6, 4], "yAxisID": "y-lat", "tension": 0.2, "pointBackgroundColor": ["#198038", "#198038", "#198038", "#198038", "#198038", "#198038", "#da1e28", "#da1e28"], "pointBorderColor": "#007d79", "pointRadius": 5, "pointHoverRadius": 7, "borderWidth": 2}, {"label": "vSAN raid5-ftt1 \u2014 Aggregate IOPS", "data": [{"x": 1, "y": 998.0}, {"x": 2, "y": 1996.0}, {"x": 4, "y": 3992.0}, {"x": 8, "y": 7984.0}, {"x": 16, "y": 15968.0}, {"x": 21, "y": 20958.0}, {"x": 26, "y": 25948.0}, {"x": 32, "y": 31519.0}], "borderColor": "#161616", "backgroundColor": "#16161620", "yAxisID": "y-iops", "tension": 0.2, "pointBackgroundColor": ["#198038", "#198038", "#198038", "#198038", "#198038", "#198038", "#da1e28", "#da1e28"], "pointBorderColor": "#161616", "pointRadius": 5, "pointHoverRadius": 7, "borderWidth": 2.5}, {"label": "vSAN raid5-ftt1 \u2014 Write p99 (ms)", "data": [{"x": 1, "y": 2.11}, {"x": 2, "y": 2.31}, {"x": 4, "y": 2.47}, {"x": 8, "y": 3.0}, {"x": 16, "y": 3.56}, {"x": 21, "y": 4.29}, {"x": 26, "y": 36.96}, {"x": 32, "y": 200.28}], "borderColor": "#161616", "borderDash": [6, 4], "yAxisID": "y-lat", "tension": 0.2, "pointBackgroundColor": ["#198038", "#198038", "#198038", "#198038", "#198038", "#198038", "#da1e28", "#da1e28"], "pointBorderColor": "#161616", "pointRadius": 5, "pointHoverRadius": 7, "borderWidth": 2}]
+  },
+  options: {
+    responsive: true,
+    parsing: false,
+    interaction: { mode: 'nearest', intersect: false },
+    scales: {
+      x: { type: 'linear', title: { display: true, text: 'VM Count' }, beginAtZero: true },
+      'y-iops': {
+        type: 'linear', position: 'left',
+        title: { display: true, text: 'Aggregate IOPS' },
+        beginAtZero: true
+      },
+      'y-lat': {
+        type: 'linear', position: 'right',
+        title: { display: true, text: 'p99 Latency (ms)' },
+        beginAtZero: true,
+        grid: { drawOnChartArea: false }
+      }
+    },
+    plugins: {
+      legend: { position: 'top' },
+      annotation: {
+        annotations: {
+          slaLine: { type: 'line', yMin: 5.0, yMax: 5.0, yScaleID: 'y-lat', borderColor: '#da1e28', borderWidth: 2, borderDash: [10, 5], label: { content: 'SLA: 5.0ms', display: true, position: 'start' } },cap_rep3_virt: { type: 'line', xMin: 16, xMax: 16, borderColor: '#0f62fe', borderWidth: 1.5, borderDash: [4, 4], label: { content: 'rep3-virt cap: 16 VMs', display: true, position: 'start', backgroundColor: '#0f62fe', color: 'white', font: { size: 10 } } },
+          cap_rep2: { type: 'line', xMin: 20, xMax: 20, borderColor: '#007d79', borderWidth: 1.5, borderDash: [4, 4], label: { content: 'rep2 cap: 20 VMs', display: true, position: 'start', backgroundColor: '#007d79', color: 'white', font: { size: 10 } } },
+          cap_raid5_ftt1: { type: 'line', xMin: 21, xMax: 21, borderColor: '#161616', borderWidth: 1.5, borderDash: [4, 4], label: { content: 'vSAN raid5-ftt1 cap: 21 VMs', display: true, position: 'start', backgroundColor: '#161616', color: 'white', font: { size: 10 } } }
+        }
+      }
+    }
+  }
+});
+</script>
+</body>
+</html>

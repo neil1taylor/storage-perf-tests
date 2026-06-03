@@ -110,6 +110,26 @@ ROKS still dominates sequential throughput on block storage (4–5× VCF) — th
 
 ROKS wins the mixed comparison on every block-storage tier — the read-heavy 70/30 split plays to ROKS's strong random reads and overall throughput. NFS mid/low tiers are still the wrong product for high-IOPS workloads; the provisioned-IOPS cap is the binding constraint.
 
+## Scale-test / capacity ceiling
+
+The ranking tables above answer "how fast is a single VM on each tier?". The scale-test answers a different question: "how many VMs can each tier carry before the write-p99 SLA breaches?". Both runs use `mixed-70-30-rated.fio` (70/30 read/write, 4k, QD32) with the methodology fix (prefill + wall-clock sync barrier), at **500 IOPS/VM** offered load and a **5 ms write-p99 SLA** — apples-to-apples across platforms.
+
+| Source | Pool | Capacity (VMs) | Aggregate IOPS @ capacity | Write p99 @ capacity | Breach (VMs) | Write p99 @ breach |
+|--------|------|---------------:|--------------------------:|---------------------:|-------------:|-------------------:|
+| ROKS   | `rep3-virt` (3-way RBD) | 16 | 15,968 | 2.51 ms | 20 | 38.01 ms |
+| ROKS   | `rep2` (2-way RBD)      | 20 | 19,960 | 2.04 ms | 24 | 175.11 ms |
+| VCF    | `raid5-ftt1` (vSAN ESA RAID-5/FTT=1) | **21** | **20,958** | 4.29 ms | 26 | 36.96 ms |
+
+**Headline: at a strict 5 ms SLA, vSAN RAID-5/FTT=1 edges both ROKS rep pools on capacity and aggregate IOPS.** The 5 ms threshold is tight enough that ROKS's synchronous-replication latency floor (~2 ms even at idle on rep2) leaves only a narrow band of headroom before the saturation cliff; vSAN's lower per-op latency floor lets it carry one more VM before breaching the same threshold. Both ROKS pools also have catastrophically sharp saturation curves once they breach (rep2 jumps from 2 ms to 175 ms at the next step) compared to vSAN's more gradual roll-off (4 ms → 37 ms).
+
+**Caveats and context:**
+
+- The 500 IOPS/VM rate cap is below ODF's per-VM IOPS ceiling on this hardware. At higher offered loads (uncapped, or at 1000+ IOPS/VM), ODF's aggregate-IOPS advantage from many parallel OSDs would change the picture — see the ranking tables above for uncapped per-VM peaks.
+- The current ROKS rep3-virt and rep2 ceilings are noticeably lower than the prior `resourceProfile=performance` numbers (rep3-virt 32 → 16 VMs; rep2 40 → 20 VMs). Either the cluster has reverted to `resourceProfile=balanced`, or another configuration has drifted — worth verifying before publishing externally.
+- vSAN raid5-ftt1 reaches its capacity at full SLA headroom on every step from 1–21 VMs (~2–4 ms throughout), then cliffs hard at 26 (37 ms) and 32 (200 ms). This is qualitatively similar to ROKS rep2's behaviour, but vSAN's safe band is wider.
+
+Interactive chart and per-ramp step tables: [`scale-test-roks-vs-vcf-raid5-ftt1.html`](scale-test-roks-vs-vcf-raid5-ftt1.html).
+
 ## Write p99 Latency (ms) — lower is better
 
 The previous version of this table reported a single "average p99 latency" in the 50–1,610 ms range for ROKS. Those numbers were artifact-driven. Below are the real per-profile p99 latencies on the rewritten methodology.

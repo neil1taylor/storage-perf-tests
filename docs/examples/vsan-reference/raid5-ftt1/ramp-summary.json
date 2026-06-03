@@ -1,0 +1,14 @@
+{
+  "pool": "raid5-ftt1",
+  "rate_iops": 500,
+  "latency_sla_ms": 5,
+  "capacity_vms": 21,
+  "total_iops_at_capacity": 20958,
+  "p99_at_capacity_ms": 4.29,
+  "breach_vms": 26,
+  "p99_at_breach_ms": 36.96,
+  "resource_ceiling": false,
+  "steps": 8,
+  "run_id": "odf-parity-20260528-101735",
+  "timestamp": "2026-05-28T10:06:19Z"
+}

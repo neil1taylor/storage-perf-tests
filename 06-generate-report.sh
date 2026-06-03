@@ -14,6 +14,10 @@ source "${SCRIPT_DIR}/lib/report-helpers.sh"
 COMPARE_RUN_1=""
 COMPARE_RUN_2=""
 RANK_MODE=false
+COMPARE_SCALE_MODE=false
+COMPARE_SCALE_ROKS=""
+COMPARE_SCALE_VSAN_REF=""
+COMPARE_SCALE_OUTPUT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -25,10 +29,27 @@ while [[ $# -gt 0 ]]; do
     --rank)
       RANK_MODE=true; shift
       ;;
+    --compare-scale)
+      COMPARE_SCALE_MODE=true; shift
+      ;;
+    --roks)
+      COMPARE_SCALE_ROKS="$2"; shift 2
+      ;;
+    --vsan-ref)
+      COMPARE_SCALE_VSAN_REF="$2"; shift 2
+      ;;
+    --output)
+      COMPARE_SCALE_OUTPUT="$2"; shift 2
+      ;;
     --help)
       echo "Usage: $0 [--compare <run-id-1> <run-id-2>] [--rank]"
+      echo "       $0 --compare-scale --roks <pool[,pool...]> --vsan-ref <dir> [--output <html>]"
       echo "  --compare <id1> <id2>   Compare two runs side-by-side with delta analysis"
       echo "  --rank                  Generate StorageClass ranking report"
+      echo "  --compare-scale         Overlay ROKS scale-test ramps with a vSAN reference ramp"
+      echo "    --roks <pools>        Comma-separated pool names; each resolves to results/scale-test/<pool>/"
+      echo "    --vsan-ref <dir>      Directory containing vSAN ramp.csv + ramp-summary.json"
+      echo "    --output <html>       Output HTML path (default: reports/scale-test-comparison-...html)"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -472,6 +493,74 @@ main() {
 
     log_info ""
     log_info "=== Comparison Report Generated ==="
+    log_info "  HTML: ${output}"
+    return 0
+  fi
+
+  # Handle scale-test cross-platform overlay mode
+  if [[ "${COMPARE_SCALE_MODE}" == true ]]; then
+    log_info "=== Generating Scale-Test Comparison Report (ROKS vs vSAN) ==="
+
+    if [[ -z "${COMPARE_SCALE_ROKS}" ]]; then
+      log_error "--compare-scale requires --roks <pool[,pool...]>"
+      exit 1
+    fi
+    if [[ -z "${COMPARE_SCALE_VSAN_REF}" ]]; then
+      log_error "--compare-scale requires --vsan-ref <dir>"
+      exit 1
+    fi
+
+    local vsan_csv="${COMPARE_SCALE_VSAN_REF%/}/ramp.csv"
+    local vsan_summary="${COMPARE_SCALE_VSAN_REF%/}/ramp-summary.json"
+    if [[ ! -f "${vsan_csv}" ]]; then
+      log_error "vSAN reference ramp.csv not found: ${vsan_csv}"
+      exit 1
+    fi
+    if [[ ! -f "${vsan_summary}" ]]; then
+      log_error "vSAN reference ramp-summary.json not found: ${vsan_summary}"
+      exit 1
+    fi
+
+    local ramps_spec=""
+    local pool
+    IFS=',' read -r -a _pools <<< "${COMPARE_SCALE_ROKS}"
+    for pool in "${_pools[@]}"; do
+      pool="${pool// /}"
+      [[ -z "${pool}" ]] && continue
+      local rcsv="${RESULTS_DIR}/scale-test/${pool}/ramp.csv"
+      local rsum="${RESULTS_DIR}/scale-test/${pool}/ramp-summary.json"
+      if [[ ! -f "${rcsv}" ]]; then
+        log_error "ROKS ramp.csv not found for pool '${pool}': ${rcsv}"
+        exit 1
+      fi
+      if [[ ! -f "${rsum}" ]]; then
+        log_error "ROKS ramp-summary.json not found for pool '${pool}': ${rsum}"
+        exit 1
+      fi
+      ramps_spec+="${pool}|${rcsv}|${rsum}"$'\n'
+      log_info "  ROKS pool: ${pool} (${rcsv})"
+    done
+
+    if [[ -z "${ramps_spec}" ]]; then
+      log_error "--roks resolved to zero pools"
+      exit 1
+    fi
+
+    local vsan_pool
+    vsan_pool=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('pool','vsan'))" "${vsan_summary}")
+    log_info "  vSAN pool: ${vsan_pool} (${vsan_csv})"
+
+    local output="${COMPARE_SCALE_OUTPUT}"
+    if [[ -z "${output}" ]]; then
+      local pool_slug="${COMPARE_SCALE_ROKS//,/-}"
+      output="${REPORTS_DIR}/scale-test-comparison-${pool_slug}-vs-vsan-${vsan_pool}.html"
+    fi
+    mkdir -p "$(dirname "${output}")"
+
+    generate_scale_test_comparison_report "${ramps_spec}" "${vsan_csv}" "${vsan_summary}" "${output}"
+
+    log_info ""
+    log_info "=== Scale-Test Comparison Report Generated ==="
     log_info "  HTML: ${output}"
     return 0
   fi

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VCF Storage Scale Test</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333}
+.header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;padding:30px 40px}
+.header h1{font-size:1.8em;font-weight:600}
+.header .meta{font-size:0.9em;opacity:0.8;margin-top:8px}
+.container{max-width:1400px;margin:0 auto;padding:20px}
+.card{background:#fff;border-radius:8px;padding:20px;margin:20px 0;box-shadow:0 2px 4px rgba(0,0,0,0.08)}
+.card h2{font-size:1.2em;color:#16213e;margin-bottom:12px}
+.card h3{font-size:1em;color:#16213e;margin:16px 0 8px 0}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin:10px 0}
+.metric{background:#f8f9fa;border-left:4px solid #16213e;padding:12px 16px;border-radius:4px}
+.metric .label{font-size:0.8em;color:#666;text-transform:uppercase;letter-spacing:0.5px}
+.metric .value{font-size:1.6em;font-weight:600;color:#16213e;margin-top:4px}
+.metric .unit{font-size:0.7em;color:#888;margin-left:4px}
+.metric.pass{border-left-color:#43a047}
+.metric.fail{border-left-color:#e53935}
+table{border-collapse:collapse;width:100%;font-size:0.9em;margin:10px 0}
+th,td{border:1px solid #e0e0e0;padding:8px 12px;text-align:right}
+th{background:#16213e;color:#fff}
+td:first-child,th:first-child{text-align:left}
+tr.pass{background:#e8f5e9}
+tr.fail{background:#ffebee}
+tr.pass:hover{background:#c8e6c9}
+tr.fail:hover{background:#ffcdd2}
+.chart-container{margin:16px 0;height:420px;position:relative}
+.method-list{margin:10px 0 10px 20px;line-height:1.7}
+.method-list code{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em}
+.footer{text-align:center;padding:20px;font-size:0.8em;color:#999;margin-top:20px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.75em;background:#e0e0e0;color:#555;margin-left:4px}
+.badge.warn{background:#fff3cd;color:#856404}
+</style>
+</head>
+<body>
+<div class="header">
+    <h1>VCF Storage Scale Test</h1>
+    <div class="meta">Pool: <strong>raid5-ftt1</strong> &mdash; Generated: 2026-05-28 10:06:31 UTC &mdash; Run: odf-parity-20260528-101735</div>
+</div>
+<div class="container">
+
+<!-- Summary -->
+<div class="card">
+    <h2>Capacity Summary</h2>
+    <div class="summary-grid">
+        <div class="metric pass">
+            <div class="label">Capacity (passing VMs)</div>
+            <div class="value">21<span class="unit">VMs</span></div>
+        </div>
+        <div class="metric pass">
+            <div class="label">Total IOPS @ Capacity</div>
+            <div class="value">20958</div>
+        </div>
+        <div class="metric pass">
+            <div class="label">Write p99 @ Capacity</div>
+            <div class="value">4.29<span class="unit">ms</span></div>
+        </div>
+        <div class="metric fail">
+            <div class="label">SLA Breach At</div>
+            <div class="value">26<span class="unit">VMs</span></div>
+        </div>
+        <div class="metric fail">
+            <div class="label">Write p99 @ Breach</div>
+            <div class="value">36.96<span class="unit">ms</span></div>
+        </div>
+        <div class="metric">
+            <div class="label">Per-VM Rate Cap</div>
+            <div class="value">500<span class="unit">IOPS</span></div>
+        </div>
+        <div class="metric">
+            <div class="label">SLA Threshold</div>
+            <div class="value">&lt; 5<span class="unit">ms p99</span></div>
+        </div>
+        <div class="metric">
+            <div class="label">Steps Executed</div>
+            <div class="value">8</div>
+        </div>
+    </div>
+</div>
+
+<!-- Ramp Chart -->
+<div class="card">
+    <h2>Aggregate IOPS &amp; Write-p99 Latency vs VM Count</h2>
+    <div class="chart-container"><canvas id="rampChart"></canvas></div>
+    <p style="font-size:0.85em;color:#666;margin-top:8px">
+        Dashed red line marks the configured SLA. Where the latency curve crosses it
+        is the capacity ceiling at the configured per-VM offered load.
+    </p>
+</div>
+
+<!-- Per-step table -->
+<div class="card">
+    <h2>Ramp Steps</h2>
+    <table id="stepsTable">
+        <thead><tr>
+            <th>VMs</th>
+            <th>Total Read IOPS</th>
+            <th>Total Write IOPS</th>
+            <th>Total IOPS</th>
+            <th>Total BW (MB/s)</th>
+            <th>Avg p50 (ms)</th>
+            <th>Avg p95 (ms)</th>
+            <th>Max Write p99 (ms)</th>
+            <th>SLA</th>
+        </tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<!-- Methodology -->
+<div class="card">
+    <h2>Methodology</h2>
+    <p>This test progressively increases the VM count against a single storage target
+    to find the density ceiling at a chosen per-VM offered load. Each VM runs an
+    identical, rate-capped fio workload.</p>
+    <h3>Phases</h3>
+    <ul class="method-list">
+        <li><strong>Phase 1 (doubling):</strong> 1 &rarr; 2 &rarr; 4 &rarr; 8 &rarr; ... VMs until write-p99 breaches the SLA.</li>
+        <li><strong>Phase 2 (backfill):</strong> linear steps between the last passing and first failing count to pin the ceiling.</li>
+    </ul>
+    <h3>Per-step methodology fixes</h3>
+    <ul class="method-list">
+        <li><strong>Prefill:</strong> every VM sequentially writes the full test file before measurement, so the first-write allocation cost on thin-provisioned vSAN ESA / NFS VMDKs is not counted.</li>
+        <li><strong>Sync barrier:</strong> all VMs in a step wait on a shared wall-clock epoch before starting fio, eliminating first-mover penalty where a single VM measures alone for tens of seconds.</li>
+    </ul>
+    <h3>Workload</h3>
+    <ul class="method-list">
+        <li><code>mixed-70-30-rated.fio</code> &mdash; 70/30 random read/write, 4k blocks, QD32, numjobs=1, rate-capped to keep offered load uniform across the ramp.</li>
+    </ul>
+</div>
+
+<div class="footer">Generated by 06-generate-report.sh &mdash; VCF Storage Performance Tests</div>
+
+<script>
+const DATA = {"steps":[{"vm_count":1,"rate_iops":500,"total_read_iops":499,"total_write_iops":499,"total_bw_mbs":3.91,"avg_p50_ms":0.96,"avg_p95_ms":1.29,"max_p99_ms":2.11,"sla_pass":true},{"vm_count":2,"rate_iops":500,"total_read_iops":998,"total_write_iops":998,"total_bw_mbs":7.81,"avg_p50_ms":0.96,"avg_p95_ms":1.35,"max_p99_ms":2.31,"sla_pass":true},{"vm_count":4,"rate_iops":500,"total_read_iops":1996,"total_write_iops":1996,"total_bw_mbs":15.62,"avg_p50_ms":0.99,"avg_p95_ms":1.38,"max_p99_ms":2.47,"sla_pass":true},{"vm_count":8,"rate_iops":500,"total_read_iops":3992,"total_write_iops":3992,"total_bw_mbs":31.24,"avg_p50_ms":1.06,"avg_p95_ms":1.68,"max_p99_ms":3.0,"sla_pass":true},{"vm_count":16,"rate_iops":500,"total_read_iops":7984,"total_write_iops":7984,"total_bw_mbs":62.48,"avg_p50_ms":1.31,"avg_p95_ms":2.42,"max_p99_ms":3.56,"sla_pass":true},{"vm_count":32,"rate_iops":500,"total_read_iops":15968,"total_write_iops":15551,"total_bw_mbs":123.35,"avg_p50_ms":14.75,"avg_p95_ms":50.74,"max_p99_ms":200.28,"sla_pass":false},{"vm_count":21,"rate_iops":500,"total_read_iops":10479,"total_write_iops":10479,"total_bw_mbs":82.01,"avg_p50_ms":1.81,"avg_p95_ms":3.08,"max_p99_ms":4.29,"sla_pass":true},{"vm_count":26,"rate_iops":500,"total_read_iops":12974,"total_write_iops":12974,"total_bw_mbs":101.56,"avg_p50_ms":1.75,"avg_p95_ms":4.19,"max_p99_ms":36.96,"sla_pass":false}],"summary":{"pool":"raid5-ftt1","rate_iops":500,"latency_sla_ms":5,"capacity_vms":21,"total_iops_at_capacity":20958,"p99_at_capacity_ms":4.29,"breach_vms":26,"p99_at_breach_ms":36.96,"resource_ceiling":false,"steps":8,"run_id":"odf-parity-20260528-101735","timestamp":"2026-05-28T10:06:19Z"}};
+(function() {
+    const steps = DATA.steps;
+    const summary = DATA.summary;
+    const sla = summary.latency_sla_ms;
+
+    // Populate table — use textContent per cell rather than innerHTML so
+    // any future non-numeric field can't smuggle markup into the page.
+    const tbody = document.querySelector('#stepsTable tbody');
+    const addCell = (tr, value, opts) => {
+        const td = document.createElement('td');
+        if (opts && opts.strong) {
+            const b = document.createElement('strong');
+            b.textContent = String(value);
+            td.appendChild(b);
+        } else {
+            td.textContent = String(value);
+        }
+        tr.appendChild(td);
+    };
+    steps.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.className = s.sla_pass ? 'pass' : 'fail';
+        const total_iops = (s.total_read_iops || 0) + (s.total_write_iops || 0);
+        addCell(tr, s.vm_count);
+        addCell(tr, s.total_read_iops);
+        addCell(tr, s.total_write_iops);
+        addCell(tr, total_iops, { strong: true });
+        addCell(tr, s.total_bw_mbs);
+        addCell(tr, s.avg_p50_ms);
+        addCell(tr, s.avg_p95_ms);
+        addCell(tr, s.max_p99_ms);
+        addCell(tr, s.sla_pass ? '✓ pass' : '✗ fail');
+        tbody.appendChild(tr);
+    });
+
+    // Chart
+    const labels = steps.map(s => s.vm_count);
+    const iopsData = steps.map(s => (s.total_read_iops || 0) + (s.total_write_iops || 0));
+    const p99Data = steps.map(s => s.max_p99_ms);
+    const slaData = labels.map(() => sla);
+
+    new Chart(document.getElementById('rampChart'), {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Total IOPS',
+                    data: iopsData,
+                    borderColor: '#1976d2',
+                    backgroundColor: 'rgba(25,118,210,0.1)',
+                    yAxisID: 'y',
+                    tension: 0.2,
+                    fill: true,
+                },
+                {
+                    label: 'Write p99 (ms)',
+                    data: p99Data,
+                    borderColor: '#e53935',
+                    backgroundColor: 'rgba(229,57,53,0.1)',
+                    yAxisID: 'y1',
+                    tension: 0.2,
+                },
+                {
+                    label: `SLA (${sla} ms)`,
+                    data: slaData,
+                    borderColor: '#e53935',
+                    borderDash: [6, 4],
+                    borderWidth: 1.5,
+                    pointRadius: 0,
+                    yAxisID: 'y1',
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            stacked: false,
+            plugins: { legend: { position: 'top' } },
+            scales: {
+                x: { title: { display: true, text: 'VMs in step' } },
+                y: {
+                    type: 'linear', position: 'left',
+                    title: { display: true, text: 'Total IOPS' },
+                    beginAtZero: true,
+                },
+                y1: {
+                    type: 'linear', position: 'right',
+                    title: { display: true, text: 'Write p99 (ms)' },
+                    grid: { drawOnChartArea: false },
+                    beginAtZero: true,
+                }
+            }
+        }
+    });
+})();
+</script>
+</body>
+</html>

@@ -33,3 +33,7 @@ __pycache__/
 .env
 virtctl
 virtctl-*
+
+
+# NRT
+nrt.md

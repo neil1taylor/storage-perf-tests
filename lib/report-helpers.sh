@@ -1277,3 +1277,415 @@ PYEOF_SCALE
 
   log_info "Scale-test report generated: ${output_html}"
 }
+
+# ---------------------------------------------------------------------------
+# generate_scale_test_comparison_report
+#   Overlay N scale-test ramps (one or more ROKS pools + one vSAN pool) on a
+#   single dual-axis Chart.js chart. Emits a capacity scorecard, a parameter-
+#   comparability banner, and per-ramp step tables.
+#
+#   ramps_spec  newline-separated "label|ramp_csv|ramp_summary" lines (ROKS)
+#   vsan_csv    path to vSAN ramp.csv (from sister project)
+#   vsan_summary path to vSAN ramp-summary.json
+#   output_html path to write the HTML report
+#
+#   Tolerates summary JSON missing 'storage_class' / 'cluster_description'
+#   (sister-project summaries do not include them).
+# ---------------------------------------------------------------------------
+generate_scale_test_comparison_report() {
+  local ramps_spec="$1"
+  local vsan_csv="$2"
+  local vsan_summary="$3"
+  local output_html="$4"
+
+  log_info "Generating scale-test comparison report: ${output_html}"
+
+  (RAMPS_SPEC="${ramps_spec}" \
+   VSAN_CSV="${vsan_csv}" VSAN_SUMMARY="${vsan_summary}" \
+   CLUSTER_DESC="${CLUSTER_DESCRIPTION:-}" \
+   python3 << 'PYEOF_SCALE_COMPARE'
+import csv, json, os, datetime
+
+ramps_spec = os.environ['RAMPS_SPEC'].strip()
+vsan_csv = os.environ['VSAN_CSV']
+vsan_summary_path = os.environ['VSAN_SUMMARY']
+cluster_desc = os.environ.get('CLUSTER_DESC', '')
+
+def load_ramp(label, csv_path, summary_path, source):
+    with open(summary_path, 'r') as f:
+        summary = json.load(f)
+    rows = []
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+    rows.sort(key=lambda r: int(r['vm_count']))
+    return {
+        'label': label,
+        'source': source,
+        'pool': summary.get('pool', label),
+        'storage_class': summary.get('storage_class', ''),
+        'cluster_description': summary.get('cluster_description', ''),
+        'rate_iops': int(summary.get('rate_iops', 0) or 0),
+        'latency_sla_ms': float(summary.get('latency_sla_ms', 0) or 0),
+        'capacity_vms': int(summary.get('capacity_vms', 0) or 0),
+        'total_iops_at_capacity': int(summary.get('total_iops_at_capacity', 0) or 0),
+        'p99_at_capacity_ms': float(summary.get('p99_at_capacity_ms', 0) or 0),
+        'breach_vms': int(summary.get('breach_vms', 0) or 0),
+        'p99_at_breach_ms': float(summary.get('p99_at_breach_ms', 0) or 0),
+        'resource_ceiling': bool(summary.get('resource_ceiling', False)),
+        'run_id': summary.get('run_id', ''),
+        'timestamp': summary.get('timestamp', ''),
+        'rows': rows,
+    }
+
+ramps = []
+for line in ramps_spec.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    parts = line.split('|', 2)
+    if len(parts) != 3:
+        continue
+    label, csv_path, summary_path = parts
+    ramps.append(load_ramp(label, csv_path, summary_path, 'ROKS'))
+
+vsan_summary_obj = json.load(open(vsan_summary_path))
+vsan_label = 'vSAN ' + vsan_summary_obj.get('pool', 'vsan-pool')
+ramps.append(load_ramp(vsan_label, vsan_csv, vsan_summary_path, 'vSAN'))
+
+# Comparability check
+rates = sorted({r['rate_iops'] for r in ramps})
+slas = sorted({r['latency_sla_ms'] for r in ramps})
+rates_differ = len(rates) > 1
+slas_differ = len(slas) > 1
+params_mismatch = rates_differ or slas_differ
+
+# Per-pool single-hue palette: IOPS solid, p99 dashed, same color so a pool reads as one family.
+roks_palette = [
+    '#0f62fe',  # blue
+    '#007d79',  # teal
+    '#6929c4',  # purple
+    '#1192e8',  # cyan
+]
+vsan_color = '#161616'  # near-black, clearly distinct from ROKS hues
+
+# Build Chart.js datasets (one IOPS + one p99 per ramp)
+datasets = []
+roks_idx = 0
+ramp_colors = {}  # pool -> hex (used later by capacity annotations and per-ramp summary)
+for r in ramps:
+    if r['source'] == 'vSAN':
+        color = vsan_color
+    else:
+        color = roks_palette[roks_idx % len(roks_palette)]
+        roks_idx += 1
+    ramp_colors[r['pool']] = color
+    iops_points = [{'x': int(row['vm_count']),
+                    'y': float(row['total_read_iops']) + float(row['total_write_iops'])}
+                   for row in r['rows']]
+    p99_points = [{'x': int(row['vm_count']),
+                   'y': float(row['max_p99_ms'])}
+                  for row in r['rows']]
+    point_colors = ['#198038' if row['sla_pass'] == 'true' else '#da1e28' for row in r['rows']]
+    datasets.append({
+        'label': f"{r['label']} — Aggregate IOPS",
+        'data': iops_points,
+        'borderColor': color,
+        'backgroundColor': color + '20',
+        'yAxisID': 'y-iops',
+        'tension': 0.2,
+        'pointBackgroundColor': point_colors,
+        'pointBorderColor': color,
+        'pointRadius': 5,
+        'pointHoverRadius': 7,
+        'borderWidth': 2.5,
+    })
+    datasets.append({
+        'label': f"{r['label']} — Write p99 (ms)",
+        'data': p99_points,
+        'borderColor': color,
+        'borderDash': [6, 4],
+        'yAxisID': 'y-lat',
+        'tension': 0.2,
+        'pointBackgroundColor': point_colors,
+        'pointBorderColor': color,
+        'pointRadius': 5,
+        'pointHoverRadius': 7,
+        'borderWidth': 2,
+    })
+
+# Shared SLA annotation only when all SLAs agree
+sla_annotation = ''
+if not slas_differ and slas:
+    sla = slas[0]
+    sla_annotation = (
+        "slaLine: { type: 'line', yMin: %s, yMax: %s, yScaleID: 'y-lat', "
+        "borderColor: '#da1e28', borderWidth: 2, borderDash: [10, 5], "
+        "label: { content: 'SLA: %sms', display: true, position: 'start' } },"
+    ) % (sla, sla, sla)
+
+# Capacity verticals: one per ramp (drawn only when capacity > 0)
+cap_annotations = []
+for r in ramps:
+    c = ramp_colors[r['pool']]
+    if r['capacity_vms'] > 0:
+        cap_annotations.append(
+            "cap_%s: { type: 'line', xMin: %s, xMax: %s, "
+            "borderColor: '%s', borderWidth: 1.5, borderDash: [4, 4], "
+            "label: { content: '%s cap: %s VMs', display: true, position: 'start', "
+            "backgroundColor: '%s', color: 'white', font: { size: 10 } } }" % (
+                r['pool'].replace('-', '_'),
+                r['capacity_vms'], r['capacity_vms'], c,
+                r['label'].replace("'", "\\'"), r['capacity_vms'], c,
+            )
+        )
+
+annotations_block = sla_annotation + ',\n          '.join(cap_annotations)
+
+# Comparability banner
+if params_mismatch:
+    banner_class = 'warn'
+    banner_lines = []
+    if rates_differ:
+        banner_lines.append(f"Rate caps differ across ramps: {', '.join(f'{r} IOPS/VM' for r in rates)}.")
+    if slas_differ:
+        banner_lines.append(f"SLA thresholds differ across ramps: {', '.join(f'{s} ms' for s in slas)}.")
+    banner_lines.append(
+        "Direct comparison of capacity and aggregate IOPS should account for the difference in offered load and breach threshold."
+    )
+    banner_html = '<br>'.join(f'<b>{line}</b>' if i == 0 else line for i, line in enumerate(banner_lines))
+else:
+    banner_class = 'ok'
+    banner_html = (
+        f"All ramps tested at the same offered load (<b>{rates[0]} IOPS/VM</b>) "
+        f"and the same SLA threshold (<b>p99 &lt; {slas[0]}ms</b>). "
+        "Comparison is apples-to-apples."
+    )
+
+# Scorecard row HTML
+def fmt_int(n):
+    return f"{int(n):,}"
+
+scorecard_rows = []
+for r in ramps:
+    res_ceil = 'yes' if r['resource_ceiling'] else 'no'
+    cap_cell = fmt_int(r['capacity_vms']) if r['capacity_vms'] else '<span class="muted">none</span>'
+    cap_iops_cell = fmt_int(r['total_iops_at_capacity']) if r['capacity_vms'] else '<span class="muted">—</span>'
+    cap_p99_cell = f"{r['p99_at_capacity_ms']:.2f}" if r['capacity_vms'] else '<span class="muted">—</span>'
+    breach_cell = fmt_int(r['breach_vms']) if r['breach_vms'] else '<span class="muted">none</span>'
+    breach_p99_cell = f"{r['p99_at_breach_ms']:.2f}" if r['breach_vms'] else '<span class="muted">—</span>'
+    src_badge = '<span class="src vsan">vSAN</span>' if r['source'] == 'vSAN' else '<span class="src roks">ROKS</span>'
+    scorecard_rows.append(
+        f"<tr><td>{src_badge}</td><td><b>{r['pool']}</b></td>"
+        f"<td>{r['rate_iops']}</td><td>{r['latency_sla_ms']:g}</td>"
+        f"<td>{cap_cell}</td><td>{cap_iops_cell}</td><td>{cap_p99_cell}</td>"
+        f"<td>{breach_cell}</td><td>{breach_p99_cell}</td><td>{res_ceil}</td></tr>"
+    )
+
+# Per-ramp step tables
+step_tables = []
+for r in ramps:
+    body_rows = []
+    for row in r['rows']:
+        sla_class = 'pass' if row['sla_pass'] == 'true' else 'fail'
+        sla_label = 'PASS' if row['sla_pass'] == 'true' else 'FAIL'
+        body_rows.append(
+            f"<tr><td>{row['vm_count']}</td><td>{row['rate_iops']}</td>"
+            f"<td>{float(row['total_read_iops']):,.0f}</td>"
+            f"<td>{float(row['total_write_iops']):,.0f}</td>"
+            f"<td>{float(row['total_bw_mbs']):,.1f}</td>"
+            f"<td>{row['avg_p50_ms']}</td><td>{row['avg_p95_ms']}</td>"
+            f"<td>{row['max_p99_ms']}</td>"
+            f"<td class=\"{sla_class}\">{sla_label}</td></tr>"
+        )
+    meta_bits = []
+    if r['storage_class']:
+        meta_bits.append(f"SC: <code>{r['storage_class']}</code>")
+    meta_bits.append(f"Rate: {r['rate_iops']} IOPS/VM")
+    meta_bits.append(f"SLA: p99 &lt; {r['latency_sla_ms']:g}ms")
+    if r['run_id']:
+        meta_bits.append(f"Run: <code>{r['run_id']}</code>")
+    if r['timestamp']:
+        meta_bits.append(r['timestamp'])
+    step_tables.append(
+        f"<details><summary><b>{r['label']}</b> &nbsp;—&nbsp; {' &nbsp;|&nbsp; '.join(meta_bits)}</summary>"
+        f"<table><tr><th>VMs</th><th>Target IOPS</th><th>Read IOPS</th><th>Write IOPS</th>"
+        f"<th>BW (MB/s)</th><th>p50 (ms)</th><th>p95 (ms)</th><th>p99 (ms)</th><th>SLA</th></tr>"
+        + ''.join(body_rows) + "</table></details>"
+    )
+
+generated_at = datetime.datetime.now().isoformat(timespec='seconds')
+
+# Intro descriptors
+n_ramps = len(ramps)
+n_sources = len({r['source'] for r in ramps})
+pool_list_html = ', '.join(
+    f"<span class=\"src {r['source'].lower()}\">{r['source']}</span>&nbsp;<b>{r['pool']}</b>"
+    for r in ramps
+)
+if rates_differ:
+    rate_phrase = 'its ramp\'s configured rate (see the scorecard)'
+else:
+    rate_phrase = f'<b>{rates[0]} IOPS</b>'
+if slas_differ:
+    sla_phrase = 'each configuration\'s own threshold (see the scorecard)'
+else:
+    sla_phrase = f'<b>{slas[0]:g} ms</b>'
+
+html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scale Test Comparison: ROKS vs vSAN</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f4f4f4; color: #161616; }}
+  h1 {{ color: #161616; margin-bottom: 4px; }}
+  h2 {{ color: #161616; margin-top: 32px; }}
+  .meta {{ color: #525252; font-size: 0.9em; margin-bottom: 20px; }}
+  .banner {{ padding: 14px 18px; margin: 18px 0; border-radius: 4px; font-size: 0.95em; line-height: 1.5; }}
+  .banner.ok {{ background: #defbe6; border-left: 4px solid #198038; }}
+  .banner.warn {{ background: #fff8e1; border-left: 4px solid #f1c21b; }}
+  .intro {{ background: #edf5ff; border-left: 4px solid #0f62fe; padding: 14px 18px; margin: 18px 0; border-radius: 4px; line-height: 1.55; }}
+  .intro p {{ margin: 0 0 10px 0; }}
+  .intro p:last-child {{ margin-bottom: 0; }}
+  .howto, .methodology {{ background: white; padding: 12px 18px; border-radius: 8px; margin: 14px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  .howto > summary, .methodology > summary {{ cursor: pointer; font-size: 1em; padding: 4px 0; }}
+  .howto[open] > summary, .methodology[open] > summary {{ margin-bottom: 10px; }}
+  .howto ol, .howto ul, .methodology ol, .methodology ul {{ margin: 8px 0 8px 22px; padding: 0; line-height: 1.55; }}
+  .howto li, .methodology li {{ margin-bottom: 6px; }}
+  .methodology h3 {{ margin: 14px 0 4px 0; font-size: 1em; color: #161616; }}
+  .methodology p {{ margin: 4px 0 8px 0; line-height: 1.55; }}
+  .chart-container {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+  table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-top: 8px; }}
+  th {{ background: #161616; color: white; padding: 10px 12px; text-align: right; font-size: 0.85em; }}
+  th:first-child, th:nth-child(2) {{ text-align: left; }}
+  td {{ padding: 8px 12px; text-align: right; border-bottom: 1px solid #e0e0e0; font-size: 0.9em; }}
+  td:first-child, td:nth-child(2) {{ text-align: left; }}
+  tr:hover {{ background: #f4f4f4; }}
+  .pass {{ color: #198038; font-weight: 600; }}
+  .fail {{ color: #da1e28; font-weight: 600; }}
+  .muted {{ color: #8d8d8d; }}
+  .src {{ display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75em; font-weight: 600; color: white; }}
+  .src.roks {{ background: #0f62fe; }}
+  .src.vsan {{ background: #525252; }}
+  details {{ background: white; padding: 12px 16px; border-radius: 8px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  details > summary {{ cursor: pointer; padding: 4px 0; font-size: 0.95em; }}
+  details[open] > summary {{ margin-bottom: 8px; }}
+  details table {{ box-shadow: none; }}
+  code {{ background: #f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }}
+  .footer {{ color: #525252; font-size: 0.8em; margin-top: 30px; }}
+</style>
+</head>
+<body>
+<h1>Scale Test Comparison: ROKS vs vSAN</h1>
+<div class="meta">
+  <b>ROKS cluster:</b> {cluster_desc or 'n/a'}<br>
+  <b>Generated:</b> {generated_at}
+</div>
+
+<div class="intro">
+  <p><b>What this report shows.</b> How many virtual machines each storage configuration can host before its writes get too slow.</p>
+  <p>Each VM runs an identical workload — a steady stream of small random reads and writes, with each VM driving {rate_phrase}. We add more VMs in steps; at each step we measure write latency across every VM and check the <b>p99 write latency</b>: the time taken by the <em>slowest 1 %</em> of writes (a number much more sensitive to real-world slowdowns than an average, because the slow tail is what users actually notice).</p>
+  <p>The <b>capacity ceiling</b> is the largest VM count where that p99 still stays under {sla_phrase}. Push past it and some writes start taking many milliseconds longer than they should — which in production shows up as application slowdowns and timeouts.</p>
+  <p><b>{n_ramps} configurations across {n_sources} platforms:</b> {pool_list_html}.</p>
+</div>
+
+<div class="banner {banner_class}">{banner_html}</div>
+
+<details class="howto" open>
+  <summary><b>How to read this report</b></summary>
+  <ol>
+    <li><b>Comparability banner</b> (above) — green when all ramps used the same offered load and SLA threshold (apples-to-apples); amber when any disagree (numbers may not be directly comparable).</li>
+    <li><b>Capacity scorecard</b> — one row per tier. <em>Capacity</em> is the last VM count that stayed under SLA. <em>Breach</em> is the first VM count that didn't. <em>Resource ceiling</em> = yes means the ramp stopped because the platform ran out of room to schedule more VMs, not because storage saturated.</li>
+    <li><b>Ramp overlay chart</b> — each pool has one color. <b>Solid</b> lines are aggregate IOPS (left axis); <b>dashed</b> lines are write-p99 latency (right axis). Dots are <span style="color:#198038;font-weight:600">green</span> when the step passed SLA, <span style="color:#da1e28;font-weight:600">red</span> when it failed. The horizontal red dashed line marks the SLA threshold (drawn only when all ramps share one); thin vertical dashed lines mark each pool's capacity ceiling.</li>
+    <li><b>Per-ramp data</b> — full step-by-step data for each ramp, collapsed by default. Click to expand.</li>
+  </ol>
+</details>
+
+<details class="methodology">
+  <summary><b>Methodology</b></summary>
+  <h3>Workload</h3>
+  <p><code>mixed-70-30-rated.fio</code> — 70 % random read / 30 % random write, 4 KiB blocks, queue depth 32, one fio job per VM, rate-capped to the offered IOPS shown in the scorecard. Each VM runs against a 10 GiB test file on its own dedicated PVC/VMDK.</p>
+  <h3>Ramp strategy</h3>
+  <ul>
+    <li><b>Phase 1 (doubling):</b> 1 &rarr; 2 &rarr; 4 &rarr; 8 &rarr; ... VMs until write-p99 breaches the SLA, or the platform runs out of capacity to schedule more VMs.</li>
+    <li><b>Phase 2 (backfill):</b> linear steps between the last passing and first failing VM counts to pin the capacity ceiling precisely.</li>
+  </ul>
+  <h3>Per-step methodology fixes</h3>
+  <ul>
+    <li><b>Prefill:</b> every VM sequentially writes the full test file before measurement starts, allocating all RBD / VMDK / NFS-share objects up front. Without this, first-write allocation cost (4 MiB object allocation on thin RBD; block allocation on vSAN) gets counted as steady-state IO latency.</li>
+    <li><b>Wall-clock sync barrier:</b> all VMs in a step wait on a shared epoch before launching their measurement window. Eliminates first-mover penalty where an early-starting VM measures alone for tens of seconds during other VMs' boot/prefill.</li>
+  </ul>
+  <p>Both ROKS and vSAN use the same workload, ramp strategy, and methodology fixes. The only intentional difference is the storage backend under test.</p>
+</details>
+
+<h2>Capacity scorecard</h2>
+<table>
+<tr>
+  <th>Source</th><th>Pool</th><th>Rate (IOPS/VM)</th><th>SLA (ms)</th>
+  <th>Capacity (VMs)</th><th>IOPS @ Cap</th><th>p99 @ Cap (ms)</th>
+  <th>Breach (VMs)</th><th>p99 @ Breach (ms)</th><th>Resource ceiling</th>
+</tr>
+{''.join(scorecard_rows)}
+</table>
+
+<h2>Ramp overlay</h2>
+<div class="chart-container">
+  <canvas id="rampChart" height="110"></canvas>
+</div>
+
+<h2>Per-ramp data</h2>
+{''.join(step_tables)}
+
+<div class="footer">
+  vSAN reference: <code>{vsan_csv}</code> / <code>{vsan_summary_path}</code>
+</div>
+
+<script>
+const ctx = document.getElementById('rampChart').getContext('2d');
+new Chart(ctx, {{
+  type: 'line',
+  data: {{
+    datasets: {json.dumps(datasets)}
+  }},
+  options: {{
+    responsive: true,
+    parsing: false,
+    interaction: {{ mode: 'nearest', intersect: false }},
+    scales: {{
+      x: {{ type: 'linear', title: {{ display: true, text: 'VM Count' }}, beginAtZero: true }},
+      'y-iops': {{
+        type: 'linear', position: 'left',
+        title: {{ display: true, text: 'Aggregate IOPS' }},
+        beginAtZero: true
+      }},
+      'y-lat': {{
+        type: 'linear', position: 'right',
+        title: {{ display: true, text: 'p99 Latency (ms)' }},
+        beginAtZero: true,
+        grid: {{ drawOnChartArea: false }}
+      }}
+    }},
+    plugins: {{
+      legend: {{ position: 'top' }},
+      annotation: {{
+        annotations: {{
+          {annotations_block}
+        }}
+      }}
+    }}
+  }}
+}});
+</script>
+</body>
+</html>"""
+
+print(html)
+PYEOF_SCALE_COMPARE
+  ) > "${output_html}"
+
+  log_info "Scale-test comparison report generated: ${output_html}"
+}
