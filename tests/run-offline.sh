@@ -150,12 +150,37 @@ test_qd_sweep_dry_run() {
 }
 
 # -----------------------------------------------------------------------------
+test_tune_sweep_dry_run() {
+  echo "test_tune_sweep_dry_run:"
+  local out
+  out=$(OC_SKIP_CLUSTER_CHECK=true ./09-run-tune-sweep.sh --pool rep3-virt \
+    --configs default,big-osd --fixed-vms 4 --qd-list 1,32 --dry-run 2>&1) || true
+  echo "${out}" | grep -q "Tune-sweep plan" || { _fail "missing plan banner"; return; }
+  echo "${out}" | grep -q "2 configs" || { _fail "missing config count"; return; }
+  echo "${out}" | grep -q "default" || { _fail "missing default cfg"; return; }
+  echo "${out}" | grep -q "big-osd" || { _fail "missing big-osd cfg"; return; }
+  _pass "tune-sweep --dry-run prints plan"
+}
+
+test_tune_sweep_unknown_config() {
+  echo "test_tune_sweep_unknown_config:"
+  if OC_SKIP_CLUSTER_CHECK=true ./09-run-tune-sweep.sh --pool rep3-virt \
+    --configs nonexistent --dry-run >/dev/null 2>&1; then
+    _fail "expected non-zero exit on unknown config"
+    return
+  fi
+  _pass "unknown config rejected at preflight"
+}
+
+# -----------------------------------------------------------------------------
 test_tune_configs_parse
 test_parse_tune_config_valid
 test_parse_tune_config_unknown_name
 test_parse_tune_config_unknown_key
 test_render_cstate_machineconfig
 test_qd_sweep_dry_run
+test_tune_sweep_dry_run
+test_tune_sweep_unknown_config
 
 echo
 echo "===== ${PASS} passed, ${FAIL} failed ====="
