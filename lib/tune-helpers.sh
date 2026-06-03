@@ -97,3 +97,67 @@ spec:
       version: 3.2.0
 EOF
 }
+
+# ---------------------------------------------------------------------------
+# snapshot_cluster_state <out_yaml>
+#   Captures the cluster's current tunable state to a YAML file. Fields:
+#     resourceProfile:     <balanced|performance|null>
+#     osd_resources:       <inherit|inline-yaml>
+#     cstate_mc_present:   <true|false>
+#     mcp_worker_updated:  <int>
+#     mcp_worker_machines: <int>
+#     mcp_worker_degraded: <int>
+#   The snapshot YAML is consumed only by restore_cluster_state; it is not a
+#   Kubernetes manifest.
+# ---------------------------------------------------------------------------
+snapshot_cluster_state() {
+  local out="$1"
+  [[ -z "${out}" ]] && { echo "ERROR: snapshot_cluster_state requires output path" >&2; return 1; }
+
+  local ns="openshift-storage"
+  local sc_name
+  sc_name=$(oc get storagecluster -n "${ns}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [[ -z "${sc_name}" ]]; then
+    echo "ERROR: no StorageCluster found in namespace ${ns}" >&2
+    return 1
+  fi
+
+  local resource_profile
+  resource_profile=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o jsonpath='{.spec.resourceProfile}' 2>/dev/null)
+  [[ -z "${resource_profile}" ]] && resource_profile="null"
+
+  local osd_yaml
+  osd_yaml=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o jsonpath='{.spec.resources.osd}' 2>/dev/null)
+  if [[ -z "${osd_yaml}" || "${osd_yaml}" == "{}" ]]; then
+    osd_yaml="inherit"
+  else
+    # Re-emit as JSON one-liner for stable round-trip
+    osd_yaml=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o json | jq -c '.spec.resources.osd // "inherit"')
+  fi
+
+  local mc_present="false"
+  if oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null; then
+    mc_present="true"
+  fi
+
+  local mcp_updated mcp_machines mcp_degraded
+  mcp_updated=$(oc get mcp worker -o jsonpath='{.status.updatedMachineCount}' 2>/dev/null || echo 0)
+  mcp_machines=$(oc get mcp worker -o jsonpath='{.status.machineCount}' 2>/dev/null || echo 0)
+  mcp_degraded=$(oc get mcp worker -o jsonpath='{.status.degradedMachineCount}' 2>/dev/null || echo 0)
+
+  cat > "${out}" <<EOF
+# Tune-sweep cluster snapshot (consumed by restore_cluster_state)
+storagecluster_name: ${sc_name}
+storagecluster_namespace: ${ns}
+resourceProfile: ${resource_profile}
+osd_resources: ${osd_yaml}
+cstate_mc_present: ${mc_present}
+mcp_worker_updated: ${mcp_updated}
+mcp_worker_machines: ${mcp_machines}
+mcp_worker_degraded: ${mcp_degraded}
+snapshot_timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+}
