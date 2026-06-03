@@ -353,3 +353,86 @@ cstate_mc_present: $(oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null && echo 
 applied_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 }
+
+# ---------------------------------------------------------------------------
+# restore_cluster_state <snapshot_yaml>
+#   Returns the cluster to the state captured in the snapshot:
+#     • resourceProfile (patch or remove)
+#     • .spec.resources.osd (apply or remove)
+#     • cstate MachineConfig (apply or delete)
+#   Always called from the orchestrator's EXIT trap. Best-effort: logs but
+#   does not abort on sub-step failure; reports overall via return code:
+#     0 — clean
+#     1 — snapshot unreadable
+#     2 — best-effort, one or more sub-steps had warnings
+# ---------------------------------------------------------------------------
+restore_cluster_state() {
+  local snap="$1"
+  if [[ ! -s "${snap}" ]]; then
+    log_error "restore_cluster_state: snapshot not found or empty: ${snap}"
+    return 1
+  fi
+
+  local sc_name ns resource_profile osd_resources cstate_mc_present
+  sc_name=$(awk -F': ' '/^storagecluster_name:/{print $2}' "${snap}")
+  ns=$(awk -F': ' '/^storagecluster_namespace:/{print $2}' "${snap}")
+  resource_profile=$(awk -F': ' '/^resourceProfile:/{print $2}' "${snap}")
+  osd_resources=$(awk -F': ' '/^osd_resources:/{print $2}' "${snap}")
+  cstate_mc_present=$(awk -F': ' '/^cstate_mc_present:/{print $2}' "${snap}")
+
+  local warnings=0
+
+  # --- resourceProfile -------------------------------------------------------
+  if [[ "${resource_profile}" == "null" || -z "${resource_profile}" ]]; then
+    log_info "Restoring: removing .spec.resourceProfile"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+      -p='[{"op":"remove","path":"/spec/resourceProfile"}]' &>/dev/null || true
+  else
+    log_info "Restoring: .spec.resourceProfile = ${resource_profile}"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge \
+      -p "{\"spec\":{\"resourceProfile\":\"${resource_profile}\"}}" \
+      || { log_warn "restore: resourceProfile patch warning"; warnings=$((warnings+1)); }
+  fi
+
+  # --- OSD resources ---------------------------------------------------------
+  if [[ "${osd_resources}" == "inherit" ]]; then
+    log_info "Restoring: removing .spec.resources.osd override"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+      -p='[{"op":"remove","path":"/spec/resources/osd"}]' &>/dev/null || true
+  else
+    log_info "Restoring: .spec.resources.osd = ${osd_resources}"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge \
+      -p "{\"spec\":{\"resources\":{\"osd\":${osd_resources}}}}" \
+      || { log_warn "restore: osd resources patch warning"; warnings=$((warnings+1)); }
+  fi
+
+  # --- cstate MachineConfig --------------------------------------------------
+  local mc_now="false"
+  oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null && mc_now="true"
+
+  if [[ "${cstate_mc_present}" == "true" && "${mc_now}" == "false" ]]; then
+    log_info "Restoring: re-applying cstate-off MachineConfig"
+    local mc_tmp
+    mc_tmp=$(mktemp -t tune-mc-XXXXXX.yaml)
+    render_cstate_machineconfig "${mc_tmp}"
+    oc apply -f "${mc_tmp}" || { log_warn "restore: MC apply warning"; warnings=$((warnings+1)); }
+    rm -f "${mc_tmp}"
+  elif [[ "${cstate_mc_present}" == "false" && "${mc_now}" == "true" ]]; then
+    log_info "Restoring: deleting cstate-off MachineConfig"
+    oc delete machineconfig "${TUNE_MC_NAME}" --ignore-not-found \
+      || { log_warn "restore: MC delete warning"; warnings=$((warnings+1)); }
+  fi
+
+  # --- Wait for convergence (best-effort, reduced timeout) -------------------
+  wait_for_osd_ready 600 || { log_warn "restore: OSDs not converged within 10 min"; warnings=$((warnings+1)); }
+  wait_for_mcp_updated worker 1200 || { log_warn "restore: MCP not converged within 20 min"; warnings=$((warnings+1)); }
+
+  if (( warnings > 0 )); then
+    log_warn "restore_cluster_state completed with ${warnings} warning(s). Verify manually:"
+    log_warn "  oc get storagecluster -n ${ns} -o yaml"
+    log_warn "  oc get machineconfig | grep ${TUNE_MC_NAME}"
+    return 2
+  fi
+  log_info "Cluster restored to pre-sweep state."
+  return 0
+}
