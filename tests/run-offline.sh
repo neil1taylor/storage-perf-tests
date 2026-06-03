@@ -73,10 +73,59 @@ test_parse_tune_config_unknown_key() {
 }
 
 # -----------------------------------------------------------------------------
+test_render_cstate_machineconfig() {
+  echo "test_render_cstate_machineconfig:"
+  OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
+  source lib/tune-helpers.sh
+
+  local tmp
+  tmp=$(mktemp -t tune-mc-XXXXXX.yaml)
+
+  if ! render_cstate_machineconfig "${tmp}"; then
+    _fail "render_cstate_machineconfig returned non-zero"
+    rm -f "${tmp}"
+    return
+  fi
+
+  # File must exist and be non-empty
+  if [[ ! -s "${tmp}" ]]; then
+    _fail "rendered MC is empty"
+    rm -f "${tmp}"
+    return
+  fi
+
+  # Must contain expected kernel args and target role=worker
+  if ! grep -q "intel_idle.max_cstate=0" "${tmp}"; then
+    _fail "missing intel_idle kernel arg"
+    rm -f "${tmp}"
+    return
+  fi
+  if ! grep -q "processor.max_cstate=0" "${tmp}"; then
+    _fail "missing processor kernel arg"
+    rm -f "${tmp}"
+    return
+  fi
+  if ! grep -q "machineconfiguration.openshift.io/role: worker" "${tmp}"; then
+    _fail "missing role=worker label"
+    rm -f "${tmp}"
+    return
+  fi
+  if ! grep -q "name: ${TUNE_MC_NAME}" "${tmp}"; then
+    _fail "missing MC name ${TUNE_MC_NAME}"
+    rm -f "${tmp}"
+    return
+  fi
+
+  rm -f "${tmp}"
+  _pass "rendered MC has expected kernel args and labels"
+}
+
+# -----------------------------------------------------------------------------
 test_tune_configs_parse
 test_parse_tune_config_valid
 test_parse_tune_config_unknown_name
 test_parse_tune_config_unknown_key
+test_render_cstate_machineconfig
 
 echo
 echo "===== ${PASS} passed, ${FAIL} failed ====="

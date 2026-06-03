@@ -69,3 +69,31 @@ parse_tune_config() {
 
   printf '%s\n' "${out[@]}"
 }
+
+# ---------------------------------------------------------------------------
+# render_cstate_machineconfig <out_yaml>
+#   Emits a MachineConfig that disables processor C-states 1+ via kernel args
+#   on all worker nodes. Idempotent: same content every call. The named
+#   resource is ${TUNE_MC_NAME} so apply/delete on the same file is safe.
+# ---------------------------------------------------------------------------
+render_cstate_machineconfig() {
+  local out="$1"
+  [[ -z "${out}" ]] && { echo "ERROR: render_cstate_machineconfig requires output path" >&2; return 1; }
+
+  cat > "${out}" <<EOF
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: ${TUNE_MC_NAME}
+  labels:
+    machineconfiguration.openshift.io/role: worker
+    app: vm-perf-test
+spec:
+  kernelArguments:
+    - intel_idle.max_cstate=0
+    - processor.max_cstate=0
+  config:
+    ignition:
+      version: 3.2.0
+EOF
+}
