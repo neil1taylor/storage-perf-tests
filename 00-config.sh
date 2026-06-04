@@ -295,18 +295,25 @@ export EXTRA_STORAGE_CLASSES
 # =============================================================================
 # Each value is a space-separated list of key=value pairs. Recognised keys:
 #   profile   → balanced | performance (StorageCluster.spec.resourceProfile)
-#   osd_cpu   → integer CPU cores (overrides profile defaults)
-#   osd_mem   → memory quantity, e.g. 64Gi
+#   osd_cpu   → integer CPU cores; sets storageDeviceSets[i].resources requests+limits
+#   osd_mem   → memory quantity, e.g. 32Gi; same field as osd_cpu
 #   cstate    → on | off
 #                 on  = remove the tune-sweep MachineConfig if present
 #                 off = apply MC with kernelArgs
 #                       intel_idle.max_cstate=0 processor.max_cstate=0
+#
+# big-osd sizing: targets ~66% of host (matches the IBM ROVS slide's spirit).
+# Per-host arithmetic for the current cluster (bx2d.metal.96x384, 96c/384Gi,
+# 8 OSDs/host): 8 vCPU × 8 = 64 vCPU (~67% CPU) and 32 GiB × 8 = 256 GiB
+# (~67% memory). On hosts with ~1 TiB of memory, scale up osd_mem to 64Gi
+# to match the slide's absolute values; do not exceed (mem × osds_per_host)
+# = host_memory × 0.67.
 # =============================================================================
 declare -A TUNE_CONFIGS
 TUNE_CONFIGS[default]='profile=balanced cstate=on'
 TUNE_CONFIGS[cstate-off]='profile=balanced cstate=off'
-TUNE_CONFIGS[big-osd]='osd_cpu=8 osd_mem=64Gi cstate=on'
-TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=8 osd_mem=64Gi cstate=off'
+TUNE_CONFIGS[big-osd]='osd_cpu=8 osd_mem=32Gi cstate=on'
+TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=8 osd_mem=32Gi cstate=off'
 export TUNE_CONFIGS
 
 TUNE_DEFAULT_CONFIGS="${TUNE_DEFAULT_CONFIGS:-default,cstate-off,big-osd,big-osd+cstate-off}"
