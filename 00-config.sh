@@ -302,18 +302,22 @@ export EXTRA_STORAGE_CLASSES
 #                 off = apply MC with kernelArgs
 #                       intel_idle.max_cstate=0 processor.max_cstate=0
 #
-# big-osd sizing: targets ~66% of host (matches the IBM ROVS slide's spirit).
-# Per-host arithmetic for the current cluster (bx2d.metal.96x384, 96c/384Gi,
-# 8 OSDs/host): 8 vCPU × 8 = 64 vCPU (~67% CPU) and 32 GiB × 8 = 256 GiB
-# (~67% memory). On hosts with ~1 TiB of memory, scale up osd_mem to 64Gi
-# to match the slide's absolute values; do not exceed (mem × osds_per_host)
-# = host_memory × 0.67.
+# big-osd sizing: must leave room for the test workload's VMs to schedule
+# alongside the OSDs. Per-host arithmetic for bx2d.metal.96x384 (96c/384Gi,
+# 8 OSDs/host, ~83% allocatable after kubelet/system reservations ≈ 80c/320Gi):
+#   • 8 OSDs × 6 vCPU = 48c per host (~60% of allocatable)
+#   • Leaves ~32c per host (~96c cluster-wide) for the workload and system pods
+#   • 32 test VMs × 2 vCPU = 64c cluster-wide, fits comfortably
+# At 8 vCPU per OSD (the slide's value), 8 × 8 = 64c/host would consume all
+# allocatable CPU and starve workload VMs (observed 2026-06-04: VM #32 hung
+# with "Insufficient cpu" for 15 min). On hosts with ≥128 cores or more workers,
+# scale osd_cpu/osd_mem back up to match the slide's 8c/32-64Gi target.
 # =============================================================================
 declare -A TUNE_CONFIGS
 TUNE_CONFIGS[default]='profile=balanced cstate=on'
 TUNE_CONFIGS[cstate-off]='profile=balanced cstate=off'
-TUNE_CONFIGS[big-osd]='osd_cpu=8 osd_mem=32Gi cstate=on'
-TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=8 osd_mem=32Gi cstate=off'
+TUNE_CONFIGS[big-osd]='osd_cpu=6 osd_mem=24Gi cstate=on'
+TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=6 osd_mem=24Gi cstate=off'
 export TUNE_CONFIGS
 
 TUNE_DEFAULT_CONFIGS="${TUNE_DEFAULT_CONFIGS:-default,cstate-off,big-osd,big-osd+cstate-off}"
