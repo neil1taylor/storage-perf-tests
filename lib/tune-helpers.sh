@@ -218,6 +218,15 @@ wait_for_mcp_updated() {
   local deadline=$(( $(date +%s) + timeout ))
   local interval=20
 
+  # On IBM Cloud ROKS managed clusters, no MachineConfigPool exists — workers
+  # are managed by the IBM Cloud worker-pool system, not MCO. If the MCP is
+  # absent, there is nothing to wait for; any MachineConfig with role=worker
+  # has no pool to roll out through. Treat as success.
+  if ! oc get mcp "${pool}" &>/dev/null; then
+    log_info "MCP/${pool} not present — managed-worker cluster (ROKS); skipping wait"
+    return 0
+  fi
+
   log_info "Waiting for MCP/${pool} updated (timeout=${timeout}s)"
   while (( $(date +%s) < deadline )); do
     local updated machines degraded
