@@ -215,6 +215,10 @@ wait_for_osd_ready() {
       fi
     fi
 
+    # HEALTH_WARN is accepted only AFTER pod-spec convergence. During a rolling
+    # restart we expect transient warns (recovering PGs, peering). If health
+    # stayed WARN even after convergence, that's signalled in the success log
+    # and the operator can investigate. HEALTH_ERR is treated as fatal above.
     if (( not_ready == 0 )) \
        && [[ "${health}" == "HEALTH_OK" || "${health}" == "HEALTH_WARN" ]] \
        && [[ "${converged}" == "true" ]]; then
@@ -317,7 +321,7 @@ apply_tuning_config() {
   if [[ -n "${cfg[profile]:-}" && "${cfg[profile]}" != "${current_profile}" ]]; then
     log_info "Patching StorageCluster.spec.resourceProfile: ${current_profile:-<unset>} → ${cfg[profile]}"
     oc patch storagecluster "${sc_name}" -n "${ns}" --type merge \
-      -p "{\"spec\":{\"resourceProfile\":\"${cfg[profile]}\"}}" \
+      -p "{\"spec\":{\"resourceProfile\":\"${cfg[profile]}\"}}" >/dev/null \
       || { log_error "resourceProfile patch failed"; return 1; }
   fi
 
@@ -343,7 +347,7 @@ apply_tuning_config() {
     [[ -z "${current_res}" || "${current_res}" == "{}" ]] && op="add"
     log_info "Patching storageDeviceSets[0].resources: cpu=${cpu} memory=${mem} (op=${op})"
     oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
-      -p="[{\"op\":\"${op}\",\"path\":\"/spec/storageDeviceSets/0/resources\",\"value\":{\"requests\":${req},\"limits\":${req}}}]" \
+      -p="[{\"op\":\"${op}\",\"path\":\"/spec/storageDeviceSets/0/resources\",\"value\":{\"requests\":${req},\"limits\":${req}}}]" >/dev/null \
       || { log_error "storageDeviceSets resources patch failed"; return 1; }
   else
     # Remove override if present (revert to profile defaults).
@@ -353,7 +357,7 @@ apply_tuning_config() {
     if [[ -n "${ds_present}" && "${ds_present}" != "{}" ]]; then
       log_info "Removing storageDeviceSets[0].resources override (back to profile defaults)"
       oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
-        -p='[{"op":"remove","path":"/spec/storageDeviceSets/0/resources"}]' \
+        -p='[{"op":"remove","path":"/spec/storageDeviceSets/0/resources"}]' >/dev/null \
         || { log_error "storageDeviceSets resources removal failed"; return 1; }
     fi
   fi
@@ -367,12 +371,12 @@ apply_tuning_config() {
     local mc_tmp
     mc_tmp=$(mktemp -t tune-mc-XXXXXX.yaml)
     render_cstate_machineconfig "${mc_tmp}"
-    oc apply -f "${mc_tmp}" || { rm -f "${mc_tmp}"; log_error "MC apply failed"; return 1; }
+    oc apply -f "${mc_tmp}" >/dev/null || { rm -f "${mc_tmp}"; log_error "MC apply failed"; return 1; }
     rm -f "${mc_tmp}"
     mc_changed=true
   elif [[ "${cfg[cstate]}" == "on" && "${mc_present}" == "true" ]]; then
     log_info "Deleting cstate-off MachineConfig (${TUNE_MC_NAME})"
-    oc delete machineconfig "${TUNE_MC_NAME}" --ignore-not-found \
+    oc delete machineconfig "${TUNE_MC_NAME}" --ignore-not-found >/dev/null \
       || { log_error "MC delete failed"; return 1; }
     mc_changed=true
   fi
