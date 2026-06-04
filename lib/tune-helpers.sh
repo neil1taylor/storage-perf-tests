@@ -127,15 +127,17 @@ snapshot_cluster_state() {
     -o jsonpath='{.spec.resourceProfile}' 2>/dev/null)
   [[ -z "${resource_profile}" ]] && resource_profile="null"
 
-  local osd_yaml
-  osd_yaml=$(oc get storagecluster "${sc_name}" -n "${ns}" \
-    -o jsonpath='{.spec.resources.osd}' 2>/dev/null)
-  if [[ -z "${osd_yaml}" || "${osd_yaml}" == "{}" ]]; then
-    osd_yaml="inherit"
+  # Capture per-deviceSet OSD resource override (the correct ODF 4.20+ path).
+  # spec.resources.osd is no longer captured — it's silently dropped by the
+  # OCS-operator reconciler regardless of value (see project_ocs_resources_osd_ignored).
+  local ds_resources
+  ds_resources=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o jsonpath='{.spec.storageDeviceSets[0].resources}' 2>/dev/null)
+  if [[ -z "${ds_resources}" || "${ds_resources}" == "{}" ]]; then
+    ds_resources="inherit"
   else
-    # Re-emit as JSON one-liner for stable round-trip
-    osd_yaml=$(oc get storagecluster "${sc_name}" -n "${ns}" \
-      -o json | jq -c '.spec.resources.osd // "inherit"')
+    ds_resources=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o json | jq -c '.spec.storageDeviceSets[0].resources // "inherit"')
   fi
 
   local mc_present="false"
@@ -153,7 +155,7 @@ snapshot_cluster_state() {
 storagecluster_name: ${sc_name}
 storagecluster_namespace: ${ns}
 resourceProfile: ${resource_profile}
-osd_resources: ${osd_yaml}
+deviceset_resources: ${ds_resources}
 cstate_mc_present: ${mc_present}
 mcp_worker_updated: ${mcp_updated}
 mcp_worker_machines: ${mcp_machines}
@@ -176,7 +178,7 @@ wait_for_osd_ready() {
   local deadline=$(( $(date +%s) + timeout ))
   local interval=15
 
-  log_info "Waiting for OSDs ready (timeout=${timeout}s)"
+  log_info "Waiting for OSDs ready + pod-spec converged (timeout=${timeout}s)"
   while (( $(date +%s) < deadline )); do
     # Pod readiness
     local not_ready
@@ -192,12 +194,35 @@ wait_for_osd_ready() {
       return 1
     fi
 
-    if (( not_ready == 0 )) && [[ "${health}" == "HEALTH_OK" || "${health}" == "HEALTH_WARN" ]]; then
-      log_info "  OSDs ready, ceph=${health}"
+    # Pod-spec convergence: every OSD pod must match the target cpu/memory
+    # that the operator computed and wrote to CephCluster. Rook keeps OSDs
+    # Ready during rolling restart, so readiness alone is not enough — we
+    # must wait until the new resource spec is actually rolled out.
+    local target_cpu target_mem
+    target_cpu=$(oc get cephcluster -n "${ns}" \
+      -o jsonpath='{.items[0].spec.storage.storageClassDeviceSets[0].resources.requests.cpu}' 2>/dev/null)
+    target_mem=$(oc get cephcluster -n "${ns}" \
+      -o jsonpath='{.items[0].spec.storage.storageClassDeviceSets[0].resources.requests.memory}' 2>/dev/null)
+
+    local converged=true
+    if [[ -n "${target_cpu}" && -n "${target_mem}" ]]; then
+      local non_converged
+      non_converged=$(oc get pods -n "${ns}" -l app=rook-ceph-osd \
+        -o jsonpath='{range .items[*]}{.spec.containers[0].resources.requests.cpu}{"/"}{.spec.containers[0].resources.requests.memory}{"\n"}{end}' 2>/dev/null \
+        | grep -vcE "^${target_cpu}/${target_mem}$" || true)
+      if (( non_converged > 0 )); then
+        converged=false
+      fi
+    fi
+
+    if (( not_ready == 0 )) \
+       && [[ "${health}" == "HEALTH_OK" || "${health}" == "HEALTH_WARN" ]] \
+       && [[ "${converged}" == "true" ]]; then
+      log_info "  OSDs ready, ceph=${health}, pods=${target_cpu:-?}/${target_mem:-?}"
       return 0
     fi
 
-    log_debug "  osd-not-ready=${not_ready} ceph=${health:-unknown}; sleeping ${interval}s"
+    log_debug "  osd-not-ready=${not_ready} ceph=${health:-?} converged=${converged} target=${target_cpu:-?}/${target_mem:-?}; sleep ${interval}s"
     sleep "${interval}"
   done
 
@@ -297,7 +322,12 @@ apply_tuning_config() {
   fi
 
   # --- 2. OSD resource override -----------------------------------------------
-  local osd_patch
+  # NOTE: in ODF 4.20+, StorageCluster.spec.resources.osd is intentionally
+  # ignored by the OCS-operator (suppressed in getDaemonResources; comment:
+  # "Resource specification for osd is handled at the deviceSet level"). The
+  # correct override path is StorageCluster.spec.storageDeviceSets[i].resources,
+  # which feeds CephCluster.spec.storage.storageClassDeviceSets[i].resources
+  # and triggers Rook to roll the OSD pods.
   if [[ -n "${cfg[osd_cpu]:-}" || -n "${cfg[osd_mem]:-}" ]]; then
     local cpu="${cfg[osd_cpu]:-}"
     local mem="${cfg[osd_mem]:-}"
@@ -306,20 +336,25 @@ apply_tuning_config() {
     [[ -n "${mem}" ]] && req+="\"memory\":\"${mem}\","
     req="${req%,}"
     req+='}'
-    osd_patch="{\"spec\":{\"resources\":{\"osd\":{\"requests\":${req},\"limits\":${req}}}}}"
-    log_info "Patching StorageCluster.spec.resources.osd: cpu=${cpu} memory=${mem}"
-    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge -p "${osd_patch}" \
-      || { log_error "osd resources patch failed"; return 1; }
+    local current_res op
+    current_res=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o jsonpath='{.spec.storageDeviceSets[0].resources}' 2>/dev/null)
+    op="replace"
+    [[ -z "${current_res}" || "${current_res}" == "{}" ]] && op="add"
+    log_info "Patching storageDeviceSets[0].resources: cpu=${cpu} memory=${mem} (op=${op})"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+      -p="[{\"op\":\"${op}\",\"path\":\"/spec/storageDeviceSets/0/resources\",\"value\":{\"requests\":${req},\"limits\":${req}}}]" \
+      || { log_error "storageDeviceSets resources patch failed"; return 1; }
   else
-    # Restore to inherit if no override requested.
-    local osd_present
-    osd_present=$(oc get storagecluster "${sc_name}" -n "${ns}" \
-      -o jsonpath='{.spec.resources.osd}' 2>/dev/null)
-    if [[ -n "${osd_present}" && "${osd_present}" != "{}" ]]; then
-      log_info "Removing StorageCluster.spec.resources.osd override (back to profile defaults)"
+    # Remove override if present (revert to profile defaults).
+    local ds_present
+    ds_present=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o jsonpath='{.spec.storageDeviceSets[0].resources}' 2>/dev/null)
+    if [[ -n "${ds_present}" && "${ds_present}" != "{}" ]]; then
+      log_info "Removing storageDeviceSets[0].resources override (back to profile defaults)"
       oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
-        -p='[{"op":"remove","path":"/spec/resources/osd"}]' \
-        || { log_error "osd resources removal failed"; return 1; }
+        -p='[{"op":"remove","path":"/spec/storageDeviceSets/0/resources"}]' \
+        || { log_error "storageDeviceSets resources removal failed"; return 1; }
     fi
   fi
 
@@ -349,15 +384,18 @@ apply_tuning_config() {
   fi
 
   # --- 5. Emit realised state -------------------------------------------------
-  local realised_profile realised_osd
+  local realised_profile realised_ds realised_cc_osd
   realised_profile=$(oc get storagecluster "${sc_name}" -n "${ns}" \
     -o jsonpath='{.spec.resourceProfile}' 2>/dev/null)
-  realised_osd=$(oc get storagecluster "${sc_name}" -n "${ns}" \
-    -o json | jq -c '.spec.resources.osd // "inherit"')
+  realised_ds=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o json | jq -c '.spec.storageDeviceSets[0].resources // "inherit"')
+  realised_cc_osd=$(oc get cephcluster -n "${ns}" \
+    -o json | jq -c '.items[0].spec.storage.storageClassDeviceSets[0].resources // {}')
   cat <<EOF
 config_name: ${name}
 realised_profile: ${realised_profile:-null}
-realised_osd_resources: ${realised_osd}
+realised_deviceset_resources: ${realised_ds}
+realised_cephcluster_osd_resources: ${realised_cc_osd}
 cstate_mc_present: $(oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null && echo true || echo false)
 applied_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
@@ -382,11 +420,11 @@ restore_cluster_state() {
     return 1
   fi
 
-  local sc_name ns resource_profile osd_resources cstate_mc_present
+  local sc_name ns resource_profile deviceset_resources cstate_mc_present
   sc_name=$(awk -F': ' '/^storagecluster_name:/{print $2}' "${snap}")
   ns=$(awk -F': ' '/^storagecluster_namespace:/{print $2}' "${snap}")
   resource_profile=$(awk -F': ' '/^resourceProfile:/{print $2}' "${snap}")
-  osd_resources=$(awk -F': ' '/^osd_resources:/{print $2}' "${snap}")
+  deviceset_resources=$(awk -F': ' '/^deviceset_resources:/{print $2}' "${snap}")
   cstate_mc_present=$(awk -F': ' '/^cstate_mc_present:/{print $2}' "${snap}")
 
   local warnings=0
@@ -403,16 +441,28 @@ restore_cluster_state() {
       || { log_warn "restore: resourceProfile patch warning"; warnings=$((warnings+1)); }
   fi
 
-  # --- OSD resources ---------------------------------------------------------
-  if [[ "${osd_resources}" == "inherit" ]]; then
-    log_info "Restoring: removing .spec.resources.osd override"
-    oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
-      -p='[{"op":"remove","path":"/spec/resources/osd"}]' &>/dev/null || true
+  # --- per-deviceSet OSD resources ------------------------------------------
+  # NOTE: targets storageDeviceSets[0] (the canonical ODF 4.20+ override path).
+  # spec.resources.osd is no longer restored — it had no effect on the cluster.
+  if [[ "${deviceset_resources}" == "inherit" ]]; then
+    local ds_now
+    ds_now=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o jsonpath='{.spec.storageDeviceSets[0].resources}' 2>/dev/null)
+    if [[ -n "${ds_now}" && "${ds_now}" != "{}" ]]; then
+      log_info "Restoring: removing .spec.storageDeviceSets[0].resources override"
+      oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+        -p='[{"op":"remove","path":"/spec/storageDeviceSets/0/resources"}]' &>/dev/null || true
+    fi
   else
-    log_info "Restoring: .spec.resources.osd = ${osd_resources}"
-    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge \
-      -p "{\"spec\":{\"resources\":{\"osd\":${osd_resources}}}}" \
-      || { log_warn "restore: osd resources patch warning"; warnings=$((warnings+1)); }
+    log_info "Restoring: .spec.storageDeviceSets[0].resources = ${deviceset_resources}"
+    local current_ds op
+    current_ds=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o jsonpath='{.spec.storageDeviceSets[0].resources}' 2>/dev/null)
+    op="replace"
+    [[ -z "${current_ds}" || "${current_ds}" == "{}" ]] && op="add"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+      -p="[{\"op\":\"${op}\",\"path\":\"/spec/storageDeviceSets/0/resources\",\"value\":${deviceset_resources}}]" \
+      || { log_warn "restore: deviceset resources patch warning"; warnings=$((warnings+1)); }
   fi
 
   # --- cstate MachineConfig --------------------------------------------------
