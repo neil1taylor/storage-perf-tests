@@ -179,6 +179,19 @@ wait_for_osd_ready() {
   local interval=15
 
   log_info "Waiting for OSDs ready + pod-spec converged (timeout=${timeout}s)"
+
+  # CephCluster.spec.storage.storageClassDeviceSets[0].resources is the
+  # post-reconcile target for OSD pod resources. After a StorageCluster patch,
+  # OCS-operator takes ~30s to re-derive this value. Until reconcile catches
+  # up, the field reads the *previous* value — and if Rook hasn't yet rolled
+  # the pods, pods will match the stale CephCluster value and trigger a false
+  # "converged" verdict. To avoid the race we require the CephCluster target
+  # to be stable across `${stable_required}` consecutive polls (≈ 30 s) before
+  # we trust it as the convergence target.
+  local prev_target=""
+  local stable_count=0
+  local stable_required=2
+
   while (( $(date +%s) < deadline )); do
     # Pod readiness
     local not_ready
@@ -194,24 +207,33 @@ wait_for_osd_ready() {
       return 1
     fi
 
-    # Pod-spec convergence: every OSD pod must match the target cpu/memory
-    # that the operator computed and wrote to CephCluster. Rook keeps OSDs
-    # Ready during rolling restart, so readiness alone is not enough — we
-    # must wait until the new resource spec is actually rolled out.
-    local target_cpu target_mem
+    # Read the CephCluster target and track stability across iterations.
+    local target_cpu target_mem cur_target
     target_cpu=$(oc get cephcluster -n "${ns}" \
       -o jsonpath='{.items[0].spec.storage.storageClassDeviceSets[0].resources.requests.cpu}' 2>/dev/null)
     target_mem=$(oc get cephcluster -n "${ns}" \
       -o jsonpath='{.items[0].spec.storage.storageClassDeviceSets[0].resources.requests.memory}' 2>/dev/null)
+    cur_target="${target_cpu}/${target_mem}"
 
-    local converged=true
-    if [[ -n "${target_cpu}" && -n "${target_mem}" ]]; then
+    if [[ "${cur_target}" == "${prev_target}" && -n "${target_cpu}" ]]; then
+      stable_count=$((stable_count + 1))
+    else
+      stable_count=0
+      prev_target="${cur_target}"
+    fi
+
+    # Pod-spec convergence: every OSD pod must match the (stable) target
+    # cpu/memory. Rook keeps OSDs Ready during rolling restart, so readiness
+    # alone is not enough — we must wait until the new resource spec is
+    # actually rolled out AND the target itself is no longer in motion.
+    local converged=false
+    if (( stable_count >= stable_required )) && [[ -n "${target_cpu}" && -n "${target_mem}" ]]; then
       local non_converged
       non_converged=$(oc get pods -n "${ns}" -l app=rook-ceph-osd \
         -o jsonpath='{range .items[*]}{.spec.containers[0].resources.requests.cpu}{"/"}{.spec.containers[0].resources.requests.memory}{"\n"}{end}' 2>/dev/null \
         | grep -vcE "^${target_cpu}/${target_mem}$" || true)
-      if (( non_converged > 0 )); then
-        converged=false
+      if (( non_converged == 0 )); then
+        converged=true
       fi
     fi
 
@@ -226,7 +248,7 @@ wait_for_osd_ready() {
       return 0
     fi
 
-    log_debug "  osd-not-ready=${not_ready} ceph=${health:-?} converged=${converged} target=${target_cpu:-?}/${target_mem:-?}; sleep ${interval}s"
+    log_debug "  osd-not-ready=${not_ready} ceph=${health:-?} converged=${converged} target=${cur_target} stable=${stable_count}/${stable_required}; sleep ${interval}s"
     sleep "${interval}"
   done
 
