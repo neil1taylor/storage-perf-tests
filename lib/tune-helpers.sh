@@ -375,6 +375,45 @@ wait_for_ceph_config_applied() {
 }
 
 # ---------------------------------------------------------------------------
+# clear_ceph_config_osd_overrides
+#   Reads .spec.managedResources.cephCluster.cephConfig.osd and explicitly
+#   runs `ceph config rm osd <key>` for each key, then leaves it to the
+#   caller to patch-remove the spec field. Best-effort: warns on individual
+#   rm failures but always returns 0 — the spec patch that follows is the
+#   authoritative state cleanup.
+#
+#   Background: the OCS-operator writes cephConfig overrides to the Ceph
+#   config database on apply, but does NOT remove DB entries when the spec
+#   field is cleared. Without this helper, cephConfig values persist in the
+#   DB across tune-sweep cycles, contaminating cross-sweep baselines.
+# ---------------------------------------------------------------------------
+clear_ceph_config_osd_overrides() {
+  local ns="openshift-storage"
+  local sc_name
+  sc_name=$(oc get storagecluster -n "${ns}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  [[ -z "${sc_name}" ]] && return 0
+
+  local osd_keys
+  osd_keys=$(oc get storagecluster "${sc_name}" -n "${ns}" -o json 2>/dev/null \
+    | jq -r '.spec.managedResources.cephCluster.cephConfig.osd // {} | keys[]' 2>/dev/null)
+
+  if [[ -z "${osd_keys}" ]]; then
+    return 0
+  fi
+
+  local k
+  while IFS= read -r k; do
+    [[ -z "${k}" ]] && continue
+    log_info "  ceph config rm osd:${k}"
+    oc -n "${ns}" exec deploy/rook-ceph-tools -- \
+      ceph config rm osd "${k}" &>/dev/null \
+      || log_warn "  ceph config rm osd:${k} returned non-zero (continuing)"
+  done <<< "${osd_keys}"
+
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # apply_tuning_config <name>
 #   Mutates the cluster to match the named TUNE_CONFIGS entry. Idempotent.
 #   Emits a tuning-applied.yaml summary on stdout describing the realised
@@ -493,12 +532,16 @@ apply_tuning_config() {
     wait_for_ceph_config_applied "${first_short}" "${cfg[$first_key]}" 120 || return 1
   else
     # No cephconfig_* in this config: if the cluster currently has any
-    # override at .spec.managedResources.cephCluster.cephConfig, remove it
-    # so the cluster returns to OOB cephConfig state.
+    # override at .spec.managedResources.cephCluster.cephConfig, explicitly
+    # rm the osd-section DB entries (the OCS-operator does not do this on
+    # spec field removal), then remove the spec field so the cluster
+    # returns to OOB cephConfig state.
     local cur_cc
     cur_cc=$(oc get storagecluster "${sc_name}" -n "${ns}" \
       -o jsonpath='{.spec.managedResources.cephCluster.cephConfig}' 2>/dev/null)
     if [[ -n "${cur_cc}" && "${cur_cc}" != "{}" ]]; then
+      log_info "Clearing ceph DB osd overrides before removing spec field"
+      clear_ceph_config_osd_overrides
       log_info "Removing .spec.managedResources.cephCluster.cephConfig (back to OOB)"
       oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
         -p='[{"op":"remove","path":"/spec/managedResources/cephCluster/cephConfig"}]' >/dev/null \
@@ -621,6 +664,8 @@ restore_cluster_state() {
     cc_now=$(oc get storagecluster "${sc_name}" -n "${ns}" \
       -o jsonpath='{.spec.managedResources.cephCluster.cephConfig}' 2>/dev/null)
     if [[ -n "${cc_now}" && "${cc_now}" != "{}" ]]; then
+      log_info "Restoring: clearing ceph DB osd overrides"
+      clear_ceph_config_osd_overrides
       log_info "Restoring: removing .spec.managedResources.cephCluster.cephConfig"
       oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
         -p='[{"op":"remove","path":"/spec/managedResources/cephCluster/cephConfig"}]' &>/dev/null \
