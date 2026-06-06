@@ -43,10 +43,21 @@ parse_tune_config() {
     for v in "${TUNE_VALID_KEYS[@]}"; do
       [[ "${v}" == "${key}" ]] && valid=1 && break
     done
+    # cephconfig_* keys map directly to ceph config-database keys under the
+    # 'osd' section. They are validated by prefix, not membership, so the
+    # tune system does not need to know every valid ceph key. They must have
+    # a non-empty value (an empty cephconfig_foo= is almost certainly a typo).
+    if [[ "${key}" == cephconfig_* ]]; then
+      if [[ -z "${value}" ]]; then
+        echo "ERROR: cephconfig_* key '${key}' requires a non-empty value in TUNE_CONFIGS[${name}]" >&2
+        return 1
+      fi
+      valid=1
+    fi
     if (( valid == 0 )); then
       {
         echo "ERROR: unknown key '${key}' in TUNE_CONFIGS[${name}]"
-        echo "Valid keys: ${TUNE_VALID_KEYS[*]}"
+        echo "Valid keys: ${TUNE_VALID_KEYS[*]} (or cephconfig_* prefix)"
       } >&2
       return 1
     fi
