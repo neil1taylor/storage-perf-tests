@@ -115,7 +115,8 @@ EOF
 # snapshot_cluster_state <out_yaml>
 #   Captures the cluster's current tunable state to a YAML file. Fields:
 #     resourceProfile:     <balanced|performance|null>
-#     osd_resources:       <inherit|inline-yaml>
+#     deviceset_resources: <inherit|compact-json>
+#     cephconfig:          <inherit|compact-json>
 #     cstate_mc_present:   <true|false>
 #     mcp_worker_updated:  <int>
 #     mcp_worker_machines: <int>
@@ -153,6 +154,20 @@ snapshot_cluster_state() {
       -o json | jq -c '.spec.storageDeviceSets[0].resources // "inherit"')
   fi
 
+  # Capture .spec.managedResources.cephCluster.cephConfig — the live-config
+  # path used by cephconfig_* tune keys. Format matches deviceset_resources:
+  # 'inherit' when the field is empty/missing, otherwise a compact jq -c JSON
+  # blob that round-trips cleanly through `oc patch --type merge`.
+  local cephconfig
+  cephconfig=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+    -o jsonpath='{.spec.managedResources.cephCluster.cephConfig}' 2>/dev/null)
+  if [[ -z "${cephconfig}" || "${cephconfig}" == "{}" ]]; then
+    cephconfig="inherit"
+  else
+    cephconfig=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o json | jq -c '.spec.managedResources.cephCluster.cephConfig // "inherit"')
+  fi
+
   local mc_present="false"
   if oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null; then
     mc_present="true"
@@ -169,6 +184,7 @@ storagecluster_name: ${sc_name}
 storagecluster_namespace: ${ns}
 resourceProfile: ${resource_profile}
 deviceset_resources: ${ds_resources}
+cephconfig: ${cephconfig}
 cstate_mc_present: ${mc_present}
 mcp_worker_updated: ${mcp_updated}
 mcp_worker_machines: ${mcp_machines}
