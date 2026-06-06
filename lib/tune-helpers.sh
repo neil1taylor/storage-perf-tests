@@ -455,6 +455,57 @@ apply_tuning_config() {
     fi
   fi
 
+  # --- 2b. cephConfig (live, no pod restart) ----------------------------------
+  # cephconfig_<key>=<value> pairs are merged into
+  # .spec.managedResources.cephCluster.cephConfig.osd. OCS-operator merges
+  # this map on top of its derived base ceph config, so the override is
+  # additive (other daemon sections, mon/mgr, are not disturbed). Propagation
+  # is via the Ceph config database — live, no OSD pod roll.
+  local -a cephconfig_keys=()
+  local ck
+  for ck in "${!cfg[@]}"; do
+    [[ "${ck}" == cephconfig_* ]] && cephconfig_keys+=("${ck}")
+  done
+
+  if (( ${#cephconfig_keys[@]} > 0 )); then
+    # Build the osd-section JSON object: {"<short_key1>":"<val1>",...}.
+    # Values are quoted as strings — ceph config accepts string-form for all
+    # numeric settings (e.g. throttle bytes, memory targets).
+    local osd_json='{'
+    local short_key
+    for ck in "${cephconfig_keys[@]}"; do
+      short_key="${ck#cephconfig_}"
+      osd_json+="\"${short_key}\":\"${cfg[$ck]}\","
+    done
+    osd_json="${osd_json%,}"
+    osd_json+='}'
+
+    log_info "Patching managedResources.cephCluster.cephConfig.osd: ${osd_json}"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge \
+      -p "{\"spec\":{\"managedResources\":{\"cephCluster\":{\"cephConfig\":{\"osd\":${osd_json}}}}}}" >/dev/null \
+      || { log_error "cephConfig patch failed"; return 1; }
+
+    # Sentinel verification: if one key propagated, all keys in the same
+    # patch did. Picking the first deterministically (sorted) for the check.
+    local first_key
+    first_key=$(printf '%s\n' "${cephconfig_keys[@]}" | sort | head -1)
+    local first_short="${first_key#cephconfig_}"
+    wait_for_ceph_config_applied "${first_short}" "${cfg[$first_key]}" 120 || return 1
+  else
+    # No cephconfig_* in this config: if the cluster currently has any
+    # override at .spec.managedResources.cephCluster.cephConfig, remove it
+    # so the cluster returns to OOB cephConfig state.
+    local cur_cc
+    cur_cc=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o jsonpath='{.spec.managedResources.cephCluster.cephConfig}' 2>/dev/null)
+    if [[ -n "${cur_cc}" && "${cur_cc}" != "{}" ]]; then
+      log_info "Removing .spec.managedResources.cephCluster.cephConfig (back to OOB)"
+      oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+        -p='[{"op":"remove","path":"/spec/managedResources/cephCluster/cephConfig"}]' >/dev/null \
+        || { log_error "cephConfig removal failed"; return 1; }
+    fi
+  fi
+
   # --- 3. cstate MachineConfig ------------------------------------------------
   local mc_present="false"
   oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null && mc_present="true"
@@ -493,6 +544,7 @@ config_name: ${name}
 realised_profile: ${realised_profile:-null}
 realised_deviceset_resources: ${realised_ds}
 realised_cephcluster_osd_resources: ${realised_cc_osd}
+realised_cephconfig_osd: $(oc get storagecluster "${sc_name}" -n "${ns}" -o json | jq -c '.spec.managedResources.cephCluster.cephConfig.osd // {}')
 cstate_mc_present: $(oc get machineconfig "${TUNE_MC_NAME}" &>/dev/null && echo true || echo false)
 applied_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
