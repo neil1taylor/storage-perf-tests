@@ -569,12 +569,13 @@ restore_cluster_state() {
     return 1
   fi
 
-  local sc_name ns resource_profile deviceset_resources cstate_mc_present
+  local sc_name ns resource_profile deviceset_resources cstate_mc_present cephconfig
   sc_name=$(awk -F': ' '/^storagecluster_name:/{print $2}' "${snap}")
   ns=$(awk -F': ' '/^storagecluster_namespace:/{print $2}' "${snap}")
   resource_profile=$(awk -F': ' '/^resourceProfile:/{print $2}' "${snap}")
   deviceset_resources=$(awk -F': ' '/^deviceset_resources:/{print $2}' "${snap}")
   cstate_mc_present=$(awk -F': ' '/^cstate_mc_present:/{print $2}' "${snap}")
+  cephconfig=$(awk -F': ' '/^cephconfig:/{print $2}' "${snap}")
 
   local warnings=0
 
@@ -612,6 +613,24 @@ restore_cluster_state() {
     oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
       -p="[{\"op\":\"${op}\",\"path\":\"/spec/storageDeviceSets/0/resources\",\"value\":${deviceset_resources}}]" \
       || { log_warn "restore: deviceset resources patch warning"; warnings=$((warnings+1)); }
+  fi
+
+  # --- cephConfig (managedResources.cephCluster.cephConfig) ------------------
+  if [[ "${cephconfig}" == "inherit" || -z "${cephconfig}" ]]; then
+    local cc_now
+    cc_now=$(oc get storagecluster "${sc_name}" -n "${ns}" \
+      -o jsonpath='{.spec.managedResources.cephCluster.cephConfig}' 2>/dev/null)
+    if [[ -n "${cc_now}" && "${cc_now}" != "{}" ]]; then
+      log_info "Restoring: removing .spec.managedResources.cephCluster.cephConfig"
+      oc patch storagecluster "${sc_name}" -n "${ns}" --type json \
+        -p='[{"op":"remove","path":"/spec/managedResources/cephCluster/cephConfig"}]' &>/dev/null \
+        || { log_warn "restore: cephConfig removal warning"; warnings=$((warnings+1)); }
+    fi
+  else
+    log_info "Restoring: .spec.managedResources.cephCluster.cephConfig = ${cephconfig}"
+    oc patch storagecluster "${sc_name}" -n "${ns}" --type merge \
+      -p "{\"spec\":{\"managedResources\":{\"cephCluster\":{\"cephConfig\":${cephconfig}}}}}" >/dev/null \
+      || { log_warn "restore: cephConfig patch warning"; warnings=$((warnings+1)); }
   fi
 
   # --- cstate MachineConfig --------------------------------------------------
