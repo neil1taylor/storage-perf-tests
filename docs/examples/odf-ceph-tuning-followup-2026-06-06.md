@@ -17,7 +17,7 @@
 
 ## TL;DR
 
-This experiment crossed two independent tuning axes — KubeVirt `ioThreadsPolicy=auto` + `blockMultiQueue=true` on the VM template, and a Ceph-side bundle of `mclock_profile=high_client_ops` + 256 KiB BlueStore throttles + 20 GiB `osd_memory_target` — in a 2×2 factorial design, both stacked on the `big-osd` resource floor established on 2026-06-04.
+This experiment crossed two independent tuning axes — KubeVirt `ioThreadsPolicy=auto` + `blockMultiQueue=true` on the VM template, and a Ceph-side bundle of `mclock_profile=high_client_ops` + 256 KiB BlueStore throttles + 20 GB (~18.6 GiB) `osd_memory_target` — in a 2×2 factorial design, both stacked on the `big-osd` resource floor established on 2026-06-04.
 
 The bottom line: **iothreads alone is a strong tail-latency win** — write p99 fell 25 %, read p99 fell 53 %, with a 2 % IOPS uptick. That change is merged. **The Ceph-side bundle alone gives a modest read-tail reduction** (29 %, close to the 30 % threshold) at a small IOPS cost (−3.8 %), with an important attribution caveat explained in §6. **The combined stack is a material regression across all three metrics**: IOPS −8.5 %, write p99 +67 %, read p99 +103 %. The interaction between the two knob sets is strongly negative — combining them produces worse outcomes than either alone, not additive improvement. The Ceph-side config is retained as an opt-in but is not being made default, and the combined stack is explicitly not recommended at this density.
 
@@ -29,7 +29,7 @@ Cluster was verified clean before Sweep A: all 24 OSD pods at `2 CPU / 5Gi` (bal
 
 Phase 0 uncovered a meaningful anomaly: `osd_memory_target` was at the Reef default of **4 GiB** (`4294967296` bytes). On 384 GiB hosts, Reef's cgroup-ratio mechanism should dynamically target approximately ¼ of the OSD cgroup's available RAM — but that mechanism is not activating on these ROKS workers. The result is that prior `big-osd` data (the 2026-06-04 run) was collected with OSD memory effectively at the balanced-profile default (5 GiB), not the intended 24 GiB ceiling that the `osd_mem=24Gi` resource request enforced. The request provides headroom; the Ceph memory allocator still respects its own target.
 
-To correct this, `TUNE_CONFIGS[big-osd+mclock]` was updated before Sweep A to add `cephconfig_osd_memory_target=20000000000` (20 GiB — within the 24 GiB resource ceiling, leaving 4 GiB for non-heap overhead). This change is bundled into the Ceph-side treatment (cells B and D) and is not independently isolated. The attribution caveat is discussed in §6 and §9.
+To correct this, `TUNE_CONFIGS[big-osd+mclock]` was updated before Sweep A to add `cephconfig_osd_memory_target=20000000000` (20 GB, ~18.6 GiB — within the 24 GiB resource ceiling, leaving ~5.4 GiB for non-heap overhead). This change is bundled into the Ceph-side treatment (cells B and D) and is not independently isolated. The attribution caveat is discussed in §6 and §9.
 
 The baseline drift check (cell A vs the 2026-06-04 big-osd baseline) came in at +3.5 %, well within the ±5 % sanity band, confirming measurement consistency across sweeps.
 
@@ -44,7 +44,7 @@ A 2×2 full factorial crossing two binary factors:
 | Factor | Level 0 | Level 1 |
 |---|---|---|
 | **VM template** | Baseline (`ioThreadsPolicy` absent, `blockMultiQueue` false) | iothreads (`ioThreadsPolicy=auto`, `blockMultiQueue=true`) |
-| **Ceph-side** | big-osd only | big-osd + `mclock_profile=high_client_ops` + 256 KiB BlueStore throttles + 20 GiB `osd_memory_target` |
+| **Ceph-side** | big-osd only | big-osd + `mclock_profile=high_client_ops` + 256 KiB BlueStore throttles + 20 GB (~18.6 GiB) `osd_memory_target` |
 
 This yields four cells:
 
@@ -117,11 +117,11 @@ At 32 VMs × QD=32, this reduces the latency added in the guest-to-host I/O path
 
 The read p99 fell 29 % (cell B vs A: 39.059 → 27.656 ms). Read latency on a write-biased tightened-throttle config can improve because the OSD's BlueStore reader is no longer competing for the same byte budget with deep write queues. The write p99 rose 4 % (50.594 → 52.691 ms) — this is indistinguishable from noise at the ±5 % band.
 
-**Attribution caveat:** the `osd_memory_target=20 GiB` lift is bundled into the B/D treatment. The 2026-06-04 big-osd run had an effective 4 GiB memory target (Ceph default, cgroup-ratio inactive). Cell A (Sweep A big-osd) also had a 4 GiB target — the Phase 0 edit applied only to `big-osd+mclock`. So cells A and C are clean: big-osd at 4 GiB target. Cells B and D include the 20 GiB lift alongside mclock and BlueStore throttle. The read p99 improvement in B could partially reflect the memory target — a larger OSD cache reduces read amplification — not mclock or the throttle alone. Separating the three Ceph-side changes would require an additional sweep.
+**Attribution caveat:** the `osd_memory_target=20 GB (~18.6 GiB)` lift is bundled into the B/D treatment. The 2026-06-04 big-osd run had an effective 4 GiB memory target (Ceph default, cgroup-ratio inactive). Cell A (Sweep A big-osd) also had a 4 GiB target — the Phase 0 edit applied only to `big-osd+mclock`. So cells A and C are clean: big-osd at 4 GiB target. Cells B and D include the 20 GB (~18.6 GiB) lift alongside mclock and BlueStore throttle. The read p99 improvement in B could partially reflect the memory target — a larger OSD cache reduces read amplification — not mclock or the throttle alone. Separating the three Ceph-side changes would require an additional sweep.
 
 ### Combined stack (D vs A): the interesting regression
 
-Cell D combines cells B and C: iothreads on the VM plus mclock + 256 KiB throttle + 20 GiB memory on the Ceph side. The result is worse than either knob alone on every metric.
+Cell D combines cells B and C: iothreads on the VM plus mclock + 256 KiB throttle + 20 GB (~18.6 GiB) memory on the Ceph side. The result is worse than either knob alone on every metric.
 
 The most likely mechanism: iothreads raises the effective concurrency fan-in to the OSD. With the baseline VM template (single I/O thread), each VM's 32 in-flight ops are queued behind a single QEMU event-loop thread — they arrive at the OSD in bursts, but with implicit serialisation in the guest path. With `ioThreadsPolicy=auto` and 2 I/O threads, the same 32 in-flight ops arrive at the OSD more uniformly and more concurrently from each VM. Across 32 VMs, the OSD sees a higher sustained arrival rate with fewer natural pauses.
 

@@ -326,6 +326,9 @@ TUNE_CONFIGS[default]='profile=balanced cstate=on'
 TUNE_CONFIGS[cstate-off]='profile=balanced cstate=off'
 TUNE_CONFIGS[big-osd]='osd_cpu=6 osd_mem=24Gi cstate=on'
 TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=6 osd_mem=24Gi cstate=off'
+# No 'profile=' key — TUNE_CONFIGS[big-osd+mclock] inherits the current
+# cluster resourceProfile (typically 'balanced'). Set explicitly only when
+# changing the OSD pod profile is part of the experiment.
 TUNE_CONFIGS[big-osd+mclock]='osd_cpu=6 osd_mem=24Gi cephconfig_osd_mclock_profile=high_client_ops cephconfig_bluestore_throttle_bytes=262144 cephconfig_bluestore_throttle_deferred_bytes=262144 cephconfig_osd_memory_target=20000000000 cstate=on'
 export TUNE_CONFIGS
 
