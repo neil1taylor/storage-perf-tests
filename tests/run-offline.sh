@@ -98,16 +98,24 @@ test_parse_tune_config_cephconfig_empty_value() {
   source lib/tune-helpers.sh
 
   TUNE_CONFIGS[__test_ceph_empty]='cephconfig_foo= cstate=on'
-  if parse_tune_config "__test_ceph_empty" >/dev/null 2>&1; then
+  local out
+  out=$(parse_tune_config "__test_ceph_empty" 2>&1) && {
     _fail "expected non-zero exit on empty cephconfig_* value"
     unset 'TUNE_CONFIGS[__test_ceph_empty]'
     return
-  fi
+  }
   unset 'TUNE_CONFIGS[__test_ceph_empty]'
+  echo "${out}" | grep -q "requires a non-empty value" || {
+    _fail "error message did not contain 'requires a non-empty value': ${out}"
+    return
+  }
   _pass "empty cephconfig_* values rejected"
 }
 
 test_parse_tune_config_bigosd_mclock() {
+  # Pinned-failing until plan Task 6 declares TUNE_CONFIGS[big-osd+mclock]
+  # in 00-config.sh. The red→green hand-off is intentional and crosses task
+  # boundaries; do not "fix" this by adding the config here.
   echo "test_parse_tune_config_bigosd_mclock:"
   OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
   source lib/tune-helpers.sh

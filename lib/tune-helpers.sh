@@ -14,8 +14,10 @@ TUNE_VALID_KEYS=(profile osd_cpu osd_mem cstate)
 # ---------------------------------------------------------------------------
 # parse_tune_config <name>
 #   Resolves a name from TUNE_CONFIGS and emits its canonical key=value form
-#   on stdout, one pair per line. Validates that every key is in
-#   TUNE_VALID_KEYS and that cstate ∈ {on, off}.
+#   on stdout, one pair per line. Validates that every explicit key is in
+#   TUNE_VALID_KEYS; keys with a cephconfig_* prefix are validated by prefix
+#   only (they map directly to ceph config-database entries and must have a
+#   non-empty value). Also validates that cstate ∈ {on, off}.
 # ---------------------------------------------------------------------------
 parse_tune_config() {
   local name="$1"
