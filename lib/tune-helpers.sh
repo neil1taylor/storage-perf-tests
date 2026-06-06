@@ -333,6 +333,48 @@ wait_for_mcp_updated() {
 }
 
 # ---------------------------------------------------------------------------
+# wait_for_ceph_config_applied <key> <expected-value> [timeout-secs]
+#   Polls `ceph config dump --format json` until an entry with
+#   section='osd' and name='<key>' has value='<expected-value>'. Used after
+#   patching .spec.managedResources.cephCluster.cephConfig.osd.<key> to
+#   confirm the override has propagated to the Ceph config database (no
+#   OSD pod roll required for live-config keys).
+#   Returns 0 on observed propagation, 1 on timeout.
+# ---------------------------------------------------------------------------
+wait_for_ceph_config_applied() {
+  local key="$1"
+  local expected="$2"
+  local timeout="${3:-120}"
+  local ns="openshift-storage"
+  local deadline=$(( $(date +%s) + timeout ))
+  local interval=5
+
+  if [[ -z "${key}" || -z "${expected}" ]]; then
+    echo "ERROR: wait_for_ceph_config_applied requires <key> <expected-value>" >&2
+    return 1
+  fi
+
+  log_info "Waiting for ceph config osd:${key}='${expected}' (timeout=${timeout}s)"
+  while (( $(date +%s) < deadline )); do
+    local actual
+    actual=$(oc -n "${ns}" exec deploy/rook-ceph-tools -- \
+      ceph config dump --format json 2>/dev/null \
+      | jq -r --arg k "${key}" \
+          '.[] | select(.section=="osd" and .name==$k) | .value' 2>/dev/null \
+      | head -1)
+    if [[ "${actual}" == "${expected}" ]]; then
+      log_info "  ceph config osd:${key} = ${actual}"
+      return 0
+    fi
+    log_debug "  ceph config osd:${key} actual='${actual:-<unset>}' expected='${expected}'; sleep ${interval}s"
+    sleep "${interval}"
+  done
+
+  log_error "wait_for_ceph_config_applied: osd:${key} did not reach '${expected}' within ${timeout}s"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # apply_tuning_config <name>
 #   Mutates the cluster to match the named TUNE_CONFIGS entry. Idempotent.
 #   Emits a tuning-applied.yaml summary on stdout describing the realised
