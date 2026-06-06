@@ -72,12 +72,12 @@ Per sweep: 32 small VMs (2 vCPU / 4 GiB, 150 GiB RBD data disk on rep3-virt), `m
 
 ### 4-cell matrix (32 VMs × QD=32, uncapped, rep3-virt)
 
-| Cell | VM template | Ceph config | Total IOPS | Write p99 (ms) | Read p99 (ms) |
-|---|---|---|---|---|---|
-| **A** | Baseline | big-osd | 355 169 | 50.594 | 39.059 |
-| **B** | Baseline | big-osd+mclock+memtarget | 341 554 | 52.691 | 27.656 |
-| **C** | iothreads | big-osd | 362 303 | 38.011 | 18.481 |
-| **D** | iothreads | big-osd+mclock+memtarget | 324 995 | 84.410 | 79.167 |
+| Cell | VM template | Ceph config | Total IOPS | Bandwidth (MB/s) | Write p99 (ms) | Read p99 (ms) |
+|---|---|---|---|---|---|---|
+| **A** | Baseline | big-osd | 355 169 | 1 387.4 | 50.594 | 39.059 |
+| **B** | Baseline | big-osd+mclock+memtarget | 341 554 | 1 334.2 (−3.8 %) | 52.691 | 27.656 |
+| **C** | iothreads | big-osd | 362 303 | 1 415.2 (+2.0 %) | 38.011 | 18.481 |
+| **D** | iothreads | big-osd+mclock+memtarget | 324 995 | 1 269.5 (−8.5 %) | 84.410 | 79.167 |
 
 Reference: 2026-06-04 big-osd baseline = 343 107 IOPS, write p99 = 52.691 ms, read p99 = 30.015 ms.
 
@@ -189,7 +189,6 @@ Each sweep takes approximately 35–45 minutes including OSD apply (both configs
 - **Single PVC size and VM count.** 150 GiB PVCs, 32 VMs. The iothreads benefit could scale or diminish with VM count; 32 VMs at 2 vCPU each is a mid-density point.
 - **Small VMs only.** `ioThreadsPolicy=auto` on a 2-vCPU VM gives 2 IOThreads. On a 4- or 8-vCPU VM the thread count would increase; the interaction with the BlueStore throttle could be stronger or weaker, and the iothreads benefit could differ.
 - **Bundled Ceph-side attribution (cells B and D).** The three Ceph-side changes (mclock profile, BlueStore throttle, osd_memory_target) are not independently isolated. The read p99 improvement in cell B could be partially or predominantly driven by the memory target lift rather than mclock or throttle. A follow-up splitting `osd_memory_target` into its own cell would clarify.
-- **No bandwidth figures.** The qd-summary.json values were not extracted for this writeup; bandwidth tracks closely with IOPS at 4 KiB (multiply IOPS × 4096 / 1e6 for MB/s), but the precise figure was not confirmed from the run artefacts.
 
 ---
 
