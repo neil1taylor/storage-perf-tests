@@ -302,6 +302,14 @@ export EXTRA_STORAGE_CLASSES
 #                 off = apply MC with kernelArgs
 #                       intel_idle.max_cstate=0 processor.max_cstate=0
 #
+#   cephconfig_<ceph_key> → any string
+#                 Maps to ceph config-database key 'osd:<ceph_key>'. Merged
+#                 into .spec.managedResources.cephCluster.cephConfig.osd via
+#                 OCS-operator's additive merge. Live propagation (no OSD pod
+#                 roll). Common candidates: osd_mclock_profile,
+#                 bluestore_throttle_bytes, bluestore_throttle_deferred_bytes,
+#                 osd_memory_target.
+#
 # big-osd sizing: must leave room for the test workload's VMs to schedule
 # alongside the OSDs. Per-host arithmetic for bx2d.metal.96x384 (96c/384Gi,
 # 8 OSDs/host, ~83% allocatable after kubelet/system reservations ≈ 80c/320Gi):
@@ -318,6 +326,10 @@ TUNE_CONFIGS[default]='profile=balanced cstate=on'
 TUNE_CONFIGS[cstate-off]='profile=balanced cstate=off'
 TUNE_CONFIGS[big-osd]='osd_cpu=6 osd_mem=24Gi cstate=on'
 TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=6 osd_mem=24Gi cstate=off'
+# No 'profile=' key — TUNE_CONFIGS[big-osd+mclock] inherits the current
+# cluster resourceProfile (typically 'balanced'). Set explicitly only when
+# changing the OSD pod profile is part of the experiment.
+TUNE_CONFIGS[big-osd+mclock]='osd_cpu=6 osd_mem=24Gi cephconfig_osd_mclock_profile=high_client_ops cephconfig_bluestore_throttle_bytes=262144 cephconfig_bluestore_throttle_deferred_bytes=262144 cephconfig_osd_memory_target=20000000000 cstate=on'
 export TUNE_CONFIGS
 
 TUNE_DEFAULT_CONFIGS="${TUNE_DEFAULT_CONFIGS:-default,cstate-off,big-osd,big-osd+cstate-off}"

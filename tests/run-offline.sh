@@ -72,6 +72,72 @@ test_parse_tune_config_valid() {
   _pass "all named configs parse cleanly"
 }
 
+test_parse_tune_config_cephconfig() {
+  echo "test_parse_tune_config_cephconfig:"
+  OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
+  source lib/tune-helpers.sh
+
+  TUNE_CONFIGS[__test_ceph_mixed]='osd_cpu=6 cephconfig_osd_mclock_profile=high_client_ops cstate=on'
+  local out
+  if ! out=$(parse_tune_config "__test_ceph_mixed" 2>&1); then
+    _fail "parse_tune_config __test_ceph_mixed returned non-zero: ${out}"
+    unset 'TUNE_CONFIGS[__test_ceph_mixed]'
+    return
+  fi
+  unset 'TUNE_CONFIGS[__test_ceph_mixed]'
+  echo "${out}" | grep -qx 'osd_cpu=6' || { _fail "missing osd_cpu=6 in output"; return; }
+  echo "${out}" | grep -qx 'cephconfig_osd_mclock_profile=high_client_ops' || \
+    { _fail "missing cephconfig_osd_mclock_profile=high_client_ops in output"; return; }
+  echo "${out}" | grep -qx 'cstate=on' || { _fail "missing cstate=on in output"; return; }
+  _pass "cephconfig_* keys parse alongside explicit keys"
+}
+
+test_parse_tune_config_cephconfig_empty_value() {
+  echo "test_parse_tune_config_cephconfig_empty_value:"
+  OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
+  source lib/tune-helpers.sh
+
+  TUNE_CONFIGS[__test_ceph_empty]='cephconfig_foo= cstate=on'
+  local out
+  out=$(parse_tune_config "__test_ceph_empty" 2>&1) && {
+    _fail "expected non-zero exit on empty cephconfig_* value"
+    unset 'TUNE_CONFIGS[__test_ceph_empty]'
+    return
+  }
+  unset 'TUNE_CONFIGS[__test_ceph_empty]'
+  echo "${out}" | grep -q "requires a non-empty value" || {
+    _fail "error message did not contain 'requires a non-empty value': ${out}"
+    return
+  }
+  _pass "empty cephconfig_* values rejected"
+}
+
+test_parse_tune_config_bigosd_mclock() {
+  # Pinned-failing until plan Task 6 declares TUNE_CONFIGS[big-osd+mclock]
+  # in 00-config.sh. The red→green hand-off is intentional and crosses task
+  # boundaries; do not "fix" this by adding the config here.
+  echo "test_parse_tune_config_bigosd_mclock:"
+  OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
+  source lib/tune-helpers.sh
+
+  [[ -v 'TUNE_CONFIGS[big-osd+mclock]' ]] || { _fail "TUNE_CONFIGS[big-osd+mclock] not declared"; return; }
+  local out
+  if ! out=$(parse_tune_config 'big-osd+mclock' 2>&1); then
+    _fail "parse_tune_config big-osd+mclock returned non-zero: ${out}"
+    return
+  fi
+  echo "${out}" | grep -qx 'osd_cpu=6' || { _fail "missing osd_cpu=6"; return; }
+  echo "${out}" | grep -qx 'osd_mem=24Gi' || { _fail "missing osd_mem=24Gi"; return; }
+  echo "${out}" | grep -qx 'cephconfig_osd_mclock_profile=high_client_ops' || \
+    { _fail "missing cephconfig_osd_mclock_profile=high_client_ops"; return; }
+  echo "${out}" | grep -qx 'cephconfig_bluestore_throttle_bytes=262144' || \
+    { _fail "missing cephconfig_bluestore_throttle_bytes=262144"; return; }
+  echo "${out}" | grep -qx 'cephconfig_bluestore_throttle_deferred_bytes=262144' || \
+    { _fail "missing cephconfig_bluestore_throttle_deferred_bytes=262144"; return; }
+  echo "${out}" | grep -qx 'cstate=on' || { _fail "missing cstate=on"; return; }
+  _pass "big-osd+mclock parses with all expected keys"
+}
+
 test_parse_tune_config_unknown_name() {
   echo "test_parse_tune_config_unknown_name:"
   OC_SKIP_CLUSTER_CHECK=true source 00-config.sh >/dev/null 2>&1
@@ -230,6 +296,9 @@ test_tune_configs_parse
 test_parse_tune_config_valid
 test_parse_tune_config_unknown_name
 test_parse_tune_config_unknown_key
+test_parse_tune_config_cephconfig
+test_parse_tune_config_cephconfig_empty_value
+test_parse_tune_config_bigosd_mclock
 test_render_cstate_machineconfig
 test_qd_sweep_dry_run
 test_tune_sweep_dry_run

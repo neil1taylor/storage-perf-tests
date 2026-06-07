@@ -24,11 +24,13 @@ spec:
         perf-test/vm: __VM_NAME__
     spec:
       domain:
+        ioThreadsPolicy: auto
         cpu:
           cores: __VCPU__
           sockets: 1
           threads: 1
         devices:
+          blockMultiQueue: true
           disks:
             - name: rootdisk
               disk:
