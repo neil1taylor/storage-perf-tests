@@ -1,0 +1,1137 @@
+[config] Run ID: perf-20260606-082905
+[config] Cluster: bm (bx2d.metal.96x384, 3 workers)
+[config] Region: eu-de, Zones: eu-de-2 (multi-AZ=false)
+[config] CSI dedup: file=true, block=true
+[config] Namespace: vm-perf-test
+[config] ODF pools: 11
+[config] File CSI profiles: auto
+[config] Block CSI: true (discovery=auto)
+[config] Pool CSI: auto-detect (name=bench-pool)
+[config] VM sizes: 3, PVC sizes: 3
+[config] Concurrency levels: 1 5 10
+
+==========================================
+Tune-sweep plan
+==========================================
+  pool:        rep3-virt
+  configs:     2 configs (big-osd,big-osd+mclock)
+  fixed-vms:   32
+  qd-list:     32  (1 steps)
+  rate-iops:   0 per VM
+  latency-SLA: 5 ms write-p99
+
+  Cluster mutations per cfg:
+    StorageCluster patch + OSD restart  ≈ 12 min
+    MachineConfig + worker MCP reboot   ≈ 30 min (only when cstate flips)
+
+  Per-cfg workload time:
+    1 QD × (~90s prefill + ~90s measure + ~30s collect) ≈ 4 min
+==========================================
+[2026-06-06T07:29:09Z] [INFO] ===== Config: big-osd =====
+[2026-06-06T07:29:10Z] [INFO] Patching storageDeviceSets[0].resources: cpu=6 memory=24Gi (op=add)
+[2026-06-06T07:29:11Z] [INFO] Waiting for OSDs ready + pod-spec converged (timeout=1200s)
+[2026-06-06T07:32:13Z] [INFO]   OSDs ready, ceph=HEALTH_WARN, pods=6/24Gi
+[config] Run ID: tune-20260606-082906
+[config] Cluster: bm (bx2d.metal.96x384, 3 workers)
+[config] Region: eu-de, Zones: eu-de-2 (multi-AZ=false)
+[config] CSI dedup: file=true, block=true
+[config] Namespace: vm-perf-test
+[config] ODF pools: 11
+[config] File CSI profiles: auto
+[config] Block CSI: true (discovery=auto)
+[config] Pool CSI: auto-detect (name=bench-pool)
+[config] VM sizes: 3, PVC sizes: 3
+[config] Concurrency levels: 1 5 10
+[2026-06-06T07:32:16Z] [INFO] === qd-sweep: pool=rep3-virt cfg=big-osd n=32 qds=32 ===
+[2026-06-06T07:32:16Z] [INFO] [qd-sweep] Sync barrier: fio measurement starts at epoch 1780731316 (+180s)
+[2026-06-06T07:32:16Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-001 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-001-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-001 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-001-data created
+[2026-06-06T07:32:18Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-002 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-002-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-002 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-002-data created
+[2026-06-06T07:32:20Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-003 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-003-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-003 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-003-data created
+[2026-06-06T07:32:21Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-004 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-004-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-004 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-004-data created
+[2026-06-06T07:32:24Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-005 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-005-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-005 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-005-data created
+[2026-06-06T07:32:26Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-006 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-006-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-006 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-006-data created
+[2026-06-06T07:32:27Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-007 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-007-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-007 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-007-data created
+[2026-06-06T07:32:29Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-008 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-008-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-008 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-008-data created
+[2026-06-06T07:32:31Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-009 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-009-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-009 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-009-data created
+[2026-06-06T07:32:33Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-010 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-010-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-010 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-010-data created
+[2026-06-06T07:32:35Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-011 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-011-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-011 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-011-data created
+[2026-06-06T07:32:37Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-012 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-012-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-012 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-012-data created
+[2026-06-06T07:32:39Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-013 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-013-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-013 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-013-data created
+[2026-06-06T07:32:41Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-014 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-014-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-014 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-014-data created
+[2026-06-06T07:32:43Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-015 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-015-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-015 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-015-data created
+[2026-06-06T07:32:44Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-016 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-016-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-016 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-016-data created
+[2026-06-06T07:32:46Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-017 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-017-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-017 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-017-data created
+[2026-06-06T07:32:49Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-018 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-018-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-018 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-018-data created
+[2026-06-06T07:32:51Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-019 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-019-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-019 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-019-data created
+[2026-06-06T07:32:53Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-020 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-020-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-020 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-020-data created
+[2026-06-06T07:32:55Z] [INFO] [qd-sweep] Batch 20/32 submitted, pausing...
+[2026-06-06T07:33:00Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-021 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-021-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-021 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-021-data created
+[2026-06-06T07:33:02Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-022 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-022-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-022 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-022-data created
+[2026-06-06T07:33:04Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-023 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-023-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-023 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-023-data created
+[2026-06-06T07:33:06Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-024 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-024-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-024 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-024-data created
+[2026-06-06T07:33:08Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-025 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-025-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-025 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-025-data created
+[2026-06-06T07:33:10Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-026 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-026-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-026 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-026-data created
+[2026-06-06T07:33:12Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-027 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-027-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-027 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-027-data created
+[2026-06-06T07:33:14Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-028 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-028-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-028 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-028-data created
+[2026-06-06T07:33:17Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-029 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-029-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-029 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-029-data created
+[2026-06-06T07:33:19Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-030 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-030-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-030 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-030-data created
+[2026-06-06T07:33:21Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-031 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-031-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-031 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-031-data created
+[2026-06-06T07:33:23Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-032 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-032-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-032 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-032-data created
+[2026-06-06T07:33:25Z] [INFO] [qd-sweep] All 32 VMs created, waiting for Running...
+[2026-06-06T07:33:25Z] [INFO] Waiting for 32 VMs to reach Running state...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-001 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-002 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-004 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-003 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-010 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-007 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-014 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-021 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-009 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-005 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-022 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-008 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-029 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-028 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-023 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-031 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-024 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-025 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-027 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-020 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-015 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-006 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-012 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-011 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-017 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-032 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-019 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-030 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-013 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-016 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-026 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:25Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-018 to reach Running state (timeout=900s)...
+[2026-06-06T07:33:26Z] [INFO] VM qdsw-rep3-virt-big-osd-001 is Running (took 0s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-009 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-003 is Running (took 0s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-018 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-021 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-023 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-004 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-007 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-026 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-012 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-006 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-008 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-020 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-005 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-015 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-016 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-011 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-025 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-010 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-019 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-002 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-014 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-022 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-013 is Running (took 1s)
+[2026-06-06T07:33:27Z] [INFO] VM qdsw-rep3-virt-big-osd-017 is Running (took 1s)
+[2026-06-06T07:33:28Z] [INFO] VM qdsw-rep3-virt-big-osd-031: DV clone complete, waiting for VM boot...
+[2026-06-06T07:33:29Z] [INFO] VM qdsw-rep3-virt-big-osd-030: DV clone complete, waiting for VM boot...
+[2026-06-06T07:33:29Z] [INFO] VM qdsw-rep3-virt-big-osd-028: DV clone complete, waiting for VM boot...
+[2026-06-06T07:33:29Z] [INFO] VM qdsw-rep3-virt-big-osd-032: DV clone complete, waiting for VM boot...
+[2026-06-06T07:33:29Z] [INFO] VM qdsw-rep3-virt-big-osd-024: DV clone complete, waiting for VM boot...
+[2026-06-06T07:33:29Z] [INFO] VM qdsw-rep3-virt-big-osd-029: DV clone complete, waiting for VM boot...
+[2026-06-06T07:33:29Z] [INFO] VM qdsw-rep3-virt-big-osd-027: DV clone complete, waiting for VM boot...
+[2026-06-06T07:33:39Z] [INFO] VM qdsw-rep3-virt-big-osd-031 is Running (took 13s)
+[2026-06-06T07:33:39Z] [INFO] VM qdsw-rep3-virt-big-osd-030 is Running (took 14s)
+[2026-06-06T07:33:39Z] [INFO] VM qdsw-rep3-virt-big-osd-028 is Running (took 14s)
+[2026-06-06T07:33:39Z] [INFO] VM qdsw-rep3-virt-big-osd-024 is Running (took 14s)
+[2026-06-06T07:33:39Z] [INFO] VM qdsw-rep3-virt-big-osd-029 is Running (took 14s)
+[2026-06-06T07:33:39Z] [INFO] VM qdsw-rep3-virt-big-osd-027 is Running (took 14s)
+[2026-06-06T07:33:50Z] [INFO] VM qdsw-rep3-virt-big-osd-032 is Running (took 25s)
+[2026-06-06T07:33:50Z] [INFO] All 32 VMs are Running
+[2026-06-06T07:33:50Z] [INFO] --- QD=32 ---
+[2026-06-06T07:33:50Z] [INFO] [qd-sweep] QD=32: sync barrier epoch 1780731410 (+180s)
+[2026-06-06T07:33:50Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-001
+[2026-06-06T07:33:52Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-002
+[2026-06-06T07:33:54Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-003
+[2026-06-06T07:33:56Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-004
+[2026-06-06T07:33:58Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-005
+[2026-06-06T07:34:07Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-006
+[2026-06-06T07:34:10Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-007
+[2026-06-06T07:34:12Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-008
+[2026-06-06T07:34:14Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-009
+[2026-06-06T07:34:15Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-010
+[2026-06-06T07:34:19Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-011
+[2026-06-06T07:34:21Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-012
+[2026-06-06T07:34:23Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-013
+[2026-06-06T07:34:24Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-014
+[2026-06-06T07:34:26Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-015
+[2026-06-06T07:34:27Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-016
+[2026-06-06T07:34:28Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-017
+[2026-06-06T07:34:29Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-018
+[2026-06-06T07:34:30Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-019
+[2026-06-06T07:34:32Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-020
+[2026-06-06T07:34:33Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-021
+[2026-06-06T07:34:34Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-022
+[2026-06-06T07:34:35Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-023
+[2026-06-06T07:34:37Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-024
+[2026-06-06T07:34:38Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-025
+[2026-06-06T07:34:39Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-026
+[2026-06-06T07:34:40Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-027
+[2026-06-06T07:34:42Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-028
+[2026-06-06T07:34:43Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-029
+[2026-06-06T07:34:44Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-030
+[2026-06-06T07:34:46Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-031
+[2026-06-06T07:34:47Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-032
+[2026-06-06T07:34:49Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-001
+[2026-06-06T07:34:51Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-002
+[2026-06-06T07:34:53Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-003
+[2026-06-06T07:34:54Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-004
+[2026-06-06T07:34:56Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-005
+[2026-06-06T07:34:58Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-006
+[2026-06-06T07:35:00Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-007
+[2026-06-06T07:35:01Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-008
+[2026-06-06T07:35:03Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-009
+[2026-06-06T07:35:04Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-010
+[2026-06-06T07:35:06Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-011
+[2026-06-06T07:35:07Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-012
+[2026-06-06T07:35:08Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-013
+[2026-06-06T07:35:10Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-014
+[2026-06-06T07:35:12Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-015
+[2026-06-06T07:35:13Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-016
+[2026-06-06T07:35:14Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-017
+[2026-06-06T07:35:16Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-018
+[2026-06-06T07:35:18Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-019
+[2026-06-06T07:35:20Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-020
+[2026-06-06T07:35:21Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-021
+[2026-06-06T07:35:23Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-022
+[2026-06-06T07:35:25Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-023
+[2026-06-06T07:35:27Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-024
+[2026-06-06T07:35:28Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-025
+[2026-06-06T07:35:31Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-026
+[2026-06-06T07:35:32Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-027
+[2026-06-06T07:35:34Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-028
+[2026-06-06T07:35:35Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-029
+[2026-06-06T07:35:37Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-030
+[2026-06-06T07:35:40Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-031
+[2026-06-06T07:35:41Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-032
+[2026-06-06T07:35:42Z] [INFO] Waiting for fio to complete in 32 VMs...
+[2026-06-06T07:35:44Z] [INFO] VM qdsw-rep3-virt-big-osd-001: fio service is running
+[2026-06-06T07:35:45Z] [INFO] VM qdsw-rep3-virt-big-osd-002: fio service is running
+[2026-06-06T07:35:46Z] [INFO] VM qdsw-rep3-virt-big-osd-003: fio service is running
+[2026-06-06T07:35:47Z] [INFO] VM qdsw-rep3-virt-big-osd-004: fio service is running
+[2026-06-06T07:35:49Z] [INFO] VM qdsw-rep3-virt-big-osd-005: fio service is running
+[2026-06-06T07:35:50Z] [INFO] VM qdsw-rep3-virt-big-osd-006: fio service is running
+[2026-06-06T07:35:51Z] [INFO] VM qdsw-rep3-virt-big-osd-007: fio service is running
+[2026-06-06T07:35:52Z] [INFO] VM qdsw-rep3-virt-big-osd-008: fio service is running
+[2026-06-06T07:35:53Z] [INFO] VM qdsw-rep3-virt-big-osd-009: fio service is running
+[2026-06-06T07:35:54Z] [INFO] VM qdsw-rep3-virt-big-osd-010: fio service is running
+[2026-06-06T07:35:55Z] [INFO] VM qdsw-rep3-virt-big-osd-011: fio service is running
+[2026-06-06T07:35:56Z] [INFO] VM qdsw-rep3-virt-big-osd-012: fio service is running
+[2026-06-06T07:35:57Z] [INFO] VM qdsw-rep3-virt-big-osd-013: fio service is running
+[2026-06-06T07:35:58Z] [INFO] VM qdsw-rep3-virt-big-osd-014: fio service is running
+[2026-06-06T07:35:59Z] [INFO] VM qdsw-rep3-virt-big-osd-015: fio service is running
+[2026-06-06T07:36:01Z] [INFO] VM qdsw-rep3-virt-big-osd-016: fio service is running
+[2026-06-06T07:36:02Z] [INFO] VM qdsw-rep3-virt-big-osd-017: fio service is running
+[2026-06-06T07:36:03Z] [INFO] VM qdsw-rep3-virt-big-osd-018: fio service is running
+[2026-06-06T07:36:04Z] [INFO] VM qdsw-rep3-virt-big-osd-019: fio service is running
+[2026-06-06T07:36:05Z] [INFO] VM qdsw-rep3-virt-big-osd-020: fio service is running
+[2026-06-06T07:36:07Z] [INFO] VM qdsw-rep3-virt-big-osd-021: fio service is running
+[2026-06-06T07:36:08Z] [INFO] VM qdsw-rep3-virt-big-osd-022: fio service is running
+[2026-06-06T07:36:09Z] [INFO] VM qdsw-rep3-virt-big-osd-023: fio service is running
+[2026-06-06T07:36:10Z] [INFO] VM qdsw-rep3-virt-big-osd-024: fio service is running
+[2026-06-06T07:36:11Z] [INFO] VM qdsw-rep3-virt-big-osd-025: fio service is running
+[2026-06-06T07:36:12Z] [INFO] VM qdsw-rep3-virt-big-osd-026: fio service is running
+[2026-06-06T07:36:13Z] [INFO] VM qdsw-rep3-virt-big-osd-027: fio service is running
+[2026-06-06T07:36:14Z] [INFO] VM qdsw-rep3-virt-big-osd-028: fio service is running
+[2026-06-06T07:36:15Z] [INFO] VM qdsw-rep3-virt-big-osd-029: fio service is running
+[2026-06-06T07:36:17Z] [INFO] VM qdsw-rep3-virt-big-osd-030: fio service is running
+[2026-06-06T07:36:18Z] [INFO] VM qdsw-rep3-virt-big-osd-031: fio service is running
+[2026-06-06T07:36:19Z] [INFO] VM qdsw-rep3-virt-big-osd-032: fio service is running
+[2026-06-06T07:37:04Z] [INFO] fio: 32/32 VMs still in progress (32 running) (47s elapsed)
+[2026-06-06T07:37:52Z] [INFO] fio: 32/32 VMs still in progress (32 running) (1m32s elapsed)
+[2026-06-06T07:38:14Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-009 (2m21s)
+[2026-06-06T07:38:18Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-011 (2m21s)
+[2026-06-06T07:38:20Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-012 (2m21s)
+[2026-06-06T07:38:24Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-014 (2m21s)
+[2026-06-06T07:38:27Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-015 (2m21s)
+[2026-06-06T07:38:30Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-016 (2m21s)
+[2026-06-06T07:38:35Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-019 (2m21s)
+[2026-06-06T07:38:38Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-020 (2m21s)
+[2026-06-06T07:38:41Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-021 (2m21s)
+[2026-06-06T07:38:45Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-023 (2m21s)
+[2026-06-06T07:38:48Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-024 (2m21s)
+[2026-06-06T07:38:53Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-026 (2m21s)
+[2026-06-06T07:38:56Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-027 (2m21s)
+[2026-06-06T07:39:00Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-029 (2m21s)
+[2026-06-06T07:39:05Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-031 (2m21s)
+[2026-06-06T07:39:08Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-032 (2m21s)
+[2026-06-06T07:39:08Z] [INFO] fio: 16/32 VMs still in progress (16 running) (2m21s elapsed)
+[2026-06-06T07:39:38Z] [INFO] fio: 16/32 VMs still in progress (16 running) (3m36s elapsed)
+[2026-06-06T07:40:07Z] [INFO] fio: 16/32 VMs still in progress (16 running) (4m06s elapsed)
+[2026-06-06T07:40:39Z] [INFO] fio: 16/32 VMs still in progress (16 running) (4m37s elapsed)
+[2026-06-06T07:40:52Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-001 (5m07s)
+[2026-06-06T07:40:56Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-002 (5m07s)
+[2026-06-06T07:40:59Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-004 (5m07s)
+[2026-06-06T07:41:02Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-005 (5m07s)
+[2026-06-06T07:41:05Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-006 (5m07s)
+[2026-06-06T07:41:08Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-007 (5m07s)
+[2026-06-06T07:41:11Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-008 (5m07s)
+[2026-06-06T07:41:14Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-010 (5m07s)
+[2026-06-06T07:41:17Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-013 (5m07s)
+[2026-06-06T07:41:20Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-017 (5m07s)
+[2026-06-06T07:41:23Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-018 (5m07s)
+[2026-06-06T07:41:27Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-022 (5m07s)
+[2026-06-06T07:41:29Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-025 (5m07s)
+[2026-06-06T07:41:32Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-028 (5m07s)
+[2026-06-06T07:41:35Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-030 (5m07s)
+[2026-06-06T07:41:35Z] [INFO] fio: 1/32 VMs still in progress (1 running) (5m07s elapsed)
+[2026-06-06T07:41:48Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-003 (6m03s)
+[2026-06-06T07:41:48Z] [INFO] All fio tests completed successfully
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-001...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-003...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-005...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-002...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-008...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-011...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-015...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-024...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-012...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-020...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-028...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-030...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-029...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-023...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-031...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-013...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-018...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-026...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-032...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-021...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-019...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-027...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-004...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-010...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-009...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-022...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-006...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-025...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-014...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-017...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-016...
+[2026-06-06T07:41:48Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-007...
+[2026-06-06T07:41:51Z] [INFO] [qd-sweep] Sweep complete; deleting 32 VMs
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-001
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-002
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-012
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-020
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-009
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-030
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-008
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-006
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-021
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-023
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-032
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-027
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-003
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-015
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-011
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-014
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-005
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-017
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-031
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-026
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-018
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-022
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-029
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-024
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-004
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-010
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-007
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-013
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-019
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-028
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-025
+[2026-06-06T07:41:51Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-016
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-005" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-020" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-011" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-009" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-007" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-014" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-027" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-021" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-004" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-023" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-001" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-022" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-018" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-026" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-013" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-003" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-030" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-017" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-031" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-006" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-010" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-019" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-016" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-025" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-028" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-015" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-024" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-032" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-012" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-008" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-002" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-029" deleted
+secret "qdsw-rep3-virt-big-osd-007-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-020-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-005-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-020-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-007-data" deleted
+secret "qdsw-rep3-virt-big-osd-027-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-011-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-014-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-005-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-027-data" deleted
+secret "qdsw-rep3-virt-big-osd-009-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-004-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-011-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-014-data" deleted
+secret "qdsw-rep3-virt-big-osd-021-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-004-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-009-data" deleted
+secret "qdsw-rep3-virt-big-osd-023-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-021-data" deleted
+secret "qdsw-rep3-virt-big-osd-001-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-026-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-004-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-023-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-021-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-001-data" deleted
+secret "qdsw-rep3-virt-big-osd-022-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-003-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-026-data" deleted
+secret "qdsw-rep3-virt-big-osd-013-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-023-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-003-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-001-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-022-data" deleted
+secret "qdsw-rep3-virt-big-osd-018-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-030-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-026-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-013-data" deleted
+secret "qdsw-rep3-virt-big-osd-031-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-022-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-003-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-030-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-018-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-013-rootdisk" deleted
+secret "qdsw-rep3-virt-big-osd-006-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-030-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-031-data" deleted
+secret "qdsw-rep3-virt-big-osd-017-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-018-rootdisk" deleted
+secret "qdsw-rep3-virt-big-osd-016-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-006-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-031-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-017-data" deleted
+secret "qdsw-rep3-virt-big-osd-010-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-016-data" deleted
+secret "qdsw-rep3-virt-big-osd-019-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-006-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-017-rootdisk" deleted
+secret "qdsw-rep3-virt-big-osd-015-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-019-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-010-data" deleted
+secret "qdsw-rep3-virt-big-osd-028-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-025-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-016-rootdisk" deleted
+secret "qdsw-rep3-virt-big-osd-012-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-024-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-008-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-019-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-015-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-010-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-025-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-028-data" deleted
+secret "qdsw-rep3-virt-big-osd-029-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-012-data" deleted
+secret "qdsw-rep3-virt-big-osd-002-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-028-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-024-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-008-data" deleted
+secret "qdsw-rep3-virt-big-osd-032-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-012-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-029-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-025-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-015-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-002-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-024-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-008-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-032-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-029-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-002-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-032-rootdisk" deleted
+<stdin>:53: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+[2026-06-06T07:42:19Z] [INFO] === qd-sweep complete: ./results/tune-20260606-082906/qd-sweep/rep3-virt/big-osd/qd.csv ===
+[2026-06-06T07:42:19Z] [INFO] ===== Config: big-osd+mclock =====
+[2026-06-06T07:42:20Z] [INFO] Patching storageDeviceSets[0].resources: cpu=6 memory=24Gi (op=replace)
+[2026-06-06T07:42:20Z] [INFO] Patching managedResources.cephCluster.cephConfig.osd: {"osd_mclock_profile":"high_client_ops","bluestore_throttle_bytes":"262144","osd_memory_target":"20000000000","bluestore_throttle_deferred_bytes":"262144"}
+[2026-06-06T07:42:21Z] [INFO] Waiting for ceph config osd:bluestore_throttle_bytes='262144' (timeout=120s)
+[2026-06-06T07:43:36Z] [INFO]   ceph config osd:bluestore_throttle_bytes = 262144
+[2026-06-06T07:43:36Z] [INFO] Waiting for OSDs ready + pod-spec converged (timeout=1200s)
+[2026-06-06T07:44:19Z] [INFO]   OSDs ready, ceph=HEALTH_OK, pods=6/24Gi
+[config] Run ID: tune-20260606-082906
+[config] Cluster: bm (bx2d.metal.96x384, 3 workers)
+[config] Region: eu-de, Zones: eu-de-2 (multi-AZ=false)
+[config] CSI dedup: file=true, block=true
+[config] Namespace: vm-perf-test
+[config] ODF pools: 11
+[config] File CSI profiles: auto
+[config] Block CSI: true (discovery=auto)
+[config] Pool CSI: auto-detect (name=bench-pool)
+[config] VM sizes: 3, PVC sizes: 3
+[config] Concurrency levels: 1 5 10
+[2026-06-06T07:44:21Z] [INFO] === qd-sweep: pool=rep3-virt cfg=big-osd+mclock n=32 qds=32 ===
+[2026-06-06T07:44:21Z] [INFO] [qd-sweep] Sync barrier: fio measurement starts at epoch 1780732041 (+180s)
+[2026-06-06T07:44:21Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-001 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-001-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-001 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-001-data created
+[2026-06-06T07:44:23Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-002 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-002-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-002 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-002-data created
+[2026-06-06T07:44:26Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-003 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-003-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-003 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-003-data created
+[2026-06-06T07:44:28Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-004 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-004-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-004 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-004-data created
+[2026-06-06T07:44:30Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-005 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-005-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-005 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-005-data created
+[2026-06-06T07:44:32Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-006 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-006-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-006 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-006-data created
+[2026-06-06T07:44:34Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-007 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-007-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-007 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-007-data created
+[2026-06-06T07:44:36Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-008 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-008-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-008 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-008-data created
+[2026-06-06T07:44:37Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-009 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-009-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-009 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-009-data created
+[2026-06-06T07:44:40Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-010 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-010-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-010 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-010-data created
+[2026-06-06T07:44:41Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-011 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-011-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-011 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-011-data created
+[2026-06-06T07:44:43Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-012 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-012-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-012 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-012-data created
+[2026-06-06T07:44:45Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-013 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-013-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-013 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-013-data created
+[2026-06-06T07:44:47Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-014 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-014-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-014 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-014-data created
+[2026-06-06T07:44:50Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-015 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-015-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-015 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-015-data created
+[2026-06-06T07:44:52Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-016 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-016-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-016 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-016-data created
+[2026-06-06T07:44:54Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-017 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-017-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-017 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-017-data created
+[2026-06-06T07:44:56Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-018 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-018-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-018 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-018-data created
+[2026-06-06T07:44:58Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-019 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-019-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-019 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-019-data created
+[2026-06-06T07:45:00Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-020 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-020-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-020 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-020-data created
+[2026-06-06T07:45:02Z] [INFO] [qd-sweep] Batch 20/32 submitted, pausing...
+[2026-06-06T07:45:07Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-021 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-021-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-021 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-021-data created
+[2026-06-06T07:45:10Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-022 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-022-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-022 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-022-data created
+[2026-06-06T07:45:11Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-023 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-023-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-023 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-023-data created
+[2026-06-06T07:45:13Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-024 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-024-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-024 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-024-data created
+[2026-06-06T07:45:15Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-025 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-025-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-025 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-025-data created
+[2026-06-06T07:45:17Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-026 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-026-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-026 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-026-data created
+[2026-06-06T07:45:19Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-027 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-027-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-027 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-027-data created
+[2026-06-06T07:45:21Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-028 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-028-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-028 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-028-data created
+[2026-06-06T07:45:23Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-029 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-029-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-029 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-029-data created
+[2026-06-06T07:45:26Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-030 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-030-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-030 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-030-data created
+[2026-06-06T07:45:28Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-031 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-031-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-031 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-031-data created
+[2026-06-06T07:45:30Z] [INFO] Creating VM: qdsw-rep3-virt-big-osd-mclock-032 (sc=ocs-storagecluster-ceph-rbd-virtualization, pvc=150Gi, cpu=2, mem=4Gi)
+secret/qdsw-rep3-virt-big-osd-mclock-032-cloudinit created
+virtualmachine.kubevirt.io/qdsw-rep3-virt-big-osd-mclock-032 created
+persistentvolumeclaim/qdsw-rep3-virt-big-osd-mclock-032-data created
+[2026-06-06T07:45:32Z] [INFO] [qd-sweep] All 32 VMs created, waiting for Running...
+[2026-06-06T07:45:32Z] [INFO] Waiting for 32 VMs to reach Running state...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-001 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-002 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-004 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-008 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-006 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-007 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-012 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-011 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-009 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-005 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-003 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-018 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-010 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-020 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-017 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-016 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-014 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-032 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-029 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-013 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-015 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-027 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-030 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-021 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-024 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-019 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-022 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-026 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-031 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-028 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-025 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:32Z] [INFO] Waiting for VM qdsw-rep3-virt-big-osd-mclock-023 to reach Running state (timeout=900s)...
+[2026-06-06T07:45:34Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-004 is Running (took 1s)
+[2026-06-06T07:45:34Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-017 is Running (took 1s)
+[2026-06-06T07:45:34Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-021 is Running (took 1s)
+[2026-06-06T07:45:34Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-007 is Running (took 1s)
+[2026-06-06T07:45:34Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-010 is Running (took 2s)
+[2026-06-06T07:45:34Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-001 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-024 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-005 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-008 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-012 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-019 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-002 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-020 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-011 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-023 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-022 is Running (took 2s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-014 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-015 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-006 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-013 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-018 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-009 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-016 is Running (took 1s)
+[2026-06-06T07:45:35Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-003 is Running (took 2s)
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-029: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-027: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-028: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-025: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-031: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-026: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-032: DV phase=CloneFromSnapshotSourceInProgress progress=N/A
+[2026-06-06T07:45:36Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-030: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-029 is Running (took 14s)
+[2026-06-06T07:45:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-027 is Running (took 14s)
+[2026-06-06T07:45:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-028 is Running (took 14s)
+[2026-06-06T07:45:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-025 is Running (took 14s)
+[2026-06-06T07:45:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-031 is Running (took 14s)
+[2026-06-06T07:45:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-030 is Running (took 14s)
+[2026-06-06T07:45:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-026 is Running (took 14s)
+[2026-06-06T07:45:48Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-032: DV clone complete, waiting for VM boot...
+[2026-06-06T07:45:58Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-032 is Running (took 26s)
+[2026-06-06T07:45:58Z] [INFO] All 32 VMs are Running
+[2026-06-06T07:45:58Z] [INFO] --- QD=32 ---
+[2026-06-06T07:45:58Z] [INFO] [qd-sweep] QD=32: sync barrier epoch 1780732138 (+180s)
+[2026-06-06T07:45:58Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-001
+[2026-06-06T07:46:00Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-002
+[2026-06-06T07:46:01Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-003
+[2026-06-06T07:46:04Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-004
+[2026-06-06T07:46:05Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-005
+[2026-06-06T07:46:07Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-006
+[2026-06-06T07:46:08Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-007
+[2026-06-06T07:46:09Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-008
+[2026-06-06T07:46:11Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-009
+[2026-06-06T07:46:12Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-010
+[2026-06-06T07:46:13Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-011
+[2026-06-06T07:46:15Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-012
+[2026-06-06T07:46:16Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-013
+[2026-06-06T07:46:18Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-014
+[2026-06-06T07:46:20Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-015
+[2026-06-06T07:46:21Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-016
+[2026-06-06T07:46:22Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-017
+[2026-06-06T07:46:24Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-018
+[2026-06-06T07:46:25Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-019
+[2026-06-06T07:46:26Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-020
+[2026-06-06T07:46:27Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-021
+[2026-06-06T07:46:29Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-022
+[2026-06-06T07:46:30Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-023
+[2026-06-06T07:46:31Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-024
+[2026-06-06T07:46:33Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-025
+[2026-06-06T07:46:35Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-026
+[2026-06-06T07:46:37Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-027
+[2026-06-06T07:46:39Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-028
+[2026-06-06T07:46:42Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-029
+[2026-06-06T07:46:43Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-030
+[2026-06-06T07:46:46Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-031
+[2026-06-06T07:46:47Z] [INFO] Replacing fio job in VM qdsw-rep3-virt-big-osd-mclock-032
+[2026-06-06T07:46:48Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-001
+[2026-06-06T07:46:50Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-002
+[2026-06-06T07:46:51Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-003
+[2026-06-06T07:46:52Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-004
+[2026-06-06T07:46:53Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-005
+[2026-06-06T07:46:54Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-006
+[2026-06-06T07:46:55Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-007
+[2026-06-06T07:46:57Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-008
+[2026-06-06T07:46:58Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-009
+[2026-06-06T07:47:01Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-010
+[2026-06-06T07:47:02Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-011
+[2026-06-06T07:47:04Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-012
+[2026-06-06T07:47:05Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-013
+[2026-06-06T07:47:06Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-014
+[2026-06-06T07:47:07Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-015
+[2026-06-06T07:47:09Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-016
+[2026-06-06T07:47:11Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-017
+[2026-06-06T07:47:13Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-018
+[2026-06-06T07:47:14Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-019
+[2026-06-06T07:47:17Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-020
+[2026-06-06T07:47:18Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-021
+[2026-06-06T07:47:20Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-022
+[2026-06-06T07:47:22Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-023
+[2026-06-06T07:47:23Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-024
+[2026-06-06T07:47:26Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-025
+[2026-06-06T07:47:27Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-026
+[2026-06-06T07:47:29Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-027
+[2026-06-06T07:47:30Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-028
+[2026-06-06T07:47:32Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-029
+[2026-06-06T07:47:33Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-030
+[2026-06-06T07:47:35Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-031
+[2026-06-06T07:47:36Z] [INFO] Restarting fio service in VM qdsw-rep3-virt-big-osd-mclock-032
+[2026-06-06T07:47:38Z] [INFO] Waiting for fio to complete in 32 VMs...
+[2026-06-06T07:47:40Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-001: fio service is running
+[2026-06-06T07:47:42Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-002: fio service is running
+[2026-06-06T07:47:43Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-003: fio service is running
+[2026-06-06T07:47:44Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-004: fio service is running
+[2026-06-06T07:47:45Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-005: fio service is running
+[2026-06-06T07:47:46Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-006: fio service is running
+[2026-06-06T07:47:47Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-007: fio service is running
+[2026-06-06T07:47:48Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-008: fio service is running
+[2026-06-06T07:47:50Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-009: fio service is running
+[2026-06-06T07:47:51Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-010: fio service is running
+[2026-06-06T07:47:52Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-011: fio service is running
+[2026-06-06T07:47:53Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-012: fio service is running
+[2026-06-06T07:47:54Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-013: fio service is running
+[2026-06-06T07:47:55Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-014: fio service is running
+[2026-06-06T07:47:57Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-015: fio service is running
+[2026-06-06T07:47:58Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-016: fio service is running
+[2026-06-06T07:47:59Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-017: fio service is running
+[2026-06-06T07:48:00Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-018: fio service is running
+[2026-06-06T07:48:02Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-019: fio service is running
+[2026-06-06T07:48:03Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-020: fio service is running
+[2026-06-06T07:48:04Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-021: fio service is running
+[2026-06-06T07:48:05Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-022: fio service is running
+[2026-06-06T07:48:06Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-023: fio service is running
+[2026-06-06T07:48:07Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-024: fio service is running
+[2026-06-06T07:48:09Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-025: fio service is running
+[2026-06-06T07:48:10Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-026: fio service is running
+[2026-06-06T07:48:11Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-027: fio service is running
+[2026-06-06T07:48:12Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-028: fio service is running
+[2026-06-06T07:48:14Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-029: fio service is running
+[2026-06-06T07:48:15Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-030: fio service is running
+[2026-06-06T07:48:16Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-031: fio service is running
+[2026-06-06T07:48:18Z] [INFO] VM qdsw-rep3-virt-big-osd-mclock-032: fio service is running
+[2026-06-06T07:49:06Z] [INFO] fio: 32/32 VMs still in progress (32 running) (50s elapsed)
+[2026-06-06T07:49:34Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-014 (1m38s)
+[2026-06-06T07:49:38Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-015 (1m38s)
+[2026-06-06T07:49:42Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-017 (1m38s)
+[2026-06-06T07:49:45Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-018 (1m38s)
+[2026-06-06T07:49:49Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-020 (1m38s)
+[2026-06-06T07:49:53Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-021 (1m38s)
+[2026-06-06T07:49:57Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-023 (1m38s)
+[2026-06-06T07:50:03Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-025 (1m38s)
+[2026-06-06T07:50:07Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-026 (1m38s)
+[2026-06-06T07:50:11Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-027 (1m38s)
+[2026-06-06T07:50:15Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-029 (1m38s)
+[2026-06-06T07:50:18Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-030 (1m38s)
+[2026-06-06T07:50:23Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-032 (1m38s)
+[2026-06-06T07:50:23Z] [INFO] fio: 19/32 VMs still in progress (19 running) (1m38s elapsed)
+[2026-06-06T07:50:47Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-009 (2m55s)
+[2026-06-06T07:50:50Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-010 (2m55s)
+[2026-06-06T07:50:55Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-013 (2m55s)
+[2026-06-06T07:51:03Z] [INFO] fio: 16/32 VMs still in progress (16 running) (2m55s elapsed)
+[2026-06-06T07:51:16Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-001 (3m35s)
+[2026-06-06T07:51:19Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-002 (3m35s)
+[2026-06-06T07:51:22Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-003 (3m35s)
+[2026-06-06T07:51:25Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-004 (3m35s)
+[2026-06-06T07:51:30Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-005 (3m35s)
+[2026-06-06T07:51:33Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-006 (3m35s)
+[2026-06-06T07:51:37Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-007 (3m35s)
+[2026-06-06T07:51:40Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-008 (3m35s)
+[2026-06-06T07:51:43Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-011 (3m35s)
+[2026-06-06T07:51:46Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-012 (3m35s)
+[2026-06-06T07:51:49Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-016 (3m35s)
+[2026-06-06T07:51:52Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-019 (3m35s)
+[2026-06-06T07:51:55Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-022 (3m35s)
+[2026-06-06T07:51:58Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-024 (3m35s)
+[2026-06-06T07:52:01Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-028 (3m35s)
+[2026-06-06T07:52:04Z] [INFO] fio completed in VM qdsw-rep3-virt-big-osd-mclock-031 (3m35s)
+[2026-06-06T07:52:04Z] [INFO] All fio tests completed successfully
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-001...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-006...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-002...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-004...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-003...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-007...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-027...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-023...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-026...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-008...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-018...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-013...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-029...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-005...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-032...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-025...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-017...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-031...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-012...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-019...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-015...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-020...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-024...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-009...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-028...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-010...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-011...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-021...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-022...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-030...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-014...
+[2026-06-06T07:52:04Z] [INFO] Collecting results from VM qdsw-rep3-virt-big-osd-mclock-016...
+[2026-06-06T07:52:07Z] [INFO] [qd-sweep] Sweep complete; deleting 32 VMs
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-001
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-003
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-004
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-005
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-007
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-010
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-014
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-013
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-006
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-026
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-025
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-011
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-032
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-008
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-015
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-016
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-009
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-017
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-030
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-019
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-020
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-027
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-021
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-023
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-024
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-018
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-002
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-029
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-031
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-022
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-028
+[2026-06-06T07:52:07Z] [INFO] Deleting VM: qdsw-rep3-virt-big-osd-mclock-012
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-001" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-016" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-021" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-019" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-024" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-018" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-020" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-029" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-025" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-008" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-003" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-014" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-010" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-028" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-023" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-002" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-013" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-015" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-026" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-011" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-030" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-027" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-031" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-017" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-006" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-032" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-009" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-004" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-007" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-012" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-005" deleted
+virtualmachine.kubevirt.io "qdsw-rep3-virt-big-osd-mclock-022" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-018-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-016-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-021-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-020-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-029-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-029-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-020-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-021-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-018-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-016-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-001-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-024-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-014-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-001-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-025-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-013-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-024-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-019-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-010-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-008-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-025-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-014-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-013-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-001-rootdisk" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-026-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-003-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-019-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-002-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-028-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-008-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-010-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-014-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-025-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-026-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-019-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-003-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-002-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-011-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-023-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-030-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-017-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-028-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-027-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-009-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-011-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-030-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-023-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-015-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-002-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-017-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-032-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-027-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-009-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-031-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-007-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-015-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-017-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-032-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-031-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-007-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-009-rootdisk" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-006-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-022-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-012-cloudinit" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-004-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-006-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-022-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-012-data" deleted
+secret "qdsw-rep3-virt-big-osd-mclock-005-cloudinit" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-004-data" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-006-rootdisk" deleted
+persistentvolumeclaim "qdsw-rep3-virt-big-osd-mclock-005-data" deleted
+<stdin>:53: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+[2026-06-06T07:52:21Z] [INFO] === qd-sweep complete: ./results/tune-20260606-082906/qd-sweep/rep3-virt/big-osd+mclock/qd.csv ===
+[2026-06-06T07:52:21Z] [INFO] All configs complete. Restoring initial cluster state...
+[2026-06-06T07:52:21Z] [INFO] Restoring: .spec.resourceProfile = balanced
+storagecluster.ocs.openshift.io/ocs-storagecluster patched (no change)
+[2026-06-06T07:52:22Z] [INFO] Restoring: removing .spec.storageDeviceSets[0].resources override
+[2026-06-06T07:52:23Z] [INFO] Restoring: clearing ceph DB osd overrides
+[2026-06-06T07:52:24Z] [INFO]   ceph config rm osd:bluestore_throttle_bytes
+[2026-06-06T07:52:27Z] [INFO]   ceph config rm osd:bluestore_throttle_deferred_bytes
+[2026-06-06T07:52:29Z] [INFO]   ceph config rm osd:osd_mclock_profile
+[2026-06-06T07:52:31Z] [INFO]   ceph config rm osd:osd_memory_target
+[2026-06-06T07:52:33Z] [INFO] Restoring: removing .spec.managedResources.cephCluster.cephConfig
+[2026-06-06T07:52:34Z] [INFO] Waiting for OSDs ready + pod-spec converged (timeout=600s)
+[2026-06-06T07:56:13Z] [INFO]   OSDs ready, ceph=HEALTH_WARN, pods=2/5Gi
+[2026-06-06T07:56:14Z] [INFO] MCP/worker not present — managed-worker cluster (ROKS); skipping wait
+[2026-06-06T07:56:14Z] [INFO] Cluster restored to pre-sweep state.
+[config] Run ID: tune-20260606-082906
+[config] Cluster: bm (bx2d.metal.96x384, 3 workers)
+[config] Region: eu-de, Zones: eu-de-2 (multi-AZ=false)
+[config] CSI dedup: file=true, block=true
+[config] Namespace: vm-perf-test
+[config] ODF pools: 11
+[config] File CSI profiles: auto
+[config] Block CSI: true (discovery=auto)
+[config] Pool CSI: auto-detect (name=bench-pool)
+[config] VM sizes: 3, PVC sizes: 3
+[config] Concurrency levels: 1 5 10
+[2026-06-06T07:56:14Z] [INFO] === Generating Tune-Sweep Report ===
+[2026-06-06T07:56:14Z] [INFO] Generating tune-sweep report: ./reports/tune-sweep-rep3-virt-tune-20260606-082906.html
+<stdin>:155: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+[2026-06-06T07:56:14Z] [INFO] Tune-sweep report generated: ./reports/tune-sweep-rep3-virt-tune-20260606-082906.html
+[2026-06-06T07:56:14Z] [INFO] Tune-sweep report: ./reports/tune-sweep-rep3-virt-tune-20260606-082906.html
