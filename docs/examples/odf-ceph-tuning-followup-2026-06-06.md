@@ -194,22 +194,17 @@ Each sweep takes approximately 35–45 minutes including OSD apply (both configs
 
 ## Artefacts
 
-The canonical sweep result directories (`results/tune-20260606-075823/` and `results/tune-20260606-082906/`) and the per-sweep HTML reports were written into a git worktree that was removed after the merge, before being copied to the main checkout. The headline numbers in this writeup were extracted from `qd-summary.json` and `qd.csv` before the cleanup; the orchestrator logs and the per-cell delta computation survived in scratch and are preserved here:
+The canonical sweep result directories (`results/tune-20260606-075823/` for Sweep A and `results/tune-20260606-082906/` for Sweep B) and the per-sweep HTML reports were written into a git worktree that was removed before the data could be copied to the main checkout. The 4-cell numbers above were extracted from `qd-summary.json` and `qd.csv` into this writeup before the cleanup, so the headline data is intact, but the raw per-VM fio JSONs and the HTML reports are gone.
 
+Reproducible by re-running the sweeps per §Reproducibility (~1 h cluster contact for both combined).
+
+Lineage docs:
 ```
-docs/examples/artefacts/odf-ceph-tuning-followup-2026-06-06/
-  sweep-a.log               ← full Sweep A orchestrator log (run-id tune-20260606-075823)
-  sweep-b.log               ← full Sweep B orchestrator log (run-id tune-20260606-082906)
-  deltas.txt                ← /tmp/deltas.txt — 4-cell matrix + per-knob deltas + interaction term
-  phase0-observations.md    ← Phase 0 cluster verification notes (osd_memory_target=4 GiB finding)
-
-docs/examples/odf-ceph-tuning-candidates-2026-06-04.md  ← candidate shortlist
-docs/examples/odf-osd-resource-tuning-2026-06-04.md     ← prior big-osd baseline writeup
+docs/examples/odf-ceph-tuning-candidates-2026-06-04.md             ← candidate shortlist
+docs/examples/odf-osd-resource-tuning-2026-06-04.md                ← prior big-osd baseline writeup
 docs/superpowers/specs/2026-06-05-odf-ceph-tuning-followup-design.md  ← spec
 docs/superpowers/plans/2026-06-05-odf-ceph-tuning-followup.md         ← implementation plan
 ```
-
-The lost artefacts are reproducible by re-running the sweeps per the §Reproducibility commands above (~1 h cluster contact for both sweeps combined).
 
 ---
 
