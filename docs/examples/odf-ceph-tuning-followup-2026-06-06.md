@@ -23,6 +23,16 @@ The bottom line: **iothreads alone is a strong tail-latency win** — write p99 
 
 ---
 
+## Plain English Summary
+
+If you don't speak Ceph and just want to know what to do:
+
+- **Already done for you:** A small VM-template setting was turned on permanently — it lets each VM dispatch disk I/O on its own background thread instead of queuing everything through one. Throughput is unchanged, but worst-case write latency improved 25 % and worst-case read latency improved 53 %. Free win.
+- **Optional, off by default:** A Ceph-side tuning bundle is available via `./09-run-tune-sweep.sh --configs big-osd+mclock`. It improves worst-case read latency (~29 %) but costs about 4 % of throughput. Use it when slow reads are the specific complaint; leave it off otherwise.
+- **Don't combine them.** Stacking the two changes makes everything worse: throughput drops 8.5 %, write tail latency more than doubles, read tail latency more than doubles. The two knobs fight each other — one tries to feed I/O to Ceph faster, the other deliberately narrows the Ceph-side queue. More inflow + narrower queue = stuck I/O.
+
+---
+
 ## Cluster Baseline and Phase 0 Finding
 
 Cluster was verified clean before Sweep A: all 24 OSD pods at `2 CPU / 5Gi` (balanced profile defaults), `HEALTH_OK`, and no leftover patches from the 2026-06-04 sweeps.
