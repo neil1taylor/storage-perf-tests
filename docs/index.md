@@ -7,6 +7,7 @@ This documentation covers everything you need to understand, run, and interpret 
 ## Who Is This For?
 
 - **New to Kubernetes/OpenShift?** Start with the [Concepts](#concepts) section.
+- **Setting up an ODF cluster for VM workloads?** See [ODF Performance Best Practices](guides/odf-performance-best-practices.md).
 - **Want to create a custom Ceph pool?** See the [CephBlockPool Setup Guide](guides/ceph-pool-setup.md).
 - **Want to quickly rank all StorageClasses?** See `--rank` mode in [Running Tests](guides/running-tests.md#storageclass-ranking).
 - **Ready to run tests?** Jump to the [Guides](#guides) section.
@@ -55,6 +56,7 @@ Practical how-to documentation for running and customizing the test suite.
 | [Configuration Reference](guides/configuration-reference.md) | Every parameter in `00-config.sh` fully documented |
 | [Running Tests](guides/running-tests.md) | Step-by-step test execution walkthrough |
 | [Understanding Results](guides/understanding-results.md) | Reading fio JSON, CSV columns, HTML dashboard, analysis tips |
+| [ODF Performance Best Practices](guides/odf-performance-best-practices.md) | Consolidated cluster-setup guidance for VM workloads: StorageClass, resourceProfile, replication, OSD resources, with the experiment behind each recommendation |
 | [CephBlockPool Setup](guides/ceph-pool-setup.md) | Correct pool configuration, PG autoscaler, OOB-aligned settings |
 | [Latency Patterns](guides/latency-patterns.md) | Read/write asymmetry, Ceph vs NFS vs EC tradeoffs, ranking interpretation |
 | [Comparing Runs](guides/comparing-runs.md) | End-to-end comparison workflow, delta calculation, A/B testing patterns |
