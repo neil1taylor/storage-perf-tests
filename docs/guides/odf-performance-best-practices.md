@@ -94,6 +94,18 @@ Honest note: this measurement is at the rate-capped density workload, not the sa
 
 Source: [odf-replication-scale-comparison.md](../examples/odf-replication-scale-comparison.md).
 
+**Uncapped density curve on this cluster** (run `scale-tuned-20260608-172541`, 4 KiB mixed-70-30, fresh VMs per step):
+
+| VMs | Total IOPS | BW (MB/s) | Write p99 | Comment |
+|----:|-----------:|----------:|----------:|---------|
+|   1 |     33,323 |       130 |    2.7 ms | clean baseline |
+|   8 |    123,404 |       482 |   19.8 ms | OSD cache pressure begins to show |
+|  16 |    163,871 |       640 |   42.2 ms | last point below 50 ms |
+|  32 |    228,239 |       892 |    196 ms | latency cliff entered |
+|  64 |  **302,842** |   **1,183** |    801 ms | full host CPU still places all VMs |
+
+Performance reaches **c=64 with all VMs scheduled** — the lighter 96 vCPU OSD reservation (4 × 24) leaves enough host CPU for 64 small (2 vCPU) guests. Throughput keeps climbing all the way to c=64 (+33% over c=32, no peak yet); only tail latency rules out higher counts. If you need to host this many VMs and can tolerate ≥200 ms write p99, performance is the right rung.
+
 **For most clusters this is where you stop.** Steps 3–5 are for hosts with the resource budget to push further and a workload that demands it.
 
 ### Step 3 — Apply `big-osd` resource override + `osd_memory_target`
@@ -153,9 +165,23 @@ The shape tells you:
 
 Cost: 6 × 24 OSDs = **144 vCPU** and **576 GiB** of OSD requests cluster-wide. Fits on the reference cluster (288 vCPU / 1152 GiB) with headroom; check explicitly on smaller hardware. Apply/restore cycle is ~10–15 min per change (one full OSD roll).
 
-**VM-density ceiling on this cluster (uncapped, big-osd):** the 144-vCPU OSD reservation leaves ~144 vCPU for guests on the 288-vCPU cluster. An uncapped ramp at 4 KiB mixed-70-30 (run `scale-tuned-20260608-102554`) measured: c=1→34k IOPS, c=16→202k, **c=32→345k (peak)**, c=40→338k, c=48→305k (write p99 climbs past 425 ms once saturation is past). c=56 then hits `0/3 nodes are available: 3 Insufficient cpu` and one VM never reaches Running. The small-VM (2-vCPU) scheduling ceiling on big-osd therefore sits between **48 and 55 VMs** on this cluster. Past the c=32 IOPS-saturation point this is mostly informational — `performance` reaches the same saturation with 96 vCPU more guest budget left, which is why it's the recommended rung for most clusters. On smaller hosts, big-osd's reservation share may not leave room even for the saturation count; check `oc adm top nodes` before opting in.
+**VM-density ceiling on this cluster (uncapped, big-osd):** the 144-vCPU OSD reservation leaves ~144 vCPU for guests on the 288-vCPU cluster. An uncapped ramp at 4 KiB mixed-70-30 (run `scale-tuned-20260608-102554`) measured: c=1→34k IOPS, c=16→202k, **c=32→345k (peak)**, c=40→338k, c=48→305k (write p99 climbs past 425 ms once saturation is past). c=56 then hits `0/3 nodes are available: 3 Insufficient cpu` and one VM never reaches Running. The small-VM (2-vCPU) scheduling ceiling on big-osd therefore sits between **48 and 55 VMs** on this cluster.
 
-Source: [odf-osd-resource-tuning-2026-06-04.md](../examples/odf-osd-resource-tuning-2026-06-04.md); 4 GiB target discovery in [odf-ceph-tuning-followup-2026-06-06.md §"Cluster Baseline and Phase 0 Finding"](../examples/odf-ceph-tuning-followup-2026-06-06.md); density ceiling ramp in `results/scale-test/rep3-virt/ramp.csv` (run `scale-tuned-20260608-102554`).
+**big-osd vs performance, uncapped on this cluster** (paired runs `scale-tuned-20260608-102554` and `scale-tuned-20260608-172541`):
+
+| VMs | big-osd IOPS | performance IOPS | big-osd p99 | performance p99 |
+|----:|-------------:|-----------------:|------------:|----------------:|
+|   1 |       34,373 |           33,323 |      2.5 ms |          2.7 ms |
+|   8 |      141,954 |          123,404 |      7.2 ms |         19.8 ms |
+|  16 |      202,210 |          163,871 |     11.9 ms |         42.2 ms |
+|  32 |    **344,981** |        228,239 |    52–94 ms* |          196 ms |
+|  64 |   unschedulable |     **302,842** |          — |          801 ms |
+
+\* big-osd c=32 today's sample landed at 425 ms — well outside the methodology note's variance band; doc's prior 4 fresh-VM samples ran 52.7/78.1/83.4/93.8 ms which is the value to trust here.
+
+The two profiles are **complementary, not points on the same curve**. big-osd buys per-VM throughput and tail latency in the c≤48 range — the 20 GB `osd_memory_target` advantage shows up clearly from c=8 onward (15–70 % higher IOPS, 2–4× better p99). Performance buys density — it places c=64 (where big-osd literally cannot schedule) at 302 k aggregate, ~88 % of big-osd's peak, but with 800 ms write p99. **Pick by the binding constraint**: latency budget → big-osd; small-VM count → performance. On smaller hosts than the reference, big-osd's reservation share may not leave room even for the c=32 saturation count; check `oc adm top nodes` before opting in.
+
+Source: [odf-osd-resource-tuning-2026-06-04.md](../examples/odf-osd-resource-tuning-2026-06-04.md); 4 GiB target discovery in [odf-ceph-tuning-followup-2026-06-06.md §"Cluster Baseline and Phase 0 Finding"](../examples/odf-ceph-tuning-followup-2026-06-06.md); density ceiling ramps in `results/scale-test/rep3-virt/ramp.csv` (runs `scale-tuned-20260608-102554` for big-osd, `scale-tuned-20260608-172541` for performance).
 
 ### Step 4 — Enable iothreads + multiqueue on the VM template
 
