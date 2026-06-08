@@ -153,7 +153,9 @@ The shape tells you:
 
 Cost: 6 × 24 OSDs = **144 vCPU** and **576 GiB** of OSD requests cluster-wide. Fits on the reference cluster (288 vCPU / 1152 GiB) with headroom; check explicitly on smaller hardware. Apply/restore cycle is ~10–15 min per change (one full OSD roll).
 
-Source: [odf-osd-resource-tuning-2026-06-04.md](../examples/odf-osd-resource-tuning-2026-06-04.md); 4 GiB target discovery in [odf-ceph-tuning-followup-2026-06-06.md §"Cluster Baseline and Phase 0 Finding"](../examples/odf-ceph-tuning-followup-2026-06-06.md).
+**VM-density ceiling on this cluster (uncapped, big-osd):** the 144-vCPU OSD reservation leaves ~144 vCPU for guests on the 288-vCPU cluster. An uncapped ramp at 4 KiB mixed-70-30 (run `scale-tuned-20260608-102554`) measured: c=1→34k IOPS, c=16→202k, **c=32→345k (peak)**, c=40→338k, c=48→305k (write p99 climbs past 425 ms once saturation is past). c=56 then hits `0/3 nodes are available: 3 Insufficient cpu` and one VM never reaches Running. The small-VM (2-vCPU) scheduling ceiling on big-osd therefore sits between **48 and 55 VMs** on this cluster. Past the c=32 IOPS-saturation point this is mostly informational — `performance` reaches the same saturation with 96 vCPU more guest budget left, which is why it's the recommended rung for most clusters. On smaller hosts, big-osd's reservation share may not leave room even for the saturation count; check `oc adm top nodes` before opting in.
+
+Source: [odf-osd-resource-tuning-2026-06-04.md](../examples/odf-osd-resource-tuning-2026-06-04.md); 4 GiB target discovery in [odf-ceph-tuning-followup-2026-06-06.md §"Cluster Baseline and Phase 0 Finding"](../examples/odf-ceph-tuning-followup-2026-06-06.md); density ceiling ramp in `results/scale-test/rep3-virt/ramp.csv` (run `scale-tuned-20260608-102554`).
 
 ### Step 4 — Enable iothreads + multiqueue on the VM template
 
