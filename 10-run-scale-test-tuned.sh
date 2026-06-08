@@ -125,9 +125,12 @@ if [[ -n "${RESUME_RUN_ID}" ]]; then
         -exec stat -f '%m %N' {} \; 2>/dev/null \
         | sort -nr | head -1 | awk '{print $1}')
       if [[ -z "${newest_json}" ]]; then
-        # Fall back to GNU stat (Linux) syntax — harmless on macOS if first form succeeded
-        newest_json=$(find "${d}" -maxdepth 1 -name '*-fio.json' -type f \
-          -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -1 | awk '{print $1}')
+        # Fall back to GNU stat (Linux) syntax — harmless on macOS if first form
+        # succeeded. The `|| true` keeps the substitution clean when BSD find
+        # (macOS) rejects `-printf`; with pipefail+set -e the unswallowed
+        # non-zero exit would propagate out of the assignment.
+        newest_json=$( (find "${d}" -maxdepth 1 -name '*-fio.json' -type f \
+          -printf '%T@ %p\n' 2>/dev/null || true) | sort -nr | head -1 | awk '{print $1}')
       fi
       [[ -z "${newest_json}" ]] && continue
       # Note: avoid bare `(( ... ))` here — with `set -e` an expression that
@@ -224,10 +227,11 @@ if [[ -n "${RESUME_RUN_ID}" ]]; then
       fi
       [[ -n "${brk_line}" ]] && brk_p99=$(echo "${brk_line}" | awk -F',' '{print $8}')
 
+      stitched_sc=$(get_storage_class_for_pool "${POOL}" 2>/dev/null || echo "${POOL}")
       cat > "${ramp_summary}" <<JSONEOF
 {
   "pool": "${POOL}",
-  "storage_class": "${POOL}",
+  "storage_class": "${stitched_sc}",
   "rate_iops": ${RATE_IOPS},
   "latency_sla_ms": ${LATENCY_SLA},
   "capacity_vms": ${last_pass},
