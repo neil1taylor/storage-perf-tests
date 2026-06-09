@@ -4,6 +4,93 @@ Performance benchmarking for VMs on IBM Cloud ROKS with OpenShift Virtualization
 
 Tested on a 3-node bare metal ROKS cluster (3x `bx2d.metal.96x384` with 8x 3200 NVMe, Frankfurt). Cross-platform comparison also available against VMware VCF on Classic (4x Dual Intel Xeon Gold 6248, 384 GB RAM, vSAN ESA).
 
+## In Plain English: What To Configure
+
+If you don't speak storage and just want to know which settings matter for VMs on this kind of cluster, this section is for you. The detailed evidence behind every claim is in [docs/guides/odf-performance-best-practices.md](docs/guides/odf-performance-best-practices.md).
+
+A bit of vocabulary first, used once each:
+
+- **OpenShift Data Foundation (ODF)** — the storage layer that backs your VM disks. Made up of many small storage worker processes (one per disk drive in the cluster). The configuration object that controls how it behaves is called `StorageCluster`.
+- **Ceph** — the underlying storage engine inside ODF. When this guide says "Ceph setting", that's a config knob on the storage engine itself.
+- **Worst-case slow operation** — when we say "worst-case" we mean the slowest 1% of disk operations. Average response times stay fast; the question is how slow the unlucky operations get under load.
+
+### Step 1: change one setting on the storage layer (this is the big one)
+
+Out of the box, the storage layer gives each storage worker only **2 CPUs**. That is enough for a quiet cluster, but it runs out of room very quickly. By the time **4 VMs** are doing real work at the same time, the storage workers have no CPU left — total work done across the cluster stops growing, and the slowest 1% of disk operations jump from about **5 ms to 45 ms** (a 9× slowdown).
+
+There is a built-in setting that doubles each worker's CPU. Apply it like this:
+
+```bash
+oc patch storagecluster ocs-storagecluster -n openshift-storage \
+  --type=merge -p='{"spec":{"resourceProfile":"performance"}}'
+```
+
+After the storage workers restart (about 5-10 minutes), each one has **4 CPUs and 8 GB of memory**.
+
+**What you get** (measured on the reference cluster, 1 to 64 active VMs):
+
+- Total work done roughly doubles. At full load: about **300,000 operations per second** instead of **158,000**.
+- The cluster can keep up smoothly with **2-4× more active VMs** before slowing down.
+- Slowest 1% of operations stay below 50 ms up to **16-32 active VMs**, instead of jumping to **hundreds of ms** at just 4 VMs.
+
+**What it costs:** 48 more CPUs reserved cluster-wide for the storage layer. The reference cluster has 288 CPUs total, so there is plenty left for actual VMs. Check `oc adm top nodes` first on smaller hosts.
+
+**If you only do one thing from this whole guide, do this.**
+
+### Step 2: optional second tweak if you ever run lots of VMs at once
+
+If you sometimes have **30 or more VMs** hitting storage at the same time, also tell the Ceph engine to use **20 GB of memory for caching** instead of the default 4 GB. No restart, no extra CPU.
+
+```bash
+# Record the setting in the StorageCluster (survives operator reconciles):
+oc patch storagecluster ocs-storagecluster -n openshift-storage --type=merge \
+  -p='{"spec":{"managedResources":{"cephCluster":{"cephConfig":{"osd":{"osd_memory_target":"20000000000"}}}}}}'
+
+# Push it directly to Ceph as well — the ODF operator sometimes silently
+# skips propagating this particular setting (observed on ODF 4.20):
+oc -n openshift-storage exec deploy/rook-ceph-tools -- \
+  ceph config set osd osd_memory_target 20000000000
+
+# Verify (should return 20000000000, not 4294967296):
+oc -n openshift-storage exec deploy/rook-ceph-tools -- \
+  ceph config get osd osd_memory_target
+```
+
+**What you get** (on top of Step 1):
+
+- At 32 active VMs: slowest 1% drops from about **200 ms to 67 ms** (3× better).
+- At 64 active VMs: slowest 1% drops from about **800 ms to 400 ms** (2× better).
+- Below ~16 active VMs there is no measurable improvement — the default 4 GB cache is enough.
+
+**What it costs:** about 16 GB of memory per storage worker — memory you probably had spare.
+
+**This is a complement to Step 1, not a replacement.** Step 1 buys throughput; Step 2 buys consistency at high load.
+
+### When to consider the heavier "big-osd" option (usually not worth it)
+
+There is a more aggressive setting where each storage worker gets **6 CPUs and 24 GB of memory**. We tested it. It delivers about **14% more peak throughput** at moderate VM counts, but it reserves so much cluster CPU (144 cores total) that VMs themselves start failing to start above ~50 active VMs — we hit `Insufficient CPU` scheduling errors at 56 VMs.
+
+So big-osd is only worth it if **all three** are true:
+
+1. Your hosts have plenty of spare CPU to give up (144 cores worth, cluster-wide).
+2. Your workload specifically needs that extra 14% of peak speed.
+3. You will never run more than about 50 simultaneous VMs.
+
+Otherwise, stop at Step 1 (and optionally Step 2). The big-osd configuration is mostly useful as a research baseline — Step 2 above gives you most of its latency benefit at none of its CPU cost.
+
+### Things that look tempting but aren't worth doing
+
+- **Turning off CPU power-saving on worker nodes.** Only works on self-managed OpenShift. Managed Red Hat OpenShift on IBM Cloud (ROKS) blocks the required kernel-level changes — the configuration request just hangs.
+- **Running data with only one copy ("rep1").** Twice as fast on writes, but if any one of the three hosts dies you permanently lose data. Useful only for measuring the hardware ceiling, never for production.
+- **Stacking the "mclock" Ceph tuning bundle on top of VM IOThreads.** The two settings fight each other. Combined: both worst-case latencies more than double, throughput drops 9%. Pick one or the other, not both.
+- **Manually changing the failure-domain setting per storage pool.** The storage operator computes it cluster-wide from your worker topology — overriding it per pool causes uneven data placement.
+
+### The bottom line for most clusters
+
+**Apply Step 1.** If you ever run 30+ active VMs and care about consistent response times, **also apply Step 2.** Those two settings deliver about 90% of the tuning value we measured across two weeks of experiments. Everything else covered in [the detailed guide](docs/guides/odf-performance-best-practices.md) is for specialised situations.
+
+---
+
 ## Latest Ranking Results
 
 Results from run `perf-20260227-203655` on a 3-node bare metal cluster (3x `bx2d.metal.96x384`, Frankfurt). Medium VM (4 vCPU, 8 GiB), 150 GiB PVC, concurrency=1, fio runtime 60s. RBD pools use `volumeMode: Block` for direct QEMU block device passthrough.

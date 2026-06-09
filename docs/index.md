@@ -6,6 +6,7 @@ This documentation covers everything you need to understand, run, and interpret 
 
 ## Who Is This For?
 
+- **Just want the bottom line — which settings actually matter?** See [In Plain English: What To Configure](../README.md#in-plain-english-what-to-configure) on the README. Two settings, plain language, no storage jargon required.
 - **New to Kubernetes/OpenShift?** Start with the [Concepts](#concepts) section.
 - **Setting up an ODF cluster for VM workloads?** See [ODF Performance Best Practices](guides/odf-performance-best-practices.md).
 - **Want to create a custom Ceph pool?** See the [CephBlockPool Setup Guide](guides/ceph-pool-setup.md).
