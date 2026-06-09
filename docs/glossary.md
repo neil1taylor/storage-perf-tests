@@ -8,15 +8,23 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Access Mode** — Defines how a PVC can be mounted. `ReadWriteOnce` (RWO) allows one node; `ReadWriteMany` (RWX) allows multiple nodes. This project uses RWO for VM data disks. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
+**balanced profile** — The default value for `StorageCluster.spec.resourceProfile`. Each OSD pod is requested at 2 vCPU / 5 GiB. Adequate for quiet clusters but exhausts OSD CPU under VM workloads — this project measured the cluster stop scaling at roughly 4 active VMs running mixed-70-30 I/O. Recommended only when host CPU budget rules out **performance profile**. See [Step 2 in ODF Performance Best Practices](guides/odf-performance-best-practices.md).
+
 **Bandwidth (BW)** — The rate of data transfer, typically measured in KiB/s or MiB/s. Large-block sequential workloads are bandwidth-sensitive. See [fio Benchmarking](concepts/fio-benchmarking.md).
 
+**big-osd** — Test-suite convention for the resource-override pattern that sets each OSD pod to 6 vCPU / 24 GiB via `StorageCluster.spec.storageDeviceSets[0].resources` (the documented `spec.resources.osd` path is silently ignored in ODF 4.20+). Applied via `TUNE_CONFIGS[big-osd]` in `00-config.sh`. Should be paired with `osd_memory_target=20G` to actually use the extra cache memory. Reserves +144 vCPU cluster-wide on a 24-OSD cluster, which on the reference cluster size means VM scheduling fails above ~50 small VMs (`Insufficient CPU`). Use only when **performance profile** isn't enough and the hosts have the spare capacity. See [Step 3 in ODF Performance Best Practices](guides/odf-performance-best-practices.md).
+
 **Block Size (bs)** — The size of each I/O operation in fio. Small block sizes (4k) test IOPS; large block sizes (1M) test throughput. See [fio Benchmarking](concepts/fio-benchmarking.md).
+
+**BlueStore** — Ceph's native OSD storage backend (replaced FileStore in Ceph Luminous). Runs as part of each OSD process and manages on-disk layout, metadata (in an embedded RocksDB), and an in-memory cache whose size is governed by `osd_memory_target`. All OSDs in this project use BlueStore.
 
 **CDI (Containerized Data Importer)** — A Kubernetes controller that provisions VM disk images into PVCs. Used by DataVolumes to clone root disks from pre-cached DataSources. CDI converts qcow2 source images to raw format during import to avoid metadata translation overhead. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 
 **Checkpoint** — A file (`results/<run-id>.checkpoint`) that records completed tests during a run. Each line contains a test key (`pool:vm_size:pvc_size:concurrency:profile:block_size`). Used by `--resume` to skip previously completed tests. See [Test Matrix Explained](architecture/test-matrix-explained.md#checkpoint--resume).
 
 **CephBlockPool** — A Ceph storage pool definition in ODF for RBD block storage. Each pool has a replication or erasure coding policy. The test suite creates custom pools with the `perf-test-` prefix. See [Ceph and ODF](concepts/ceph-and-odf.md).
+
+**cephConfig** — Path under `StorageCluster.spec.managedResources.cephCluster.cephConfig` for runtime Ceph configuration overrides (e.g. `osd.osd_memory_target`, `osd.osd_mclock_profile`). The ocs-operator propagates this map into the underlying CephCluster CR; Rook then writes the values into the Ceph config database. Caveat: as of ODF 4.20, Rook may silently skip propagating some keys (observed for `osd_memory_target`) — the tune-sweep wrapper also pushes each value directly via `ceph config set` as a workaround.
 
 **CephFilesystem** — A Ceph filesystem definition in ODF, providing POSIX-compatible shared storage via CephFS. Each CephFilesystem has a metadata pool (always 3-replica for safety) and one or more data pools. The test suite tests `cephfs-rep3` (OOB) and optionally `cephfs-rep2` (custom, 2-replica data pool). See [Ceph and ODF](concepts/ceph-and-odf.md).
 
@@ -62,11 +70,15 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **IOPS (I/O Operations Per Second)** — A measure of how many read or write operations a storage system can handle per second. Small-block random workloads are IOPS-sensitive. See [fio Benchmarking](concepts/fio-benchmarking.md).
 
+**iothreads** — A KubeVirt VM-template optimisation that gives each data disk its own background dispatch thread instead of queuing I/O through the VM's shared emulator thread. Enabled by setting `ioThreadsPolicy: auto` plus `dedicatedIOThread: true` and `blockMultiQueue: true` on the data disk. Reduces worst-case tail latency 25-69% on the cluster measured here, with negligible IOPS cost. This project's VM template enables it by default since commit `fa061be`. See [Step 4 in ODF Performance Best Practices](guides/odf-performance-best-practices.md).
+
 **KubeVirt** — The Kubernetes operator that enables running traditional VMs alongside containers. OpenShift Virtualization is Red Hat's distribution of KubeVirt. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 
 **Latency** — The time for a single I/O operation to complete. Measured as average (mean) and percentiles (p99 = 99th percentile). Lower is better. Reported in milliseconds in this project.
 
 **libaio** — The Linux asynchronous I/O engine used by fio in this project. Allows multiple I/O operations to be submitted without waiting for each to complete, enabling high iodepth.
+
+**mclock** — A Ceph OSD I/O scheduler that prioritises client I/O over background work (recovery, scrubs, backfill). Setting `osd_mclock_profile: high_client_ops` reduces read tail latency ~29% on this cluster at the cost of ~4% peak throughput and slower recovery after a node loss. **Do not stack with iothreads** — the two settings fight each other; the combination drops throughput ~9% and doubles both write and read tail latencies. See [Step 5 in ODF Performance Best Practices](guides/odf-performance-best-practices.md).
 
 **MON (Monitor)** — A Ceph daemon that maintains the cluster map and consensus. Requires a quorum (majority). See [Ceph and ODF](concepts/ceph-and-odf.md).
 
@@ -86,9 +98,13 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **Operator** — A Kubernetes pattern for automating application lifecycle management. ODF and OpenShift Virtualization are both installed as operators. See [OpenShift Overview](concepts/openshift-overview.md).
 
-**OSD (Object Storage Daemon)** — The Ceph daemon responsible for storing data on a physical disk. Each NVMe drive in the cluster typically runs one OSD. See [Ceph and ODF](concepts/ceph-and-odf.md).
+**OSD (Object Storage Daemon)** — The Ceph daemon responsible for storing data on a physical disk. Each NVMe drive in the cluster typically runs one OSD. Each OSD pod's CPU/memory request is set by the `resourceProfile` field on the StorageCluster (or overridden via `storageDeviceSets[].resources` — see **big-osd**). See [Ceph and ODF](concepts/ceph-and-odf.md).
 
-**p99 Latency** — The 99th percentile latency: 99% of operations complete within this time. Captures tail latency spikes that averages hide. Critical for SLA evaluation.
+**osd_memory_target** — A Ceph OSD configuration key that controls how much memory each OSD's BlueStore cache uses. The Reef default is 4 GiB (`4294967296` bytes). On ROKS the cgroup-ratio auto-scaling that would normally raise this dynamically does not activate, so it must be set explicitly via `cephConfig.osd.osd_memory_target` or `ceph config set osd osd_memory_target`. Raising to 20 GiB on a 24-OSD cluster halves the worst 1% of operation times at 32+ active VMs, with no CPU cost. See [Step 2b in ODF Performance Best Practices](guides/odf-performance-best-practices.md).
+
+**p99 Latency** — The 99th percentile latency: 99% of operations complete within this time, 1% take longer. Captures the slow outliers that averages hide; critical for SLA evaluation. Also called "the worst 1% of operations" in plain-English contexts. See **Tail latency**.
+
+**performance profile** — The `performance` value for `StorageCluster.spec.resourceProfile`. Sets each OSD pod to 4 vCPU / 8 GiB (double the `balanced` default). Roughly doubles peak IOPS, halves the latency cliff, and lets the cluster handle 2-4× more concurrent VMs before slowdown. Reserves +48 vCPU cluster-wide on a 24-OSD cluster. The recommended default for VM workloads on cluster hardware that can spare the CPU. See [Step 2 in ODF Performance Best Practices](guides/odf-performance-best-practices.md).
 
 **Pool CSI** — See **FileSharePool**.
 
@@ -112,6 +128,8 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **rep3-virt** — A test suite pool name that maps to the `ocs-storagecluster-ceph-rbd-virtualization` StorageClass. Uses the same OOB CephBlockPool as `rep3` but enables VM-optimized RBD image features (`exclusive-lock`, `object-map`, `fast-diff`, `krbd:rxbounce`). Comparing `rep3` vs `rep3-virt` isolates the impact of these features (up to 7x write IOPS improvement). See [Configuration Reference](guides/configuration-reference.md#the-three-rep3-variants).
 
+**resourceProfile** — A field on the StorageCluster custom resource that selects per-OSD CPU/memory sizing. Three values: `lean` (1 vCPU / 2 GiB), `balanced` (2 / 5 GiB, default), and **performance** (4 / 8 GiB). The single biggest performance knob this project measured — flipping from `balanced` to `performance` roughly doubles peak IOPS on rep3-virt. For workloads denser than `performance` can sustain, use the `storageDeviceSets[].resources` override pattern (see **big-osd**) on top of the chosen profile rather than expecting a fourth profile. See [ODF Performance Best Practices](guides/odf-performance-best-practices.md).
+
 **ROKS (Red Hat OpenShift on IBM Cloud)** — IBM's managed OpenShift service. This project runs on ROKS with bare metal bx3d workers that have local NVMe drives for ODF. See [OpenShift Overview](concepts/openshift-overview.md).
 
 **Rook** — A Kubernetes operator that automates Ceph deployment and management. ODF uses Rook internally. See [Ceph and ODF](concepts/ceph-and-odf.md).
@@ -120,7 +138,11 @@ Quick-reference for terms used throughout this project and its documentation.
 
 **StorageClass** — A Kubernetes resource that defines *how* storage is provisioned. Maps to a CSI driver and configuration parameters. See [Storage in Kubernetes](concepts/storage-in-kubernetes.md).
 
+**StorageCluster** — The top-level ODF custom resource (`ocs-storagecluster` in the `openshift-storage` namespace). Owns all ODF configuration: `resourceProfile`, `storageDeviceSets[].resources`, the `managedResources.cephCluster.cephConfig` overrides, and the set of StorageClasses installed. The ocs-operator reconciles this into the lower-level CephCluster CR, Rook configmaps, and downstream resources. The single object to patch when applying any of the tuning steps in this project's guide.
+
 **stonewall** — A fio directive that ensures the previous job completes before the next one starts. Prevents jobs from running in parallel within a single profile.
+
+**Tail latency** — Latency at the slow end of the distribution (p95, p99, or worse). Captures slow outliers that the mean conceals. Often called "the worst 1% of operations" in plain-English contexts (referring to p99). The primary failure mode in storage systems under contention is tail-latency blowup, not mean-latency growth. See **p99 Latency**.
 
 **virtctl** — The KubeVirt CLI tool for managing VMs. Used in this project for SSH access to running VMs to collect fio results. See [OpenShift Virtualization](concepts/openshift-virtualization.md).
 

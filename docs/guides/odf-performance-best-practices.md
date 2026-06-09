@@ -2,7 +2,27 @@
 
 **Audience:** Cluster operators setting up (or auditing) an ODF/Ceph cluster on IBM Cloud ROKS that will host KubeVirt VMs.
 **Goal:** Tell you what to change before running production VM workloads, and cite the experiment behind each recommendation so you can decide whether your situation matches.
-**Last updated:** 2026-06-07
+**Last updated:** 2026-06-09
+
+---
+
+## Plain English Summary
+
+If you don't speak Ceph and just want to know what to apply:
+
+- **Do this first (Step 2 below):** patch the StorageCluster to use `resourceProfile: performance`. This doubles each OSD's CPU and memory and is the single biggest knob in the whole guide. It roughly doubles peak throughput, lets the cluster smoothly handle 2-4× more concurrent VMs before slowdown, and avoids the early latency cliff you hit on the default `balanced` profile (we measured OSD CPU exhaustion at just 4 active VMs running mixed-70-30 I/O).
+
+- **Optional, no extra cost (Step 2b below):** if your workload sometimes has 30+ VMs hitting storage at once, also raise `osd_memory_target` to 20 GiB. No restart, no extra CPU — just memory you probably had spare. It roughly halves the worst 1% of operation times at saturation (e.g. 196 ms → 67 ms at 32 active VMs, 801 ms → 396 ms at 64). Caveat: as of ODF 4.20, Rook silently skips propagating this key — push it directly with `ceph config set` as well (the wrappers do this for you).
+
+- **Only if you genuinely need 50+ active small VMs at high throughput (Step 3):** the heavier "big-osd" override gives each OSD 6 CPU + 24 GiB. Adds about 14 % more peak IOPS over `performance` but reserves +96 CPU cluster-wide, and on the reference cluster pushes the small-VM scheduling ceiling down to 48-55 (we measured `Insufficient CPU` failures at 56 VMs). Check `oc adm top nodes` first; on smaller hosts the reservation doesn't fit.
+
+- **Already done for you (Step 4):** the suite's VM template enables `iothreads` + `blockMultiQueue` by default since commit `fa061be`. It's a clean win on every profile we tested — reduces worst-case tail latency 25-69 % — and you don't need to think about it unless you build VMs outside this suite.
+
+- **Don't bother with:** disabling CPU C-states via MachineConfig on managed ROKS (doesn't work — managed clusters have no MachineConfigPool); running with one data copy (`rep1`) in production (one host failure = data loss); stacking the `mclock` Ceph tuning bundle on top of iothreads (the two settings fight — tail latencies more than double, throughput drops 9 %).
+
+**Bottom line:** Step 1 (use the OOB virtualization StorageClass) + Step 2 (`performance` profile) + Step 4 (iothreads, already on) covers about 90 % of the tuning value. Add Step 2b if you have latency-sensitive bursts of high concurrency. Stop there unless you specifically need Step 3.
+
+For a non-operator-facing version of this summary (e.g. for a colleague who just wants the bottom line) see [README.md#in-plain-english-what-to-configure](../../README.md#in-plain-english-what-to-configure).
 
 ---
 
