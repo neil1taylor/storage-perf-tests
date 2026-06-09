@@ -111,7 +111,50 @@ Source: [odf-replication-scale-comparison.md](../examples/odf-replication-scale-
 
 If you only take one step from this guide, this is it. The rest of the document is about when to push past the performance rung.
 
-**For most clusters this is where you stop.** Steps 3–5 are for hosts with the resource budget to push further and a workload that demands it.
+If your workload has bursts of high concurrency (c≥32) and you have a few GB of headroom per OSD, consider also raising `osd_memory_target` — see **Step 2b** below. That's a free latency lever; you don't need to commit any extra CPU.
+
+**For most clusters this is where you stop.** Step 2b is a lightweight latency tune-up; Steps 3–5 are for hosts with the resource budget to push further and a workload that demands it.
+
+### Step 2b — Pair `performance` with `osd_memory_target=20G` (free latency at saturation)
+
+Apply when: you're already on `performance`, your workload occasionally hits c≥32, and you have ~16 GiB of unused RAM per OSD (the difference between the Reef default of 4 GiB and the 20 GiB this step sets).
+
+What to do (one Ceph config knob, propagated via the StorageCluster spec; no OSD pod roll):
+
+```bash
+oc patch storagecluster ocs-storagecluster -n openshift-storage --type=merge -p='{
+  "spec":{"managedResources":{"cephCluster":{"cephConfig":{
+    "osd":{"osd_memory_target":"20000000000"}}}}}}'
+```
+
+Note: in ODF 4.20 we observed that Rook sees the cephConfig spec change but does **not** always run the corresponding `ceph config set osd osd_memory_target ...` on its own (`ceph config get osd osd_memory_target` stays at the 4 GiB default). The 09-run-tune-sweep.sh / 10-run-scale-test-tuned.sh wrappers now push the value directly via `ceph config set` in addition to the spec patch as a workaround. If applying manually, follow up with:
+
+```bash
+oc -n openshift-storage exec deploy/rook-ceph-tools -- \
+  ceph config set osd osd_memory_target 20000000000
+```
+
+Then verify with `ceph config get osd osd_memory_target` (should return `20000000000`, not `4294967296`).
+
+Measured impact (run `scale-tuned-20260609-123256`, paired with `scale-tuned-20260608-172541` for plain performance):
+
+| VMs | plain performance | + memtarget=20G | Write p99 Δ | IOPS Δ |
+|----:|------------------:|----------------:|------------:|-------:|
+|   8 |       20 ms / 123k |     24 ms / 163k | flat (noise) | **+32 %** |
+|  16 |       42 ms / 164k |     45 ms / 182k | flat (noise) | **+11 %** |
+|  32 |    **196 ms / 228k** |  **67 ms / 203k** | **−66 %** | −11 % |
+|  64 |    **801 ms / 303k** | **396 ms / 233k** | **−51 %** | −23 % |
+
+Two things to notice:
+
+- **At low concurrency (c≤16) memtarget does nothing for latency** — the working set fits within Reef's default 4 GiB cache, so there's no benefit to enlarge it. (The +11 to +32 % IOPS bump at c=8-16 is real but inside the run-to-run variance band for IOPS on this cluster; treat as flat.)
+- **At saturation (c=32 onward) memtarget halves p99** — the working set spans many VMs' working sets at once, so a bigger cache reduces backend flushes and the BlueStore queue stops backing up. The trade is slightly lower aggregate IOPS (cache fill coalesces writes, so each fio thread sees fewer-but-larger ops; total useful work done is similar).
+
+If latency-bound at saturation: take this step. It costs no CPU and no apply-cycle roll (Ceph applies live). If throughput-bound at saturation: skip it and consider Step 3 instead.
+
+**Important: this does NOT replace big-osd.** big-osd's IOPS advantage at saturation (345 k vs 228 k at c=32 vs plain performance) comes from the +CPU, not the cache. Adding memtarget alone to performance recovers most of big-osd's latency advantage but **none** of its peak-IOPS advantage. The two levers buy different things.
+
+Source: `results/scale-test/rep3-virt/ramp.csv` from run `scale-tuned-20260609-123256` (performance + 20 G memtarget); paired baseline `scale-tuned-20260608-172541` (plain performance).
 
 ### Step 3 — Apply `big-osd` resource override + `osd_memory_target`
 
@@ -251,12 +294,13 @@ Source: [odf-ceph-tuning-followup-2026-06-06.md](../examples/odf-ceph-tuning-fol
 
 ### Where most operators should land
 
-Updated 2026-06-08 after measuring the `performance → big-osd` jump directly.
+Updated 2026-06-09 after isolating memtarget from CPU and measuring all four rungs on the same uncapped methodology.
 
 | Cluster size class | Recommended rungs | Why |
 |---|---|---|
-| **Most clusters, including reference-class** | Step 0 → 1 → 2 → 4 — `performance` profile + iothreads, stop there | The `balanced → performance` jump roughly **doubles** IOPS (+97%) for 48 vCPU + 72 GiB cluster-wide. The further `performance → big-osd` jump adds only **+34%** for another 96 vCPU + 384 GiB. That's a much weaker cost/benefit. |
-| Density-bound, host budget to spare | Step 0 → 1 → 2 → 3 → 4 — add `big-osd` + memtarget on top | When you've already saturated `performance` at your target VM count and have ≥6 vCPU / 24 GiB per OSD of cluster headroom. |
+| **Most clusters, including reference-class** | Step 0 → 1 → 2 → 4 — `performance` profile + iothreads, stop there | The `balanced → performance` jump nearly **doubles** peak IOPS (+92%, 158k → 303k) for +48 cluster vCPU. The further `performance → big-osd` jump adds only **+14% peak IOPS** for another +48 vCPU / +384 GiB. |
+| Latency-bound at saturation, no extra CPU | Step 0 → 1 → 2 → **2b** → 4 — add `osd_memory_target=20G` on `performance` | Halves write p99 at c≥32 (196 ms → 67 ms at c=32, 801 ms → 396 ms at c=64) for ~16 GiB of unused RAM per OSD. Slight IOPS cost (−11 to −23 % at saturation, cache-fill coalescing). No OSD pod roll. |
+| Density-bound, host budget to spare | Step 0 → 1 → 2 → 3 → 4 — add `big-osd` + memtarget on top | When you've already saturated `performance` at your target VM count and have ≥6 vCPU / 24 GiB per OSD of cluster headroom. The +CPU is what unlocks higher peak IOPS; the memtarget is what keeps the tail down. Need both. |
 | Read-tail-bound, not using iothreads | Step 0 → 1 → 2 → 3 → 5 — `big-osd` + memtarget + mclock bundle | Specifically when read tail latency is the user-visible problem and you choose mclock over iothreads. |
 
 ### Rungs we do NOT have evidence for
@@ -281,7 +325,7 @@ Lookup tables for every knob the staircase touches, plus the things to avoid. Us
 | 4 | Pool replication | n/a | **rep3 for prod**, rep2 if your workload tolerates reduced fault domain, **rep1 is benchmarking only** | rep3→rep2: +25% density at balanced. rep2→rep1: +60% more (no redundancy) | Lower replication = fewer surviving copies on node failure |
 | 5 | KubeVirt VM template | (suite already sets it) | `ioThreadsPolicy: auto`, `dedicatedIOThread: true`, `blockMultiQueue: true` on the VM disk | Write p99 −25%, read p99 −53%, IOPS +2% on rep3-virt big-osd | None observed — clean win, merged as default |
 | 6 | `failureDomain` | Set by ocs-operator from cluster topology (usually `rack` on ROKS) | **Don't override per-pool.** Match the cluster-level value | Mismatched pool-level domains cause CRUSH PG distribution skew | Custom EC pools may not fit if cluster has too few failure domains |
-| 7 | `osd_memory_target` | Reef default 4 GiB regardless of resource limits | Set explicitly via `cephConfig.osd.osd_memory_target` if you raise the OSD pod limit | The cgroup-ratio auto-scaling is **not active** on ROKS — request alone does not increase the BlueStore cache | Without this, raising `resources.osd` only buys CPU, not cache |
+| 7 | `osd_memory_target` | Reef default 4 GiB regardless of resource limits | Raise to 20 G via `cephConfig.osd.osd_memory_target` whenever workload hits c≥32, even without raising the OSD pod resource limit | The cgroup-ratio auto-scaling is **not active** on ROKS — request alone does not increase the BlueStore cache. Standalone (Step 2b) halves write p99 at saturation; paired with `big-osd` (Step 3) it also keeps tail latency low under +CPU. Note: Rook may silently skip propagating this key — the wrappers push it via `ceph config set` directly as a workaround | Without this, the BlueStore cache stays at 4 GiB regardless of pod resources or working-set size |
 
 **Optional / opt-in knobs (don't apply blindly):**
 
