@@ -524,12 +524,29 @@ apply_tuning_config() {
       -p "{\"spec\":{\"managedResources\":{\"cephCluster\":{\"cephConfig\":{\"osd\":${osd_json}}}}}}" >/dev/null \
       || { log_error "cephConfig patch failed"; return 1; }
 
-    # Sentinel verification: if one key propagated, all keys in the same
-    # patch did. Picking the first deterministically (sorted) for the check.
+    # Belt-and-suspenders: the StorageCluster spec patch documents intent
+    # and survives operator reconciles, but the Rook → Ceph propagation
+    # is observed to silently skip at least `osd_memory_target` (seen
+    # 2026-06-09: Rook logs the change in its CephConfig map but never
+    # runs the corresponding `ceph config set`). Push every key directly
+    # to Ceph too, so the live value matches intent regardless. Cleanup
+    # (clear_ceph_config_osd_overrides during restore) already issues
+    # `ceph config rm osd:<key>` so this leaves no orphans.
+    log_info "Setting ceph config DB osd:* keys directly (Rook may skip propagation):"
+    for ck in "${cephconfig_keys[@]}"; do
+      short_key="${ck#cephconfig_}"
+      log_info "  ceph config set osd ${short_key} ${cfg[$ck]}"
+      oc -n "${ns}" exec deploy/rook-ceph-tools -- \
+        ceph config set osd "${short_key}" "${cfg[$ck]}" >/dev/null \
+        || { log_error "direct ceph config set failed for osd:${short_key}"; return 1; }
+    done
+
+    # Sentinel verification: confirms the direct sets landed (and as a
+    # bonus, if Rook does propagate, the K8s-spec path agrees too).
     local first_key
     first_key=$(printf '%s\n' "${cephconfig_keys[@]}" | sort | head -1)
     local first_short="${first_key#cephconfig_}"
-    wait_for_ceph_config_applied "${first_short}" "${cfg[$first_key]}" 120 || return 1
+    wait_for_ceph_config_applied "${first_short}" "${cfg[$first_key]}" 30 || return 1
   else
     # No cephconfig_* in this config: if the cluster currently has any
     # override at .spec.managedResources.cephCluster.cephConfig, explicitly

@@ -325,6 +325,7 @@ declare -A TUNE_CONFIGS
 TUNE_CONFIGS[default]='profile=balanced cstate=on'
 TUNE_CONFIGS[cstate-off]='profile=balanced cstate=off'
 TUNE_CONFIGS[performance]='profile=performance cstate=on'
+TUNE_CONFIGS[performance+memtarget]='profile=performance cstate=on cephconfig_osd_memory_target=20000000000'
 TUNE_CONFIGS[big-osd]='osd_cpu=6 osd_mem=24Gi cstate=on'
 TUNE_CONFIGS[big-osd+cstate-off]='osd_cpu=6 osd_mem=24Gi cstate=off'
 # No 'profile=' key — TUNE_CONFIGS[big-osd+mclock] inherits the current
