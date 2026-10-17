@@ -65,6 +65,14 @@ Practical how-to documentation for running and customizing the test suite.
 | [Troubleshooting](guides/troubleshooting.md) | Common failures and how to fix them |
 | [VSI Storage Testing Guide](guides/vsi-storage-testing-guide.md) | VSI bandwidth constraints, IOPS tiers, ODF sizing for realistic benchmarks |
 
+## External Findings
+
+Results from other teams that this project did not reproduce.
+
+| Document | What You'll Learn |
+|----------|-------------------|
+| [VPCMigrationFactory ODF Findings](examples/vpcmigrationfactory-odf-findings-2026-10-17.md) | EC vs 3-way replica, ODF 4.20 vs 4.21, 303-VM scale test, ROVE ODF settings, MZR vs SZR (from IBM Box notes, not reproduced) |
+
 ## Architecture
 
 Deep-dive into how the test suite works internally.
