@@ -213,7 +213,7 @@ Lineage docs:
 docs/examples/odf-ceph-tuning-candidates-2026-06-04.md             ← candidate shortlist
 docs/examples/odf-osd-resource-tuning-2026-06-04.md                ← prior big-osd baseline writeup
 docs/superpowers/specs/2026-06-05-odf-ceph-tuning-followup-design.md  ← spec
-docs/superpowers/plans/2026-06-05-odf-ceph-tuning-followup.md         ← implementation plan
+docs/superpowers/plans/archive/2026-06-05-odf-ceph-tuning-followup.md         ← implementation plan
 ```
 
 ---

@@ -335,5 +335,5 @@ Concrete, defensible claims supported by this data:
 | `reports/tune-sweep-rep3-virt-tune-20260604-123923.html` | Interactive HTML report (rate-capped) |
 | `reports/tune-sweep-rep3-virt-tune-20260604-135830.html` | Interactive HTML report (uncapped) |
 | `docs/superpowers/specs/2026-06-03-odf-tune-sweep-design.md` | Original design spec for the tune-sweep feature |
-| `docs/superpowers/plans/2026-06-03-odf-tune-sweep.md` | Implementation plan that built the suite |
+| `docs/superpowers/plans/archive/2026-06-03-odf-tune-sweep.md` | Implementation plan that built the suite |
 | Git history `b678476..ea16c47` (main) | 22 commits implementing + correcting the tune-sweep mechanism |

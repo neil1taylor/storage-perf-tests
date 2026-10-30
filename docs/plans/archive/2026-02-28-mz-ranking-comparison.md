@@ -1,3 +1,5 @@
+Archived 2026-10-30: all items done (work merged; unticked boxes were never updated).
+
 # MZ ODF Ranking + Cross-Cluster Comparison — Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
