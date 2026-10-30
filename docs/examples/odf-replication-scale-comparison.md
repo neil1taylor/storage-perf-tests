@@ -409,5 +409,5 @@ oc delete cephblockpool perf-test-rep1 -n openshift-storage
 ## Related documents
 
 - [Scale Test Auto-Ramp Design](../plans/2026-04-21-scale-test-auto-ramp-design.md) — original design for `--scale-test`
-- [Scale Test Auto-Ramp Implementation](../plans/2026-04-21-scale-test-auto-ramp.md) — implementation reference
+- [Scale Test Auto-Ramp Implementation](../plans/archive/2026-04-21-scale-test-auto-ramp.md) — implementation reference
 - [ROKS vs VCF Storage Performance Comparison](roks-vs-vcf-comparison.md) — note: any RBD numbers in this older comparison were measured before the prefill/sync-barrier fix and may overstate ODF latency.

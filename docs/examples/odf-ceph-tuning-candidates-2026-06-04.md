@@ -237,7 +237,7 @@ These need resolution at the start of the next session, not during this one:
 
 - [`odf-osd-resource-tuning-2026-06-04.md`](odf-osd-resource-tuning-2026-06-04.md) — the prior experiment's results.
 - [`docs/superpowers/specs/2026-06-03-odf-tune-sweep-design.md`](../superpowers/specs/2026-06-03-odf-tune-sweep-design.md) — original tune-sweep design spec.
-- [`docs/superpowers/plans/2026-06-03-odf-tune-sweep.md`](../superpowers/plans/2026-06-03-odf-tune-sweep.md) — implementation plan.
+- [`docs/superpowers/plans/archive/2026-06-03-odf-tune-sweep.md`](../superpowers/plans/archive/2026-06-03-odf-tune-sweep.md) — implementation plan.
 - [`lib/tune-helpers.sh`](../../lib/tune-helpers.sh) — what to extend for Phase 2.
 - [`vm-templates/vm-template.yaml`](../../vm-templates/vm-template.yaml) — what to edit for Phase 1.
 

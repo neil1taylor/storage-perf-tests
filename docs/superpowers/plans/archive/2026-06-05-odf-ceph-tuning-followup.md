@@ -1,3 +1,5 @@
+Archived 2026-10-30: all items done (work merged; unticked boxes were never updated).
+
 # ODF/Ceph Tuning Follow-Up Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -8,7 +10,7 @@
 
 **Tech Stack:** bash 5.x, `oc` CLI, `jq`, OCS-operator 4.20.7 (ODF), Rook 1.16, Ceph Reef 18.x, KubeVirt VM CRDs, fio 3.x.
 
-**Spec:** [`docs/superpowers/specs/2026-06-05-odf-ceph-tuning-followup-design.md`](../specs/2026-06-05-odf-ceph-tuning-followup-design.md)
+**Spec:** [`docs/superpowers/specs/2026-06-05-odf-ceph-tuning-followup-design.md`](../../specs/2026-06-05-odf-ceph-tuning-followup-design.md)
 
 ---
 
